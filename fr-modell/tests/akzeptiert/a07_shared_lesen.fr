@@ -1,0 +1,21 @@
+// Regeln: V-1: zwei lesende Sperren
+// erwartet: Ausgabe 1 1 1
+class A {
+    int v;
+    int get() ro { return copy this.v; }
+    int inc() mut { this.v = copy this.v + 1; return 0; }
+    destructor() { print(copy this.v); }
+}
+class Holder {
+    shared A s;
+    int peek(ref A x) ro {
+        shared A t = copy this.s;
+        return t.get();             // lesend gesperrt, Lesen ist erlaubt
+    }
+}
+main {
+    shared A s = share new A(1);
+    own Holder h = new Holder(copy s);
+    print(h.peek(&ro s));
+    print(s.get());
+}

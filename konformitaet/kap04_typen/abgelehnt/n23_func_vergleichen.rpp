@@ -1,0 +1,13 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.38
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Funktionstypen haben kein ==).
+package konformitaet.kap04;
+
+class T {
+public:
+    void demo() {
+        Func<i32, i32> f = own (i32 x) => x;
+        Func<i32, i32> g = own (i32 x) => x;
+        bool same = f == g; // FEHLER
+    }
+}

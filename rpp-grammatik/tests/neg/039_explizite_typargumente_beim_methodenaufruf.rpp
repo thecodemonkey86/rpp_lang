@@ -1,0 +1,2 @@
+// Name: explizite Typargumente beim Methodenaufruf
+class T { void m() { i32 m = max<i32>(a, b); } }

@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 6 – Laufzeit.
+// Regel: R-6.16, R-6.18, R-8.3
+// Erwartet: Ausgabe "b\n0\n2"; Exit-Code 0
+class Node {
+public:
+    i32 v = 1;
+    i32 add(i32 n) { return v + n; }
+}
+
+class Probe {
+public:
+    static i32 laut(string s) {
+        print(s);
+        return 1;
+    }
+}
+
+i32 main(string[] args) {
+    Node? leer = null;
+    Node? voll = new Node();
+    i32? a = leer?.add(Probe::laut("a"));
+    i32? b = voll?.add(Probe::laut("b"));
+    print((a ?? 0).toString());
+    print((b ?? 0).toString());
+    i32 c = b ?? Probe::laut("c");
+    return 0;
+}

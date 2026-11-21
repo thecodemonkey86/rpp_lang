@@ -1,0 +1,44 @@
+// Konformitätstest Kapitel 9 – Laufzeit.
+// Regel: R-9.9, R-9.11
+// Erwartet: Ausgabe "finally nach return\n1\nkörper 0\nfinally 0\nfinally 1\nfinally 2\ninnen aufgeräumt\ngefangen: innen"; Exit-Code 0
+class Flow {
+public:
+    static i32 f() {
+        try {
+            return 1;
+        } finally {
+            print("finally nach return");
+        }
+    }
+
+    static void g() {
+        for (i32 i = 0; i < 3; i++) {
+            try {
+                if (i == 1) {
+                    continue;
+                }
+                if (i == 2) {
+                    break;
+                }
+                print("körper " + i.toString());
+            } finally {
+                print("finally " + i.toString());
+            }
+        }
+    }
+}
+
+i32 main(string[] args) {
+    print(Flow::f().toString());
+    Flow::g();
+    try {
+        try {
+            throw new Exception("innen");
+        } finally {
+            print("innen aufgeräumt");
+        }
+    } catch (Exception e) {
+        print("gefangen: " + e.message);
+    }
+    return 0;
+}

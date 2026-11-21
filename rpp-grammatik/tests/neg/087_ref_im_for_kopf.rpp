@@ -1,0 +1,2 @@
+// Name: ref im for-Kopf
+class T { void m() { for (ref Foo f = x; f.ok(); i++) { } } }

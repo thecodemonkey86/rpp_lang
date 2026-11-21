@@ -1,0 +1,2 @@
+// Name: ref mit & nur am Typ
+class T { void m() { ref Foo& f = x; } }

@@ -1,0 +1,2 @@
+// Name: :: zweimal hintereinander
+class T { void m() { x = Foo::bar::baz; } }

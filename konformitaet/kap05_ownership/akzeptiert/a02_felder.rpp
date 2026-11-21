@@ -1,0 +1,38 @@
+// Konformitätstest Kapitel 5 – muss übersetzt werden.
+// Regel: R-5.7, R-5.13, V-3
+package konformitaet.kap05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() & { this.value = this.value + 1; }
+}
+
+class Holder {
+private:
+    Foo payload;
+    Foo? cache;
+public:
+    constructor(own Foo p) {
+        this.payload = p;
+        this.cache = null;
+    }
+
+    // V-3: take nimmt den Wert aus einem nullbaren Feld; das Feld ist danach null.
+    Foo? leere() & { return take(&this.cache); }
+
+    // R-5.13: Der alte Wert wird freigegeben.
+    void setze(own Foo p) & { this.payload = p; }
+
+    // R-5.7, V-3: replace liefert den alten Wert.
+    Foo tausche(own Foo p) & { return replace(&this.payload, p); }
+
+    i32 wert() { return this.payload.value; }
+
+    void erhoehe() & { this.payload.bump(); }
+
+    // Kopie statt Move aus dem Feld.
+    Foo kopie() { return copy(this.payload); }
+}

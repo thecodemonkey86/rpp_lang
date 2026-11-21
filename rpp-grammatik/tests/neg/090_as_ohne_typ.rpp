@@ -1,0 +1,2 @@
+// Name: as ohne Typ
+class T { void m() { x = s as; } }

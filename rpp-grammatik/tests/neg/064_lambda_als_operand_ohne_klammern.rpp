@@ -1,0 +1,2 @@
+// Name: Lambda als Operand ohne Klammern
+class T { void m() { x = (i32 a) => a + (i32 b) => b; } }

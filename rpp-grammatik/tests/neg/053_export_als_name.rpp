@@ -1,0 +1,2 @@
+// Name: export als Name
+class T { void m() { i32 export = 1; } }

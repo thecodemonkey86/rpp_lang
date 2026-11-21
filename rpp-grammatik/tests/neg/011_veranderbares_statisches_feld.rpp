@@ -1,0 +1,2 @@
+// Name: veränderbares statisches Feld
+class T { static i32 counter; }

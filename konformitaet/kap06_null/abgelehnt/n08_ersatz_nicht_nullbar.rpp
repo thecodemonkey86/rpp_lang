@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 6 – muss abgelehnt werden.
+// Regel: R-6.18
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (?? auf nicht nullbarem Wert).
+package konformitaet.kap06;
+
+class Node {
+public:
+    string name;
+    Node? child;
+    shared Node? next;
+    weak Node? parent;
+    i32? count;
+    Node?[] slots;
+    constructor(string n) { this.name = n; }
+    bool ok() { return true; }
+    void run() { }
+    void touch() & { }
+}
+
+class T {
+public:
+    void m(Node n) {
+        string s = n.name ?? "-"; // FEHLER
+    }
+}

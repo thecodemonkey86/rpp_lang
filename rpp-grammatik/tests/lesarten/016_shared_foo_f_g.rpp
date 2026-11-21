@@ -1,0 +1,3 @@
+// Name: shared Foo f = g;
+// Lesart: localVarDecl
+class T { void m() { shared Foo f = g; } }

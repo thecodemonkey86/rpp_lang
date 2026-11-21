@@ -1,0 +1,2 @@
+// Name: :: ohne Name dahinter
+class T { void m() { x = Foo::; } }

@@ -1,0 +1,2 @@
+// Name: Zuweisung in Bedingung
+class T { void m() { if ((x = next()) != null) { } } }

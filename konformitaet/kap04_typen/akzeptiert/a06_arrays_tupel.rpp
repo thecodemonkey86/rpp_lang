@@ -1,0 +1,31 @@
+// Konformitätstest Kapitel 4 – muss übersetzt werden.
+// Regel: R-4.30, R-4.31, R-4.32, R-4.33, R-4.34, R-4.35, R-4.39
+package konformitaet.kap04;
+
+class Buffers {
+public:
+    static const i32 N = 4;
+    i32[N] fixed;
+    i32[] vec;
+
+    i64 sum(Slice<i32> xs) {
+        i64 total = 0;
+        for (i32 x : xs) { total += x; }
+        return total;
+    }
+
+    (i32, string) pair() {
+        return (1, "eins");
+    }
+
+    void demo() {
+        i64 a = sum(fixed);
+        i64 b = sum(vec);
+        i64 len = vec.length;
+        i32 first = fixed[0];
+        i8[] small = [1, 2, 3];
+        (i32 k, string v) = pair();
+        (i64, string) widened = (1, "x");
+        (i32, string)? maybe = null;
+    }
+}

@@ -1,0 +1,36 @@
+// Konformitätstest Kapitel 9 – Laufzeit.
+// Regel: R-9.13, Kapitel 5 V-7
+// Erwartet: Ausgabe "Base.destruktor\nfrei erstes\nfrei basis\ngefangen"; Exit-Code 0
+class Part {
+public:
+    string n;
+    constructor(string n) { this.n = n; }
+    destructor() { print("frei " + n); }
+}
+
+class Base {
+public:
+    Part bp;
+    constructor() { this.bp = new Part("basis"); }
+    destructor() { print("Base.destruktor"); }
+}
+
+class Whole : Base {
+public:
+    Part first;
+    Part second;
+    constructor() : base() {
+        this.first = new Part("erstes");
+        throw new Exception("kaputt");
+    }
+    destructor() { print("Whole.destruktor"); }
+}
+
+i32 main(string[] args) {
+    try {
+        Whole w = new Whole();
+    } catch (Exception e) {
+        print("gefangen");
+    }
+    return 0;
+}

@@ -1,0 +1,3 @@
+// Name: x = List<List<Foo>>::empty().size();
+// Lesart: exprStatement
+class T { void m() { x = List<List<Foo>>::empty().size(); } }

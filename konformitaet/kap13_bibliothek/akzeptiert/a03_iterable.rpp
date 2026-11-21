@@ -1,0 +1,39 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.9, R-13.10
+package konformitaet.kap13;
+using rpp.collections.Map;
+using rpp.collections.Entry;
+using rpp.text.StringBuilder;
+
+class Symbol {
+public:
+    string name;
+    i32 uses = 0;
+    constructor(string n) { this.name = n; }
+    void use() & { uses++; }
+}
+
+class Ring {
+    import Iterable<i32, i64>;
+public:
+    i32[] items = [];
+
+    nodiscard i64 begin() { return 0; }
+    nodiscard bool done(i64 c) { return c >= items.length; }
+    nodiscard i64 next(i64 c) { return c + 1; }
+    ref i32 at(i64 c) { return this.items[c]; }
+}
+
+class Use {
+public:
+    i32 sum(Ring r) {
+        i32 s = 0;
+        for (i32 x : r) {
+            if (x < 0) {
+                continue;
+            }
+            s += x;
+        }
+        return s;
+    }
+}

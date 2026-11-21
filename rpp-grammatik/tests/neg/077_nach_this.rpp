@@ -1,0 +1,2 @@
+// Name: :: nach this
+class T { void m() { this::run(); } }

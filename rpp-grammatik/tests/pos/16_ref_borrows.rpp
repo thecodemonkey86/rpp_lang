@@ -1,0 +1,28 @@
+class Node {
+public:
+    string name;
+    Node? child;
+    Node[] items;
+
+    void rename(string n) & {
+        this.name = n;
+    }
+
+    void demo(Node[] list, Node& other) & {
+        ref Node first = list[0];
+        print(first.name);
+        ref Node& target = &other.items[1];
+        target.rename("x");
+        ref Node? maybe = this.child;
+        if (maybe != null) {
+            print(maybe.name);
+        }
+        ref Node[] all = this.items;
+        ref Node& me = &this;
+        {
+            ref Slice<Node> part = list[1..];
+            print(part.length);
+        }
+        ref my.pkg.Wrapper<Node> w = other.wrapper;
+    }
+}

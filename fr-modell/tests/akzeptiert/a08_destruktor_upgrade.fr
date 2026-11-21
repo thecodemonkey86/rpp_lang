@@ -1,0 +1,17 @@
+// Regeln: Abschnitt 5.3: upgrade im Destruktor schlägt fehl
+// erwartet: Ausgabe 0 5
+class Base {
+}
+class Node : Base {
+    int v;
+    weak Base self;
+    destructor() {
+        upgrade me = this.self { print(1); } else { print(0); }
+        print(copy this.v);
+    }
+}
+main {
+    shared Base dummy = share new Base();
+    shared Node n = share new Node(5, demote copy dummy);
+    n.self = demote copy n;
+}

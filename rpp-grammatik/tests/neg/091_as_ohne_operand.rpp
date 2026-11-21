@@ -1,0 +1,2 @@
+// Name: as ohne Operand
+class T { void m() { x = as Circle; } }

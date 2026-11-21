@@ -1,0 +1,22 @@
+// Regeln: R-5.7, R-5.13, V-3
+// erwartet: Ausgabe 1 10 10 20 20 2
+class A {
+    int v;
+    int get() ro { return copy this.v; }
+    int inc() mut { this.v = copy this.v + 1; return 0; }
+    destructor() { print(copy this.v); }
+}
+class H {
+    own A a;
+    own A set(own A x) mut { return replace(this.a, move x); }
+}
+main {
+    own H h = new H(new A(1));
+    h.a = new A(10);                // der alte Wert A(1) wird freigegeben
+    own A alt = h.set(new A(2));    // replace liefert A(10)
+    h.a.inc();
+    print(alt.get());
+    alt = new A(20);                // A(10) wird freigegeben
+    print(copy alt.v);
+    h.a.v = 2;
+}

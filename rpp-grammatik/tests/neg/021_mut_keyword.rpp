@@ -1,0 +1,2 @@
+// Name: mut-Keyword
+class T { void f(mut Foo x) { } }

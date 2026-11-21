@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 7 – Laufzeit.
+// Regel: R-7.9, Kapitel 5 V-7
+// Erwartet: Ausgabe "Derived\nBase:Derived\nfeld"; Exit-Code 0
+class Part {
+public:
+    destructor() { print("feld"); }
+}
+
+class Base {
+public:
+    Part p = new Part();
+    destructor() { print("Base:" + name()); }
+    virtual string name() { return "Base"; }
+}
+
+class Derived : Base {
+public:
+    destructor() { print("Derived"); }
+    override string name() { return "Derived"; }
+}
+
+i32 main(string[] args) {
+    Derived d = new Derived();
+    return 0;
+}

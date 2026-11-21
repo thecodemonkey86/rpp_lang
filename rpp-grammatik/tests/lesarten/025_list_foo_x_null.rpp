@@ -1,0 +1,3 @@
+// Name: List<Foo>? x = null;
+// Lesart: localVarDecl
+class T { void m() { List<Foo>? x = null; } }

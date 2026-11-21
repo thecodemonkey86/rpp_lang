@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 7 – Laufzeit.
+// Regel: R-7.10, R-7.11
+// Erwartet: Ausgabe "Kreis 2"; Exit-Code 0
+class Shape {
+public:
+    string name;
+    constructor(string n) { this.name = n; }
+    copy(Shape other) { this.name = other.name; }
+    virtual string describe() { return name; }
+}
+
+class Circle : Shape {
+public:
+    f64 r;
+    constructor(f64 r) : base("Kreis") { this.r = r; }
+    copy(Circle other) { this.r = other.r; }
+    override string describe() { return name + " " + cast<i32>(r).toString(); }
+}
+
+i32 main(string[] args) {
+    Shape s = new Circle(2.0);
+    Shape k = copy(s);
+    print(k.describe());
+    return 0;
+}

@@ -1,0 +1,2 @@
+// Name: ref mit Besitzform
+class T { void m() { ref shared Foo f = x; } }

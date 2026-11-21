@@ -1,0 +1,10 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.5, R-4.14
+// Erwartet (debug): Exit-Code 2; Fehlerausgabe enthält "OverflowError"
+// Erwartet (release): Ausgabe "-128"; Exit-Code 0
+i32 main(string[] args) {
+    i8 x = 127;
+    x += 1;
+    print(x.toString());
+    return 0;
+}

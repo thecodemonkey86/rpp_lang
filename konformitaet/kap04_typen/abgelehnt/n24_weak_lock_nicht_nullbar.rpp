@@ -1,0 +1,16 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.41, R-6.22
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (lock() liefert shared Foo?).
+package konformitaet.kap04;
+
+class Foo {
+public:
+    i32 v = 0;
+}
+
+class T {
+public:
+    void demo(weak Foo w) {
+        shared Foo s = w.lock(); // FEHLER
+    }
+}

@@ -1,0 +1,13 @@
+package acme.geo;
+
+export class Circle {
+public:
+    f64 r;
+    constructor(f64 r) { this.r = r; }
+    f64 area() { return Pi::VALUE * r * r; }
+}
+
+class Pi {
+public:
+    static const f64 VALUE = 3.141_592_653_589_793;
+}

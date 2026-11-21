@@ -1,0 +1,2 @@
+// Name: override und virtual zugleich
+class T { virtual override void f() { } }

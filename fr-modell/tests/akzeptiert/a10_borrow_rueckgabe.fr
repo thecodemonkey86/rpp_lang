@@ -1,0 +1,33 @@
+// Regeln: R-5.23, R-5.24
+// erwartet: Ausgabe 1 2 7 7 7 2 3
+class A {
+    int v;
+    int get() ro { return copy this.v; }
+    int inc() mut { this.v = copy this.v + 1; return 0; }
+    destructor() { print(copy this.v); }
+}
+class Box {
+    own A first;
+    own A second;
+    ref A front() ro { return &ro this.first; }
+    mut A frontMut() mut { return &mut this.first; }
+    ref A back() ro { return &ro this.second; }
+}
+main {
+    own Box b = new Box(new A(1), new A(2));
+    borrow f = b.front() {
+        print(f.get());
+        borrow g = b.back() {          // zwei lesende Borrows auf b nebeneinander
+            print(g.get());
+        }
+    }
+    borrow m = b.frontMut() {
+        m.v = 7;
+        print(m.get());
+    }
+    borrow k = b.front() {
+        print(copy k.v);
+        int x = copy b.second.v;       // lesen ist während eines lesenden Borrows erlaubt
+    }
+    b.first = new A(3);                // Borrow vorbei: Schreiben erlaubt, A(7) wird freigegeben
+}

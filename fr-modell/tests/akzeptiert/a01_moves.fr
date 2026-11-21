@@ -1,0 +1,38 @@
+// Regeln: R-5.1, R-5.3, R-5.4, R-5.8, R-5.12, R-5.14, R-5.15, R-5.16, R-5.19, R-5.21, V-5
+// erwartet: Ausgabe 1 3 5 6 99 5 4 2
+class A {
+    int v;
+    int get() ro { return copy this.v; }
+    int inc() mut { this.v = copy this.v + 1; return 0; }
+    destructor() { print(copy this.v); }
+}
+class Ops {
+    int take(own A a) ro { return 0; }
+    int swap(mut A x, mut A y) ro { x.v = copy y.v; return 0; }
+    int mix(own A x, ref A y) ro { return 0; }
+    int mix2(ref A x, own A y) ro {
+        own A z = move y;
+        z = new A(0);
+        return x.get();
+    }
+}
+main {
+    own Ops t = new Ops();
+    own A a = new A(1);
+    t.take(move a);                 // A(1) wird im Aufruf freigegeben
+    a = new A(2);                   // R-5.12: neu belegen
+    int ja = 1;
+    int nein = 0;
+    own A b = new A(3);
+    if (ja) { t.take(move b); } else { }      // V-5: b ist danach verschoben
+    own A c = new A(4);
+    if (nein) { t.take(move c); } else { }    // Drop-Flag: c lebt weiter
+    int n = 2;
+    own A d = new A(5);
+    while (n) {                     // R-5.16: Move mit Neubelegung im Durchlauf
+        t.take(move d);
+        d = new A(copy n + 4);
+        n = copy n - 1;
+    }
+    print(99);
+}

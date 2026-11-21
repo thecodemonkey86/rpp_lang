@@ -1,0 +1,2 @@
+// Name: Fallunterscheidung mit beliebigem Ausdruck
+class T { void m() { switch (x) { case a + b: f(); } } }

@@ -1,0 +1,9 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.26
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (der Wert 1 kommt zweimal vor).
+package konformitaet.kap04;
+
+enum Level {
+    Low = 1,
+    Mid = 1, // FEHLER
+}

@@ -1,0 +1,2 @@
+// Name: Generics mit eckigen Klammern
+class T { void m() { List[Foo, Bar] x = y; } }

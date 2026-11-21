@@ -1,0 +1,19 @@
+// Konformitätstest Kapitel 7 – muss abgelehnt werden.
+// Regel: R-7.21
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (describe kommt aus zwei Mixins).
+package konformitaet.kap07;
+
+mixin Printable {
+    string describe() { return "druckbar"; }
+}
+
+mixin Describable {
+    string describe() { return "beschreibbar"; }
+}
+
+class Thing {
+    import Printable;
+    import Describable; // FEHLER
+public:
+    i32 x = 0;
+}

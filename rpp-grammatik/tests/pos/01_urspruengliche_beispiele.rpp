@@ -1,0 +1,46 @@
+// Beispiele aus dem ersten Entwurf, Paketname angepasst (siehe Befund 1).
+package my.pkg;
+
+class Foo {
+}
+
+class Bar {
+private:
+    Foo f;
+
+public:
+    // Konstruktor übernimmt ownership
+    constructor(own Foo f) {
+        this.f = f;
+    }
+}
+
+class MyClass {
+private:
+    i32 integerProperty;
+    string stringProperty;
+public:
+    constructor() {
+    }
+
+    constructor(i32 integerProperty, string stringProperty) {
+        this.integerProperty = integerProperty;
+        this.stringProperty = stringProperty;
+    }
+
+    copy(MyClass other) {
+        this.integerProperty = other.integerProperty;
+        this.stringProperty = other.stringProperty;
+    }
+
+    import MyMixin;
+}
+
+mixin MyMixin {
+    void traitFunction1() {
+    }
+
+    i32 traitFunction2() {
+        return 42;
+    }
+}

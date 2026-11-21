@@ -1,0 +1,2 @@
+// Name: Kopie ohne Verwendung als Anweisung
+class T { void m() { copy(a); } }

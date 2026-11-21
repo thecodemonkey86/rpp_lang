@@ -1,0 +1,41 @@
+package mathlib.geometry;
+
+using mathlib.util.Checks;
+using Vec3 = mathlib.space.Vector;
+
+export class Vector {
+public:
+    constructor(f64 x, f64 y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    f64 length() {
+        return Helper::norm(x, y);
+    }
+
+protected:
+    f64 scale;
+
+private:
+    f64 x;
+    f64 y;
+}
+
+export abstract class Shape<T : Measurable> {
+public:
+    abstract f64 area();
+}
+
+export mixin Measurable {
+    f64 size();
+}
+
+export enum Unit { Meter, Foot }
+
+class Helper {
+public:
+    static f64 norm(f64 a, f64 b) {
+        return a * a + b * b;
+    }
+}

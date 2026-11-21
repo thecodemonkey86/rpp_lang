@@ -1,0 +1,16 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.21
+// Eingabe: "a\nb\n"
+// Erwartet: Ausgabe "[a][b]"; Exit-Code 0; Fehlerausgabe enthält "fertig"
+using rpp.io.Console;
+
+i32 main(string[] args) {
+    string? line = Console::readLine();
+    while (line != null) {
+        Console::write("[" + line + "]");
+        line = Console::readLine();
+    }
+    print("");
+    Console::error("fertig");
+    return 0;
+}

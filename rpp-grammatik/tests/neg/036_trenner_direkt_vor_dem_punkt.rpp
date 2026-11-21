@@ -1,0 +1,2 @@
+// Name: Trenner direkt vor dem Punkt
+class T { void m() { f64 x = 1_.5; } }

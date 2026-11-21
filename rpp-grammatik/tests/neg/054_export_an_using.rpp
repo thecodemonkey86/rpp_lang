@@ -1,0 +1,3 @@
+// Name: export an using
+export using a.b;
+class A { }

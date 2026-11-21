@@ -1,0 +1,2 @@
+// Name: Bereich mit Schrittweite
+class T { void m() { x = a[1..3..2]; } }

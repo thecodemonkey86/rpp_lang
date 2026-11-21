@@ -1,0 +1,23 @@
+// Konformitätstest Kapitel 8 – Laufzeit.
+// Regel: R-8.3
+// Erwartet: Ausgabe "z\ndann\ntrue"; Exit-Code 0
+class Probe {
+public:
+    static bool wahr(string s) {
+        print(s);
+        return true;
+    }
+    static i32 laut(string s, i32 v) {
+        print(s);
+        return v;
+    }
+}
+
+i32 main(string[] args) {
+    bool a = false && Probe::wahr("x");
+    bool b = true || Probe::wahr("y");
+    bool c = true && Probe::wahr("z");
+    i32 d = c ? Probe::laut("dann", 1) : Probe::laut("sonst", 2);
+    print(c.toString());
+    return 0;
+}

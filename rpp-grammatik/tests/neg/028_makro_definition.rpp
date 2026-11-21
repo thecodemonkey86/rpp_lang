@@ -1,0 +1,3 @@
+// Name: Makro-Definition
+#define X 1
+class T { }

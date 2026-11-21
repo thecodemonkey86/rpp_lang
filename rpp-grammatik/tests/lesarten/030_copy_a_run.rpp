@@ -1,0 +1,3 @@
+// Name: copy(a).run();
+// Lesart: exprStatement
+class T { void m() { copy(a).run(); } }

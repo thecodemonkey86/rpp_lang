@@ -1,0 +1,29 @@
+// Konformitätstest Kapitel 8 – Laufzeit.
+// Regel: R-8.2, R-8.4, R-12.4, R-12.6
+// Erwartet: Ausgabe "links\nrechts\narg1\narg2\nindex\nwert\n21"; Exit-Code 0
+class Probe {
+public:
+    static i32 laut(string s, i32 v) {
+        print(s);
+        return v;
+    }
+}
+
+class Pair {
+public:
+    i32 a;
+    i32 b;
+    constructor(i32 a, i32 b) { this.a = a; this.b = b; }
+}
+
+i32 main(string[] args) {
+    i32 sum = Probe::laut("links", 1) + Probe::laut("rechts", 2);
+    Pair p = new Pair(Probe::laut("arg1", 3), Probe::laut("arg2", 4));
+    i32[] xs = [0, 0, 0];
+    xs[Probe::laut("index", 1)] = Probe::laut("wert", 5);
+    i32 x = 1;
+    i32 y = 2;
+    (x, y) = (y, x);
+    print(x.toString() + y.toString());
+    return 0;
+}

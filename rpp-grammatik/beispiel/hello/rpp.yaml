@@ -1,0 +1,30 @@
+# Beispiel: Programm (Kapitel 11)
+name: hello
+version: 0.1.0
+type: executable
+
+# Datei mit i32 main(string[] args); liegt direkt im Quellordner,
+# gehört also zum Wurzelpaket und hat keine package-Zeile.
+main: src/main.rpp
+
+# Quellordner. Der Paketname muss dem Verzeichnis relativ zum Quellordner
+# entsprechen: src/hello/app/Greeter.rpp enthält "package hello.app;".
+sources:
+  - src
+
+# Direkt verwendbar sind nur Typen aus hier eingetragenen Bibliotheken,
+# nicht aus deren Abhängigkeiten. Die Bibliotheken unter rpp brauchen keinen Eintrag.
+dependencies:
+  - name: mathlib            # lokal
+    path: ../mathlib
+  - name: acme.json          # aus dem zentralen Verzeichnis, Mindestversion
+    version: "1.4"
+
+# Optional: eigenes oder gespiegeltes Verzeichnis
+# registry: https://registry.example.org
+
+# Eigene Symbole für die bedingte Kompilierung, je Modus.
+# Vordefiniert sind debug oder release sowie windows, linux oder macos.
+symbols:
+  debug: [TRACE]
+  release: []

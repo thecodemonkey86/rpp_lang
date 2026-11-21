@@ -1,0 +1,26 @@
+// Konformitätstest Kapitel 4 – Laufzeit.
+// Regel: R-4.1, R-4.2, R-4.11, R-4.15, R-4.16, R-4.17
+// Erwartet: Ausgabe "-128\n65535\n-3\n-1\n1\n-7\n-4\n1073741820\nfalse\ntrue\ntrue\n8"; Exit-Code 0
+i32 main(string[] args) {
+    print(i8::MIN.toString());
+    print(ui16::MAX.toString());
+    i32 a = -7;
+    print((a / 2).toString());
+    print((a % 2).toString());
+    print((7 % -2).toString());
+    i32 b = a;
+    b = 0;
+    print(a.toString());
+    print((-16 >> 2).toString());
+    ui32 u = 4_294_967_280;
+    print((u >> 2).toString());
+    f64 zero = 0.0;
+    f64 nan = zero / zero;
+    print((nan == nan).toString());
+    print((nan != nan).toString());
+    f32 inf = cast<f32>(1.0e300);
+    print((inf > f32::MAX).toString());
+    i8 m = 1;
+    print((m << 3).toString());
+    return 0;
+}

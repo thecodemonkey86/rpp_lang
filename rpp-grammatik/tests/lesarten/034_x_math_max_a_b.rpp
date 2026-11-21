@@ -1,0 +1,3 @@
+// Name: x = Math::max(a, b);
+// Lesart: exprStatement
+class T { void m() { x = Math::max(a, b); } }

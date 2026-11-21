@@ -1,0 +1,21 @@
+class Lambdas {
+public:
+    Func<i32, i32> makeAdder(i32 offset) {
+        return own (i32 x) => x + offset;
+    }
+
+    void demo(i32[] numbers, Button button, own Connection conn) {
+        i32 limit = 10;
+        i32 sum = 0;
+        numbers.forEach((i32 n) => {
+            if (n < limit) { sum += n; }
+        });
+        i32[] big = numbers.filter((i32 n) => n > limit);
+        numbers.sort((i32 a, i32 b) => a < b, true);
+        button.onClick(own () => { conn.close(); });
+        run(() => print("x"));
+        i32 r = apply((i32 x) => (x + 1) * 2, (sum));
+        Func<i32, i32> f = makeAdder(1);
+        i32 y = f(2);
+    }
+}

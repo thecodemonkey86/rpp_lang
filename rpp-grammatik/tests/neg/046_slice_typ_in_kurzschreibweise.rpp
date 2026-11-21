@@ -1,0 +1,2 @@
+// Name: Slice-Typ in Kurzschreibweise
+class T { void m() { i32[..] s = a[..]; } }

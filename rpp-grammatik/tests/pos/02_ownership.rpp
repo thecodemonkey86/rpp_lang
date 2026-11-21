@@ -1,0 +1,44 @@
+package demo.ownership;
+using demo.util.Logger;
+
+class Node {
+private:
+    string name;
+    shared Node? next;
+    weak Node? parent;
+    Foo payload;
+public:
+    constructor(string name, own Foo payload, shared Node? next) {
+        this.name = name;
+        this.payload = payload;
+        this.next = next;
+    }
+
+    string getName() {
+        return name;
+    }
+
+    void setName(string n) & {
+        this.name = n;
+    }
+}
+
+class Service {
+public:
+    void rename(Node& node, string name) {
+        node.setName(name);
+    }
+
+    void print(Node node) {
+        print(node.getName());
+    }
+
+    void run() {
+        Foo payload = new Foo();
+        Node node = new Node("a", payload, null);
+        rename(&node, "b");
+        print(node);
+        shared Node s = new Node("c", new Foo(), null);
+        weak Node w = s;
+    }
+}

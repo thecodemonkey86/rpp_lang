@@ -1,0 +1,2 @@
+// Name: Zuweisung als Argument
+class T { void m() { f(x = 1); } }

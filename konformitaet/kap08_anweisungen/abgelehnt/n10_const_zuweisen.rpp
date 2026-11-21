@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.18
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (limit ist const).
+package konformitaet.kap08;
+
+class T {
+public:
+    void m(i32 n, f64 d, string s, bool flag) {
+        const i32 limit = 10;
+        limit = 20; // FEHLER
+    }
+}

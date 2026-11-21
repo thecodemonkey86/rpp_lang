@@ -1,0 +1,23 @@
+class Platform {
+    void show() {
+#if debug && !windows
+        print("Debug, nicht Windows");
+#elif debug
+        print("Debug unter Windows");
+#elif release && (linux || macos)
+        print("Release unter Unix");
+#else
+        print("Release unter Windows");
+#endif
+
+#if TRACE
+        print("Trace aktiv");
+#endif
+
+#if windows && linux
+        #if debug
+        this ist im inaktiven Zweig und wird nicht geprüft {{{
+        #endif
+#endif
+    }
+}

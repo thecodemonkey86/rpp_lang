@@ -1,0 +1,3 @@
+// Name: Shape s = Shape::Circle(1.0);
+// Lesart: localVarDecl
+class T { void m() { Shape s = Shape::Circle(1.0); } }

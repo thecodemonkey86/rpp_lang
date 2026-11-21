@@ -1,0 +1,2 @@
+// Name: Case-Marke mit Punkt
+class T { void m() { switch (c) { case Color.Blue: f(); } } }

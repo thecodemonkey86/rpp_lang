@@ -1,0 +1,73 @@
+// Konformitätstest Kapitel 10 – muss übersetzt werden.
+// Regel: R-10.13, R-10.15, R-10.16, R-10.17, R-4.37, R-4.38
+package konformitaet.kap10;
+
+class Foo {
+public:
+    i32 x = 0;
+    void bump() & { x++; }
+    copy(Foo other) { this.x = other.x; }
+}
+
+class Counter {
+public:
+    i32 n = 0;
+    void increment() & { n++; }
+}
+
+class Items {
+public:
+    Foo[] list = [];
+    void forEach(Func<Foo, void> f) {
+        for (Foo e : list) { f(e); }
+    }
+    void update(Func<Foo&, void> f) & {
+        for (Foo& e : &list) { f(&e); }
+    }
+    i32 sum(Func<Foo, i32> f) {
+        i32 s = 0;
+        for (Foo e : list) { s += f(e); }
+        return s;
+    }
+}
+
+class Button {
+private:
+    Func<void>? onClick;
+public:
+    void setHandler(own Func<void> f) & {
+        this.onClick = f;
+    }
+
+    void click() {
+        ref Func<void>? h = this.onClick;
+        if (h != null) {
+            h();
+        }
+    }
+}
+
+class Pipeline {
+public:
+    shared Func<i32, i32> step = own (i32 x) => x + 1;
+
+    i32 twice(Func<i32, i32> f, i32 v) {
+        return f(f(v));
+    }
+
+    i32 pass(Func<i32, i32> f) {
+        return twice(f, 1);
+    }
+
+    void consume(Func<own Foo, i32> f) {
+        i32 r = f(new Foo());
+    }
+
+    void demo(Button& b) {
+        b.setHandler(own () => print("klick"));
+        i32 r = pass((i32 x) => x * 3);
+        shared Func<i32, i32> s = step;
+        discard s(2);
+        consume((own Foo f) => f.x);
+    }
+}

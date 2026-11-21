@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 7 – muss abgelehnt werden.
+// Regel: R-7.24
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (T hat kein Mixin mit describe).
+package konformitaet.kap07;
+
+class Box<T> {
+public:
+    T value;
+    string show() {
+        return value.describe(); // FEHLER
+    }
+}

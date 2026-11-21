@@ -1,0 +1,3 @@
+// Name: Foo b = copy(a);
+// Lesart: localVarDecl
+class T { void m() { Foo b = copy(a); } }

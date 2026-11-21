@@ -1,0 +1,2 @@
+// Name: eingebautes print ohne Klammern
+class T { void m() { print "x"; } }

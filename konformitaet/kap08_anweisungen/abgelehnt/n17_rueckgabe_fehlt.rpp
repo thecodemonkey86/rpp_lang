@@ -1,0 +1,13 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.26
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (nicht jeder Weg endet mit return).
+package konformitaet.kap08;
+
+class T {
+public:
+    i32 m(bool flag) {
+        if (flag) {
+            return 1;
+        }
+    } // FEHLER
+}

@@ -1,0 +1,26 @@
+class Arrays {
+public:
+    void demo(string[]& target, Foo[] items) {
+        string[] colors = ["red", "yellow", "blue"];
+        colors.push("green");
+        i64 n = colors.length;
+        string first = colors[0];
+        colors[1] = "orange";
+        i32[][] grid = [[1, 2], [3, 4]];
+        i32 cell = grid[0][1];
+        string[] empty = [];
+
+        for (string c : colors) {
+            target.push(c);
+        }
+        for (var item : items) {
+            print(item.name());
+        }
+        Foo[] own_items = [new Foo(), new Foo()];
+        for (Foo& f : &own_items) {
+            f.reset();
+        }
+        fill(&colors);
+        Foo last = own_items.pop();
+    }
+}

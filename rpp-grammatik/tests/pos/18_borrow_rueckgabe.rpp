@@ -1,0 +1,40 @@
+class Table<K : Hashable & Equatable<K>, V> {
+public:
+    Entry<K, V>[] entries;
+
+    ref V? get(K key) {
+        for (Entry<K, V> e : entries) {
+            if (e.key == key) {
+                return e.value;
+            }
+        }
+        return null;
+    }
+
+    ref V& at(i64 i) & {
+        return &this.entries[i].value;
+    }
+
+    ref Entry<K, V> first() {
+        return this.entries[0];
+    }
+
+    abstract ref V& slot(K key) &;
+}
+
+mixin Store<T> {
+    ref T top();
+}
+
+class Use {
+public:
+    void demo(Table<string, Foo>& t) {
+        ref Foo? f = t.get("a");
+        if (f != null) {
+            f.run();
+        }
+        ref Foo& g = &t.at(0);
+        g.bump();
+        print(t.first().key);
+    }
+}

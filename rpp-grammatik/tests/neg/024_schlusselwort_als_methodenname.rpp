@@ -1,0 +1,2 @@
+// Name: Schlüsselwort als Methodenname
+class T { void m() { foo.copy(); } }

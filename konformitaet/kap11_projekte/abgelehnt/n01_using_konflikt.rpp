@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 11 – muss abgelehnt werden.
+// Regel: R-11.8
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Node ist doppelt eingebunden).
+package konformitaet.kap11;
+
+using acme.graph.Node;
+using acme.tree.Node;
+
+class T {
+public:
+    void m(Node n) { } // FEHLER
+}

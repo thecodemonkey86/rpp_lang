@@ -1,0 +1,48 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.4, R-13.19, R-13.20, R-13.21, R-13.22
+package konformitaet.kap13;
+
+using rpp.io.File;
+using rpp.io.Dir;
+using rpp.io.Path;
+using rpp.io.Console;
+using rpp.env.Env;
+using rpp.env.Os;
+
+class Tool {
+public:
+    string readConfig(string dir) {
+        string path = Path::join(dir, "config.yaml");
+        try {
+            File f = File::open(path);
+            return f.readAllText();
+        } catch (IOException e) {
+            Console::error("fehlt: " + e.path);
+            return "";
+        }
+    }
+
+    void list(string dir) {
+        if (!Dir::exists(dir)) {
+            Dir::create(dir);
+        }
+        string[] names = Dir::list(dir);
+        for (string name : names) {
+            if (Path::extension(name) == "rpp") {
+                Console::write(Path::fileName(name));
+                print("");
+            }
+        }
+        File::writeText(Path::join(dir, "out.txt"), "hallo");
+    }
+
+    string home() {
+        string? h = Env::get("HOME");
+        if (Env::os() == Os::Windows) {
+            h = Env::get("USERPROFILE");
+        }
+        return h ?? "";
+    }
+
+    string? line() { return Console::readLine(); }
+}

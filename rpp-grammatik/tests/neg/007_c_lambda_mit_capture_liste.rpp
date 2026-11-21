@@ -1,0 +1,2 @@
+// Name: C++-Lambda mit Capture-Liste
+class T { void m() { var f = [x](i32 a) { return a; }; } }

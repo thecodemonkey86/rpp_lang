@@ -1,0 +1,2 @@
+// Name: Zuweisung als Lambda-Rumpf
+class T { void m() { f((i32 a) => x = a); } }

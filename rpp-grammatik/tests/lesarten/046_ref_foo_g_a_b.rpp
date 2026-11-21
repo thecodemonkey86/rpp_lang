@@ -1,0 +1,3 @@
+// Name: ref Foo& g = &a.b;
+// Lesart: refDecl
+class T { void m() { ref Foo& g = &a.b; } }

@@ -1,0 +1,2 @@
+// Name: C-Cast
+class T { void m() { i32 a = (i32) b; } }

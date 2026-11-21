@@ -1,0 +1,42 @@
+// Konformitätstest Kapitel 4 – muss übersetzt werden.
+// Regel: R-4.21, R-4.22, R-4.23, R-4.24
+package konformitaet.kap04;
+
+abstract class Shape {
+public:
+    abstract f64 area();
+}
+
+class Circle : Shape {
+public:
+    f64 r;
+    constructor(f64 r) { this.r = r; }
+    override f64 area() { return 3.14 * r * r; }
+}
+
+class Point {
+    import Equatable<Point>;
+public:
+    i32 x;
+    i32 y;
+    constructor(i32 x, i32 y) { this.x = x; this.y = y; }
+    bool equals(Point other) { return x == other.x && y == other.y; }
+}
+
+class Uses {
+public:
+    f64 radius(Shape s) {
+        ref Circle? c = s as Circle;
+        if (c != null) {
+            return c.r;
+        }
+        return 0.0;
+    }
+
+    bool compare(Point a, Point b, shared Shape s, shared Shape t) {
+        Shape up = new Circle(1.0);
+        shared Circle? sc = s as Circle;
+        bool ident = same(s, t);
+        return a == b && a != new Point(0, 0);
+    }
+}

@@ -1,0 +1,18 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.23
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Box ist nicht Iterable).
+package konformitaet.kap08;
+
+class Box {
+public:
+    i32 v = 0;
+}
+
+class T {
+public:
+    void m(Box b) {
+        for (i32 x : b) { // FEHLER
+            print("x");
+        }
+    }
+}

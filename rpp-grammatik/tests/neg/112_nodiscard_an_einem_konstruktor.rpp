@@ -1,0 +1,2 @@
+// Name: nodiscard an einem Konstruktor
+class T { nodiscard constructor() { } }

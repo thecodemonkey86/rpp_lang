@@ -1,0 +1,21 @@
+// Konformitätstest Kapitel 5 – muss abgelehnt werden.
+// Regel: R-5.3 (T-Move), R-5.13
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (f ist nur geliehen und kann nicht gespeichert werden).
+package konformitaet.kap05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() & { this.value = this.value + 1; }
+}
+
+class Holder {
+public:
+    Foo stored;
+    constructor(own Foo p) { this.stored = p; }
+    void keep(Foo f) & {
+        this.stored = f; // FEHLER
+    }
+}

@@ -1,0 +1,2 @@
+// Name: Feldzugriff als Anweisung
+class T { void m() { a.b; } }

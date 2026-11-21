@@ -1,0 +1,22 @@
+// Regeln: R-5.5, R-5.6, R-5.18, V-1, V-6, V-9
+// erwartet: Ausgabe 7 8 0 100
+class A {
+    int v;
+    int get() ro { return copy this.v; }
+    int inc() mut { this.v = copy this.v + 1; return 0; }
+    destructor() { print(copy this.v); }
+}
+class Box {
+    weak A w;
+}
+main {
+    shared A s = share new A(7);
+    weak A w = demote copy s;
+    upgrade t = w { print(t.get()); } else { print(0); }
+    shared A s2 = copy s;
+    s2.inc();                       // V-1: veränderbar über shared
+    own Box b = new Box(copy w);
+    s = share new A(100);           // Zähler von A(8) sinkt auf 1
+    s2 = copy s;                    // A(8) wird freigegeben
+    upgrade u = b.w { print(1); } else { print(0); }
+}

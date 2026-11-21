@@ -1,0 +1,2 @@
+// Name: Array-Größe als Ausdruck
+class T { void m() { i32[2 + 2] a = b; } }

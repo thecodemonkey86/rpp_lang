@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.11, R-13.12, R-13.13, R-13.14
+// Erwartet: Ausgabe "Grüße, Welt\n11\n13\nWELT\n7\nGrüße, R++\nGrüße-Welt\nabc\nd\n5\ntruetrue\n2147483647\n5"; Exit-Code 0
+using rpp.text.StringBuilder;
+
+i32 main(string[] args) {
+    string s = "  Grüße, Welt  ";
+    string t = s.trim();
+    print(t);
+    print(t.length.toString());
+    print(t.byteLength.toString());
+    print(t.substring(7, 11).toUpper());
+    print((t.indexOf("Welt") ?? -1).toString());
+    print(t.replace("Welt", "R++"));
+    print(string::join("-", t.split(", ")));
+    StringBuilder sb = new StringBuilder();
+    sb.append("a");
+    sb.appendChar('b');
+    sb.appendLine("c");
+    sb.append("d");
+    print(sb.toString());
+    print(sb.length().toString());
+    print('x'.isLetter().toString() + '7'.isDigit().toString());
+    print(i32::MAX.toString());
+    print((-5).abs().toString());
+    return 0;
+}

@@ -1,0 +1,10 @@
+// Konformitätstest Kapitel 11 – muss abgelehnt werden.
+// Regel: R-11.14
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (ein Programm hat genau eine main).
+i32 main(string[] args) {
+    return 0;
+}
+
+i32 main(string[] argv) { // FEHLER
+    return 1;
+}

@@ -1,0 +1,12 @@
+# Beispiel: lokale Bibliothek (Kapitel 11)
+name: mathlib
+version: 1.2.0
+type: library
+
+# Alle Pakete einer Bibliothek beginnen mit ihrem Namen: mathlib.geometry usw.
+# Eine Bibliothek hat kein Wurzelpaket und keine main.
+# In anderen Projekten nutzbar sind nur Typen mit "export".
+# Zum Veröffentlichen im zentralen Verzeichnis braucht sie einen Namen
+# mit Besitzer, z. B. acme.mathlib (dann beginnen die Pakete mit acme.mathlib).
+sources:
+  - src

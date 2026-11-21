@@ -1,0 +1,2 @@
+// Name: as mit Ausdruck statt Typ
+class T { void m() { x = s as (a + b); } }

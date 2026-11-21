@@ -1,0 +1,2 @@
+// Name: using-Alias mit qualifiziertem Namen
+using a.X = b.Y;

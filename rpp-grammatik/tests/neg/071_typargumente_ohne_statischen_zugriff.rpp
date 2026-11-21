@@ -1,0 +1,2 @@
+// Name: Typargumente ohne statischen Zugriff
+class T { void m() { x = List<Foo>; } }

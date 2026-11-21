@@ -1,0 +1,2 @@
+// Name: :: nach einem Aufruf
+class T { void m() { x = f()::g; } }

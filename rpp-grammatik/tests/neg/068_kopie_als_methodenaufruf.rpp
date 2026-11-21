@@ -1,0 +1,2 @@
+// Name: Kopie als Methodenaufruf
+class T { void m() { Foo b = a.copy(); } }

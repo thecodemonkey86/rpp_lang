@@ -1,0 +1,8 @@
+package app.view;
+using app.model.Point;
+
+// Ohne export im ganzen Projekt sichtbar (R-11.9).
+class Render {
+public:
+    string show(Point p) { return p.x.toString() + "," + p.y.toString(); }
+}

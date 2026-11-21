@@ -1,0 +1,2 @@
+// Name: try ohne catch und finally
+class T { void m() { try { f(); } } }

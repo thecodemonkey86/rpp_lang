@@ -1,0 +1,3 @@
+// Name: for über statischen Aufruf
+// Lesart: forEachStmt
+class T { void m() { for (Foo f : Registry::all()) { } } }

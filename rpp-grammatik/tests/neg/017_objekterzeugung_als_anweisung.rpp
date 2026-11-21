@@ -1,0 +1,2 @@
+// Name: Objekterzeugung als Anweisung
+class T { void m() { new Foo(); } }

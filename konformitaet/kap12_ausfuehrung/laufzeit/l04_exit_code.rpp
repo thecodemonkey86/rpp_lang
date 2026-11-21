@@ -1,0 +1,7 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.9
+// Erwartet: Ausgabe "ende"; Exit-Code 3
+i32 main(string[] args) {
+    print("ende");
+    return 3;
+}

@@ -1,0 +1,3 @@
+// Name: x = a[i++] + --j;
+// Lesart: exprStatement
+class T { void m() { x = a[i++] + --j; } }

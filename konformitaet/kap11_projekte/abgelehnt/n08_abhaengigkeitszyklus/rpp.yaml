@@ -1,0 +1,12 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.16
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (acme.a und acme.b hängen voneinander ab).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+dependencies:
+  - name: acme.a
+    path: a

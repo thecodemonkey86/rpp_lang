@@ -1,0 +1,45 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.6, R-13.7, R-13.8, R-13.18
+package konformitaet.kap13;
+
+using rpp.collections.Set;
+using rpp.collections.Map;
+
+class Version {
+    import Comparable<Version>;
+    import Hashable;
+public:
+    i32 major;
+    i32 minor;
+    constructor(i32 a, i32 b) { this.major = a; this.minor = b; }
+    bool equals(Version other) { return major == other.major && minor == other.minor; }
+    i32 compareTo(Version other) {
+        if (major != other.major) {
+            return major - other.major;
+        }
+        return minor - other.minor;
+    }
+    i64 hash() { return cast<i64>(major) * 1000 + minor; }
+}
+
+class Use {
+public:
+    void demo(Version a, Version b) {
+        bool eq = a == b;
+        bool lt = a < b;
+        bool ge = a >= b;
+        Version[] all = [new Version(1, 2), new Version(1, 0)];
+        all.sort();
+        Set<Version> seen = new Set<Version>();
+        seen.add(new Version(2, 0));
+        bool has = seen.contains(a);
+        i64 n = seen.length();
+        Map<Version, string> names = new Map<Version, string>();
+        names.put(new Version(1, 0), "eins");
+        for (Version v : seen) {
+            print(v.major.toString());
+        }
+        Set<string> words = new Set<string>();
+        words.add("a");
+    }
+}

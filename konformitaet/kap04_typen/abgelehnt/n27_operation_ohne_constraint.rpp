@@ -1,0 +1,11 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.42
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (< ist für T ohne Comparable nicht zugesagt).
+package konformitaet.kap04;
+
+class Util {
+public:
+    static bool less<T>(T a, T b) {
+        return a < b; // FEHLER
+    }
+}

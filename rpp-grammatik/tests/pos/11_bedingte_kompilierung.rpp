@@ -1,0 +1,14 @@
+class Foo {
+    void bar() {
+#if debug
+        print("Debugmodus");
+#else
+        print("Releasemodus");
+        das hier ist kein gültiger Code }}} und wird übersprungen
+#endif
+    }
+
+#if release
+    void nurImRelease( {
+#endif
+}

@@ -1,0 +1,2 @@
+// Name: Bereich außerhalb eines Index
+class T { void m() { x = 1..3; } }

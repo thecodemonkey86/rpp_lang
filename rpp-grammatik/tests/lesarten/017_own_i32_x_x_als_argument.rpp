@@ -1,0 +1,3 @@
+// Name: own (i32 x) => x; als Argument
+// Lesart: exprStatement
+class T { void m() { f(own (i32 x) => x); } }

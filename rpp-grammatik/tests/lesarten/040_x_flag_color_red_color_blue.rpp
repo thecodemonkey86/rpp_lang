@@ -1,0 +1,3 @@
+// Name: x = flag ? Color::Red : Color::Blue;
+// Lesart: exprStatement
+class T { void m() { x = flag ? Color::Red : Color::Blue; } }

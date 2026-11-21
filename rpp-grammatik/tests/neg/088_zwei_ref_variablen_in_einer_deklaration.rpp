@@ -1,0 +1,2 @@
+// Name: zwei ref-Variablen in einer Deklaration
+class T { void m() { ref Foo a = x, b = y; } }

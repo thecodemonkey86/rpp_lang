@@ -1,0 +1,10 @@
+i32 main(string[] args) {
+#if debug && TRACE
+    print("trace");
+#elif release || (linux && !TRACE) || windows || macos
+    print("anderes");
+#else
+    Dieser Zweig ist nie aktiv und wird deshalb nicht geprüft: @@@
+#endif
+    return 0;
+}

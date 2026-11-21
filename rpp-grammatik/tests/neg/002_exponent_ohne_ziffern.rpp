@@ -1,0 +1,2 @@
+// Name: Exponent ohne Ziffern
+class T { static const f64 X = 1.0e; }

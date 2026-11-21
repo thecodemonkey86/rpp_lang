@@ -1,0 +1,4 @@
+// Name: #else ohne #if
+class T {
+#else
+}

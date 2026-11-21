@@ -1,0 +1,11 @@
+// Konformitätstest Kapitel 11 – muss abgelehnt werden.
+// Regel: R-11.8
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (der Alias verdeckt den Typ Point des eigenen Pakets).
+package konformitaet.kap11;
+
+using Point = acme.geo.Point; // FEHLER
+
+class Point {
+public:
+    i32 x = 0;
+}

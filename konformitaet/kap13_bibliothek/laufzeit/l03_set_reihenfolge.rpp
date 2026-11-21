@@ -1,0 +1,17 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.18
+// Erwartet: Ausgabe "c\na\nb\n3"; Exit-Code 0
+using rpp.collections.Set;
+
+i32 main(string[] args) {
+    Set<string> s = new Set<string>();
+    s.add("c");
+    s.add("a");
+    s.add("b");
+    s.add("a");
+    for (string x : s) {
+        print(x);
+    }
+    print(s.length().toString());
+    return 0;
+}

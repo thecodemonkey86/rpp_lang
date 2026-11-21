@@ -1,0 +1,3 @@
+// Name: ref Foo? n = this.next;
+// Lesart: refDecl
+class T { void m() { ref Foo? n = this.next; } }

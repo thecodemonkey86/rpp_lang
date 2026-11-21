@@ -1,0 +1,3 @@
+// Name: Slice<i32> s = v[1..3];
+// Lesart: localVarDecl
+class T { void m() { Slice<i32> s = v[1..3]; } }

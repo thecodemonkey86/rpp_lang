@@ -1,0 +1,57 @@
+// Konformitätstest Kapitel 5 – muss übersetzt werden.
+// Regel: R-5.3, R-5.12, R-5.15, R-5.16, V-5
+package konformitaet.kap05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() & { this.value = this.value + 1; }
+}
+
+class Moves {
+public:
+    void take(own Foo f) { }
+    Foo pass(own Foo f) { return f; }
+
+    // R-5.12: Nach einem Move wird die Variable neu belegt.
+    void neuBelegen() {
+        Foo a = new Foo(1);
+        take(a);
+        a = new Foo(2);
+        a.run();
+        a = pass(a);
+        a.run();
+    }
+
+    // R-5.15: Move in beiden Zweigen.
+    void beideZweige(bool flag) {
+        Foo a = new Foo(1);
+        if (flag) {
+            take(a);
+        } else {
+            take(a);
+        }
+    }
+
+    // R-5.15, V-5: Move in einem Zweig; danach entscheidet das Drop-Flag.
+    void einZweig(bool flag) {
+        Foo a = new Foo(1);
+        if (flag) {
+            take(a);
+        }
+    }
+
+    // R-5.16: Move in der Schleife mit Neubelegung im selben Durchlauf.
+    void schleife(i32 n) {
+        Foo a = new Foo(0);
+        i32 i = 0;
+        while (i < n) {
+            take(a);
+            a = new Foo(i);
+            i++;
+        }
+        a.run();
+    }
+}

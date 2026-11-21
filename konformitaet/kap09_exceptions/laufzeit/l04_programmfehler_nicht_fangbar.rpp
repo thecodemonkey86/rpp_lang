@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 9 – Laufzeit.
+// Regel: R-9.1, R-9.2, R-9.3, R-9.14
+// Erwartet: Ausgabe "finally"; Exit-Code 2; Fehlerausgabe enthält "IndexError"
+i32 main(string[] args) {
+    i32[] xs = [1];
+    try {
+        i32 x = xs[3];
+    } catch (Exception e) {
+        print("gefangen");
+    } finally {
+        print("finally");
+    }
+    return 0;
+}

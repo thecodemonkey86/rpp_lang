@@ -1,0 +1,25 @@
+class Numbers {
+public:
+    void demo(i64 big, i32 small) {
+        const i32 MAX = 10;
+        var x = new Foo();
+        var n = 42;
+        const var name = "abc";
+        i8 tiny = cast<i8>(300);
+        f32 f = cast<f32>(small);
+        i64 wide = small;
+        i32 idx = cast<i32>(big) + cast<i32>(1.5 * 2.0);
+        Foo? maybe = cast<Foo?>(x);
+        i32 hex = 0xFF;
+        char c = 'a';
+        char nl = '\n';
+        string esc = "a \"b\" \\ c";
+    }
+}
+
+i32 main(string[] args) {
+    print("Hallo");
+    Numbers n = new Numbers();
+    n.demo(1, 2);
+    return 0;
+}

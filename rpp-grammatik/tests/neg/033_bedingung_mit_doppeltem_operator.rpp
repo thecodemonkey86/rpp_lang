@@ -1,0 +1,5 @@
+// Name: Bedingung mit doppeltem Operator
+class T {
+#if debug && && linux
+#endif
+}

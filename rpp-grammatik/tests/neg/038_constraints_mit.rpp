@@ -1,0 +1,2 @@
+// Name: Constraints mit |
+class C<T : A | B> { }

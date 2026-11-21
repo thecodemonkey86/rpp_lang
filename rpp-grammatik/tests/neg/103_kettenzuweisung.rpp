@@ -1,0 +1,2 @@
+// Name: Kettenzuweisung
+class T { void m() { x = y = 0; } }

@@ -1,0 +1,2 @@
+// Name: new-Constraint mit Parametern
+class Pool<T : new(i32)> { }

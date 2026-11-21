@@ -1,0 +1,7 @@
+// Name: #elif nach #else
+class T {
+#if debug
+#else
+#elif linux
+#endif
+}

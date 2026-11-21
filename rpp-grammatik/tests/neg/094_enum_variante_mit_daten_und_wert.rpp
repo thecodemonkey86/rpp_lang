@@ -1,0 +1,2 @@
+// Name: Enum-Variante mit Daten und Wert
+enum E { A(i32 x) = 1 }

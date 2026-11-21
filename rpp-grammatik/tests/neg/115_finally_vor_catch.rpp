@@ -1,0 +1,2 @@
+// Name: finally vor catch
+class T { void m() { try { f(); } finally { } catch (Exception e) { } } }

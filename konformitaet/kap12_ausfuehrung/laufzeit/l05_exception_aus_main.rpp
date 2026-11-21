@@ -1,0 +1,6 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.9, R-9.15
+// Erwartet: Exit-Code 1; Fehlerausgabe enthält "kaputt"
+i32 main(string[] args) {
+    throw new Exception("kaputt");
+}

@@ -1,0 +1,2 @@
+// Name: Bedingungsausdruck als Anweisung
+class T { void m() { a ? b : c; } }

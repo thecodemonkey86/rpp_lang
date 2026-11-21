@@ -1,0 +1,3 @@
+// Name: ref Circle? c = s as Circle;
+// Lesart: refDecl
+class T { void m() { ref Circle? c = s as Circle; } }

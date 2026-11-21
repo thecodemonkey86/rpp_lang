@@ -1,0 +1,8 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.17, R-13.1
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (der Besitzer rpp ist reserviert).
+name: rpp.tools   # FEHLER
+version: 0.1.0
+type: library
+sources:
+  - src

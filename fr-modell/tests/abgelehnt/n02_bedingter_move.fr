@@ -1,0 +1,25 @@
+// erwartet: Fehler O-Var in der mit FEHLER markierten Zeile
+// ohne Typprüfung: Fehlerzustand
+class A {
+    int v;
+    int get() ro { return copy this.v; }
+    int inc() mut { this.v = copy this.v + 1; return 0; }
+    destructor() { print(copy this.v); }
+}
+class Ops {
+    int take(own A a) ro { return 0; }
+    int swap(mut A x, mut A y) ro { x.v = copy y.v; return 0; }
+    int mix(own A x, ref A y) ro { return 0; }
+    int mix2(ref A x, own A y) ro {
+        own A z = move y;
+        z = new A(0);
+        return x.get();
+    }
+}
+main {
+    own Ops t = new Ops();
+    own A a = new A(1);
+    int c = 1;
+    if (c) { t.take(move a); } else { }
+    a.inc(); // FEHLER
+}

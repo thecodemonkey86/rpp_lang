@@ -1,0 +1,60 @@
+// Konformitätstest Kapitel 6 – muss übersetzt werden.
+// Regel: R-6.21, R-6.22, R-6.12, R-6.1
+package konformitaet.kap06;
+
+class Shape {
+public:
+    virtual f64 area() { return 0.0; }
+}
+
+class Circle : Shape {
+public:
+    f64 r = 1.0;
+    override f64 area() { return r; }
+}
+
+class Node {
+public:
+    i32 v = 0;
+    void run() { }
+}
+
+class T {
+public:
+    f64 radius(Shape s) {
+        ref Circle? c = s as Circle;
+        if (c != null) {
+            return c.r;
+        }
+        return 0.0;
+    }
+
+    void weakZugriff(weak Node w) {
+        shared Node? n = w.lock();
+        if (n == null) {
+            return;
+        }
+        n.run();
+    }
+
+    // Der Fakt x != null gilt auch in catch und finally, weil try ihn nicht aufhebt.
+    void imTry(Node? x) {
+        if (x == null) {
+            return;
+        }
+        try {
+            x.run();
+        } catch (Exception e) {
+            x.run();
+        } finally {
+            x.run();
+        }
+    }
+
+    // this und das Ergebnis von new sind nie null.
+    Node frisch() {
+        Node n = new Node();
+        n.run();
+        return n;
+    }
+}

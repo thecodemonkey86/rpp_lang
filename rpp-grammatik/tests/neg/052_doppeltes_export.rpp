@@ -1,0 +1,2 @@
+// Name: doppeltes export
+export export class A { }

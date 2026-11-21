@@ -1,0 +1,2 @@
+// Name: Enum-Wert als Ausdruck
+enum E { A = 1 + 1 }

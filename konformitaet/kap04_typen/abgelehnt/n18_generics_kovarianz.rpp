@@ -1,0 +1,15 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.43
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (List<Circle> ist kein List<Shape>).
+package konformitaet.kap04;
+
+class Shape { }
+class Circle : Shape { }
+
+class T {
+public:
+    void take(List<Shape> xs) { }
+    void m(List<Circle> cs) {
+        take(cs); // FEHLER
+    }
+}

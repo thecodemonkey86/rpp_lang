@@ -1,0 +1,50 @@
+// Konformitätstest Kapitel 9 – muss übersetzt werden.
+// Regel: R-9.19
+package konformitaet.kap09;
+using rpp.core.Exception;
+
+class ParseError : Exception {
+public:
+    i64 line;
+    constructor(string message, i64 line) : base(message) {
+        this.line = line;
+    }
+}
+
+class SyntaxError : ParseError {
+public:
+    constructor(string message) : base(message, 0) { }
+}
+
+enum Kind { A, B }
+
+class Checks {
+public:
+    i32 code(Kind k) {
+        switch (k) {
+            case A:
+                return 1;
+            case B:
+                return 2;
+        }
+    }
+
+    i32 index(i32 x) {
+        if (x >= 0) {
+            return x;
+        }
+        fail("negativer Index ist hier unmöglich");
+    }
+
+    void guard(Foo? f) {
+        if (f == null) {
+            fail("f fehlt");
+        }
+        f.run();
+    }
+}
+
+class Foo {
+public:
+    void run() { }
+}

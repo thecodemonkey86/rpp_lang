@@ -1,0 +1,9 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.2
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (die Datei liegt in app, nennt aber das Paket other).
+name: pakete
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src

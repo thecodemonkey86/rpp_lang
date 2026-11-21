@@ -1,0 +1,11 @@
+# Konformitätstest Kapitel 11 – muss übersetzt werden.
+# Regel: R-11.10, R-11.12, R-11.15, R-11.17, R-11.18
+name: geoapp
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+dependencies:
+  - name: acme.geo
+    path: geo

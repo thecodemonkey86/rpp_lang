@@ -1,0 +1,9 @@
+[package]
+name = "rppc"
+description = "R++: Kommandozeile der ersten Implementierung"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpp-syntax = { path = "../rpp-syntax" }

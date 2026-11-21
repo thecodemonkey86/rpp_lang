@@ -1,0 +1,3 @@
+// Name: ref Foo f = list[0];
+// Lesart: refDecl
+class T { void m() { ref Foo f = list[0]; } }

@@ -1,0 +1,2 @@
+// Name: nodiscard an einem Feld
+class T { nodiscard i32 x; }

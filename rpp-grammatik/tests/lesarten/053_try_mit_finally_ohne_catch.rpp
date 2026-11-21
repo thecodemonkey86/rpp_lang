@@ -1,0 +1,3 @@
+// Name: try mit finally ohne catch
+// Lesart: tryStmt
+class T { void m() { try { f(); } finally { g(); } } }

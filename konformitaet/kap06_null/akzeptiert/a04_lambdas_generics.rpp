@@ -1,0 +1,36 @@
+// Konformitätstest Kapitel 6 – muss übersetzt werden.
+// Regel: R-6.13, R-6.20, R-10.12
+package konformitaet.kap06;
+
+class Node {
+public:
+    string name;
+    Node? child;
+    shared Node? next;
+    weak Node? parent;
+    i32? count;
+    Node?[] slots;
+    constructor(string n) { this.name = n; }
+    bool ok() { return true; }
+    void run() { }
+    void touch() & { }
+}
+
+class Box<T> {
+public:
+    T? value;
+    T? get() { return value; }
+}
+
+class T {
+public:
+    void each(i32[] xs, Func<i32, void> f) { }
+
+    void m(Node? x, i32[] xs, Box<Node?> b) {
+        if (x == null) {
+            return;
+        }
+        each(xs, (i32 i) => { x.run(); });
+        Node? inner = b.get();
+    }
+}

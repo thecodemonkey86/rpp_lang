@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.16
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (inner gilt nur bis zum Ende seines Blocks).
+package konformitaet.kap08;
+
+class T {
+public:
+    void m() {
+        {
+            i32 inner = 1;
+        }
+        print(inner.toString()); // FEHLER
+    }
+}

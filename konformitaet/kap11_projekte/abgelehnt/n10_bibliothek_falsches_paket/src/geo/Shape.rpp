@@ -1,0 +1,4 @@
+package geo; // FEHLER
+
+export class Shape {
+}

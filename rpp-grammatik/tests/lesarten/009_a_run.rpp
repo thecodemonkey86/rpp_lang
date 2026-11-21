@@ -1,0 +1,3 @@
+// Name: (a).run();
+// Lesart: exprStatement
+class T { void m() { (a).run(); } }

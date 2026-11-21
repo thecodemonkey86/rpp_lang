@@ -1,0 +1,10 @@
+// Konformitätstest Kapitel 4 – Laufzeit.
+// Regel: R-4.15, R-9.2, R-9.3
+// Erwartet: Ausgabe "vorher"; Exit-Code 2; Fehlerausgabe enthält "DivisionError"
+i32 main(string[] args) {
+    i32 zero = 0;
+    print("vorher");
+    i32 x = 10 / zero;
+    print(x.toString());
+    return 0;
+}

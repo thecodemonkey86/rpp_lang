@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 8 – Laufzeit.
+// Regel: R-8.22, R-8.25
+// Erwartet: Ausgabe "1\n0134\n3"; Exit-Code 0
+i32 main(string[] args) {
+    i32 n = 0;
+    do {
+        n++;
+    } while (false);
+    print(n.toString());
+    string s = "";
+    for (i32 i = 0; i < 5; i++) {
+        if (i == 2) {
+            continue;
+        }
+        s = s + i.toString();
+    }
+    print(s);
+    for (i32 i = 0; ; i++) {
+        if (i == 3) {
+            print(i.toString());
+            break;
+        }
+    }
+    return 0;
+}

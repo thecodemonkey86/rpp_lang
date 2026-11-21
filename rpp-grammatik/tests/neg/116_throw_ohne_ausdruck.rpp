@@ -1,0 +1,2 @@
+// Name: throw ohne Ausdruck
+class T { void m() { throw; } }

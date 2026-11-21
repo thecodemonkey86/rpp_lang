@@ -1,0 +1,2 @@
+// Name: Mixin mit Sichtbarkeits-Label
+mixin M { public: void f() { } }

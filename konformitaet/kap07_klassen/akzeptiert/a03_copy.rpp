@@ -1,0 +1,24 @@
+// Konformitätstest Kapitel 7 – muss übersetzt werden.
+// Regel: R-7.10, R-7.11
+package konformitaet.kap07;
+
+class Shape {
+public:
+    string name;
+    constructor(string n) { this.name = n; }
+    copy(Shape other) { this.name = other.name; }
+}
+
+class Circle : Shape {
+public:
+    f64 r;
+    constructor(f64 r) : base("Kreis") { this.r = r; }
+    copy(Circle other) { this.r = other.r; }
+}
+
+class Use {
+public:
+    void demo(Shape s) {
+        Shape kopie = copy(s);
+    }
+}

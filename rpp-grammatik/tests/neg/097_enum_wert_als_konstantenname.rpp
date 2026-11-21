@@ -1,0 +1,2 @@
+// Name: Enum-Wert als Konstantenname
+enum E { A = N }

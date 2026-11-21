@@ -1,0 +1,3 @@
+// Name: a[N] = b;  ist eine Zuweisung
+// Lesart: exprStatement
+class T { void m() { a[N] = b; } }

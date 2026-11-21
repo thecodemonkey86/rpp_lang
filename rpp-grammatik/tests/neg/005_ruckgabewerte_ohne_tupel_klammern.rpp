@@ -1,0 +1,2 @@
+// Name: Rückgabewerte ohne Tupel-Klammern
+class T { i32, string f() { return (1, "a"); } }

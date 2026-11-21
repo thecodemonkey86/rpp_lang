@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.8
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (++ nur für Ganzzahlen).
+package konformitaet.kap08;
+
+class T {
+public:
+    void m(i32 n, f64 d, string s, bool flag) {
+        f64 x = d;
+        x++; // FEHLER
+    }
+}

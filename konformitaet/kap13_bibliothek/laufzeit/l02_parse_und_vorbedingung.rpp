@@ -1,0 +1,16 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.4, R-13.11, R-13.16
+// Erwartet: Ausgabe "-1\nFormatException"; Exit-Code 2; Fehlerausgabe enthält "IndexError"
+i32 main(string[] args) {
+    i32? a = i32::tryParse("12x");
+    print((a ?? -1).toString());
+    try {
+        i32 b = i32::parse("99999999999");
+        print(b.toString());
+    } catch (FormatException e) {
+        print("FormatException");
+    }
+    i32[] xs = [1];
+    i32 r = xs.remove(5);
+    return 0;
+}

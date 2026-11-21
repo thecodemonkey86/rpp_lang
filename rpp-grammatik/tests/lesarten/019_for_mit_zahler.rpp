@@ -1,0 +1,3 @@
+// Name: for mit Zähler
+// Lesart: forStmt
+class T { void m() { for (Foo f = a; f.ok(); f.next()) { } } }

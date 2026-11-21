@@ -1,0 +1,4 @@
+package rpp.tools;
+
+export class Tool {
+}

@@ -1,0 +1,5 @@
+// Name: Bedingung mit fehlender Klammer
+class T {
+#if (debug && linux
+#endif
+}

@@ -1,0 +1,30 @@
+mixin Equatable<T> {
+    bool equals(T other);
+}
+
+mixin Comparable<T> {
+    import Equatable<T>;
+    i32 compareTo(T other);
+    bool less(T other) { return compareTo(other) < 0; }
+}
+
+class Pool<T : Comparable<T> & new()> {
+    T[] items;
+
+    T make() {
+        return new T();
+    }
+}
+
+class Shape {
+public:
+    virtual string describe() { return "Form"; }
+}
+
+class Circle : Shape {
+    import Printable;
+public:
+    override string describe() {
+        return base.describe() + " Kreis " + Printable::describe();
+    }
+}

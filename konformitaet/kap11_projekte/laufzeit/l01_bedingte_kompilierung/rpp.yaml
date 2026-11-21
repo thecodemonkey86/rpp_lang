@@ -1,0 +1,13 @@
+# Konformitätstest Kapitel 11 – Laufzeit.
+# Regel: R-11.23, R-11.24, R-11.25
+# Erwartet (debug): Ausgabe "trace"; Exit-Code 0
+# Erwartet (release): Ausgabe "anderes"; Exit-Code 0
+name: bedingt
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+symbols:
+  debug: [TRACE]
+  release: []

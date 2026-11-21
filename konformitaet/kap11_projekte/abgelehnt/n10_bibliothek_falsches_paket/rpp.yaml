@@ -1,0 +1,8 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.18
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (die Pakete von acme.geo müssen mit acme.geo beginnen).
+name: acme.geo
+version: 1.0.0
+type: library
+sources:
+  - src

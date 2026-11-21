@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 8 – muss übersetzt werden und eine Warnung erzeugen.
+// Regel: R-8.27, R-8.1
+// Erwartet: genau eine Warnung, in der mit WARNUNG markierten Zeile (unerreichbarer Code).
+package konformitaet.kap08;
+
+class Dead {
+public:
+    i32 m(i32 x) {
+        return x;
+        print("nie"); // WARNUNG
+    }
+}

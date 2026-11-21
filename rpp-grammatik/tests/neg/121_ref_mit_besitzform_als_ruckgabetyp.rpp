@@ -1,0 +1,2 @@
+// Name: ref mit Besitzform als Rückgabetyp
+class T { ref shared Foo f() { return x; } }

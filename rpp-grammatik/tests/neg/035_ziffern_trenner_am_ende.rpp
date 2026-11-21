@@ -1,0 +1,2 @@
+// Name: Ziffern-Trenner am Ende
+class T { void m() { i32 x = 1_; } }

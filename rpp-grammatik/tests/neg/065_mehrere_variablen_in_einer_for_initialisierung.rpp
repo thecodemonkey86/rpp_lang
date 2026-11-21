@@ -1,0 +1,2 @@
+// Name: mehrere Variablen in einer for-Initialisierung
+class T { void m() { for (i32 i = 0, j = 1; i < j; i++) { } } }

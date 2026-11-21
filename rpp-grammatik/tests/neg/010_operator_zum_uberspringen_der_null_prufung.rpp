@@ -1,0 +1,2 @@
+// Name: Operator ! zum Überspringen der Null-Prüfung
+class T { void m() { x!.foo(); } }

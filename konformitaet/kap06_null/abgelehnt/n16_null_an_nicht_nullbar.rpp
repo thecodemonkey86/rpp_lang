@@ -1,0 +1,16 @@
+// Konformitätstest Kapitel 6 – muss abgelehnt werden.
+// Regel: R-6.1
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Node enthält null nicht).
+package konformitaet.kap06;
+
+class Node {
+public:
+    void run() { }
+}
+
+class T {
+public:
+    void m() {
+        Node n = null; // FEHLER
+    }
+}

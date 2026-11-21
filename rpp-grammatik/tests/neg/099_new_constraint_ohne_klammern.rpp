@@ -1,0 +1,2 @@
+// Name: new-Constraint ohne Klammern
+class Pool<T : new> { }

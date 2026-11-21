@@ -1,0 +1,84 @@
+enum Color { Red, Green, Blue }
+
+enum Shape2 {
+    Circle(f64 radius),
+    Rect(f64 w, f64 h),
+    Empty,
+}
+
+class Flow {
+public:
+    f64 area(Shape2 s, Color c, i32 code) {
+        switch (s) {
+            case Circle(r):
+                return 3.14 * r * r;
+            case Rect(w, h):
+                return w * h;
+            case Shape2::Empty:
+                return 0.0;
+        }
+        switch (c) {
+            case Red, Green:
+                print("warm");
+            case Color::Blue:
+                print("kalt");
+        }
+        switch (code) {
+            case 1, 2:
+                print("klein");
+            case -1:
+                print("negativ");
+            default:
+                print("sonst");
+        }
+        return 0.0;
+    }
+
+    void loops(i32 n) {
+        for (i32 i = 0; i < n; i++) {
+            if (i % 2 == 0) continue;
+            else if (i > 10) break;
+            else print("x");
+        }
+        for (i32 i = 0; i < n; i++, n--) { }
+        for ((i32 i, i32 j) = (0, n); i < j; i++, j--) { }
+        for ((i32 lo, f64 hi) = bounds(); lo < hi; lo++) { }
+        for (;;) { break; }
+        i32 k = 0;
+        while (k < n) { k++; }
+        do { k--; } while (k > 0);
+
+        try {
+            risky();
+            throw new Error("kaputt");
+        } catch (IoError e) {
+            print(e.message());
+        } catch (Error e) {
+            throw e;
+        } finally {
+            cleanup();
+        }
+    }
+}
+
+enum Level { Low = 1, Mid, High = 10, Minus = -1, }
+
+class Downcasts {
+public:
+    f64 radius(Shape s) {
+        ref Circle? c = s as Circle;
+        if (c != null) {
+            return c.r;
+        }
+        return (s as Square)?.side() ?? 0.0;
+    }
+
+    i32 level(Level l) {
+        switch (l) {
+            case Level::Low:
+                return cast<i32>(l);
+            default:
+                return 0;
+        }
+    }
+}

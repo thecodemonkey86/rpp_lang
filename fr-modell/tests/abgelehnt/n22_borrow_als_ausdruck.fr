@@ -1,0 +1,19 @@
+// erwartet: Fehler R-5.24 in der mit FEHLER markierten Zeile
+class A {
+    int v;
+    int get() ro { return copy this.v; }
+    int inc() mut { this.v = copy this.v + 1; return 0; }
+    destructor() { print(copy this.v); }
+}
+class Box {
+    own A first;
+    ref A front() ro { return &ro this.first; }
+}
+class Use {
+    int m(ref Box b) ro {
+        b.front(); // FEHLER
+        return 0;
+    }
+}
+main {
+}

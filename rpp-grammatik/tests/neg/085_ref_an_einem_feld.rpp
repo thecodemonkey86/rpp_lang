@@ -1,0 +1,2 @@
+// Name: ref an einem Feld
+class T { ref Foo f; }

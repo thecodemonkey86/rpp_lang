@@ -1,0 +1,3 @@
+// Name: unbekannte Direktive
+#include <stdio.h>
+class T { }

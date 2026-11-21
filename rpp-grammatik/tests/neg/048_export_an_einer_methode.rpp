@@ -1,0 +1,2 @@
+// Name: export an einer Methode
+class T { export void f() { } }

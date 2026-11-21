@@ -1,0 +1,2 @@
+// Name: statischer Zugriff am generischen Typ mit Punkt
+class T { void m() { List<Foo>.create(); } }

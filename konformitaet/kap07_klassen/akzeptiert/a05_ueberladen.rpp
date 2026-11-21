@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 7 – muss übersetzt werden.
+// Regel: R-7.16, R-7.17
+package konformitaet.kap07;
+
+class Foo { }
+class Shape { }
+class Circle : Shape { }
+
+class Out {
+public:
+    void show(i32 x) { }
+    void show(i64 x) { }
+    void show(string s) { }
+    void show(Shape s) { }
+    void show(Circle c) { }
+    void opt(Foo? f) { }
+
+    void demo(Circle c, Shape s, i8 small) {
+        show(1);            // show(i32)
+        show(10_000_000_000);   // show(i64)
+        show(small);        // show(i32): beide Zahlanpassung, i32 ist spezieller als i64
+        show("x");
+        show(c);            // show(Circle)
+        show(s);            // show(Shape)
+        opt(null);
+    }
+}

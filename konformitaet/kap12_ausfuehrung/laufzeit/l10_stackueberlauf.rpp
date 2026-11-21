@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.10, R-9.2
+// Erwartet: Exit-Code 2; Fehlerausgabe enthält "StackOverflowError"
+class Rec {
+public:
+    static i32 ewig(i32 n) {
+        return ewig(n + 1);
+    }
+}
+
+i32 main(string[] args) {
+    print(Rec::ewig(0).toString());
+    return 0;
+}

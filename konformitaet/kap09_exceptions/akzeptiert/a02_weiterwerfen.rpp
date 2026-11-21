@@ -1,0 +1,54 @@
+// Konformitätstest Kapitel 9 – muss übersetzt werden.
+// Regel: R-9.4, R-9.5, R-9.8, R-9.17
+package konformitaet.kap09;
+using rpp.core.Exception;
+
+class ParseError : Exception {
+public:
+    i64 line;
+    constructor(string message, i64 line) : base(message) {
+        this.line = line;
+    }
+}
+
+class SyntaxError : ParseError {
+public:
+    constructor(string message) : base(message, 0) { }
+}
+
+class Loader {
+public:
+    i32 parse(string text) {
+        throw new ParseError("kaputt", 3);
+    }
+
+    i32 load(string text) {
+        try {
+            return parse(text);
+        } catch (ParseError e) {
+            throw new Exception("Laden fehlgeschlagen", e);
+        }
+    }
+
+    i32 rethrow(string text) {
+        try {
+            return parse(text);
+        } catch (Exception e) {
+            print("weiter");
+            throw e;
+        }
+    }
+
+    void moves(own Foo f) {
+        Foo g = new Foo();
+        try {
+            consume(g);
+        } catch (Exception e) {
+            print("g ist hier möglicherweise verschoben");
+        }
+    }
+
+    void consume(own Foo f) { }
+}
+
+class Foo { }

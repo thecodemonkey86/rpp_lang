@@ -1,0 +1,19 @@
+class Greeter {
+public:
+    void greet(Foo? f, bool flag, Foo a, Foo b) {
+        if (f != null) {
+            f.hello();
+        }
+        if (f == null) { return; }
+        f.hello();
+
+        Foo? g = flag ? a : null;
+        string s = g?.name() ?? "none";
+        i32 n = flag ? 1 : 2;
+        i32 m = g == null ? 0 : flag ? 1 : 2;
+        g?.hello();
+        string t = g?.child()?.name() ?? s ?? "x";
+        Foo?[] list = [a, null, b];
+        Foo[]? maybeList = null;
+    }
+}

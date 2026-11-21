@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.7, R-13.11
+// Erwartet: Ausgabe "0.30000000000000004\n0"; Exit-Code 0
+i32 main(string[] args) {
+    f64 a = 0.1;
+    f64 b = 0.2;
+    print((a + b).toString());
+    f64 x = 1.0e16;
+    f64 y = x + 1.0 - x;
+    print(cast<i32>(y).toString());
+    return 0;
+}

@@ -1,0 +1,3 @@
+// Name: case mit ::
+// Lesart: switchStmt
+class T { void m() { switch (c) { case Color::Red: f(); case Shape::Circle(r): g(); } } }

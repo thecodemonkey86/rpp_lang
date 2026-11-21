@@ -1,0 +1,2 @@
+// Name: export an einem Feld
+class T { export i32 x; }

@@ -1,0 +1,3 @@
+// Name: i32 x = _1;  ist ein Name
+// Lesart: localVarDecl
+class T { void m() { i32 x = _1; } }

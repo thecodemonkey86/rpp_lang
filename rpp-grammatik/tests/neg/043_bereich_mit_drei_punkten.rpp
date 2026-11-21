@@ -1,0 +1,2 @@
+// Name: Bereich mit drei Punkten
+class T { void m() { x = a[1...3]; } }

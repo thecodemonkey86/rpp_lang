@@ -1,0 +1,8 @@
+[package]
+name = "rpp-syntax"
+description = "R++: Präprozessor, Lexer, Parser und AST (Kapitel 2, 3 und 11)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

@@ -1,0 +1,35 @@
+// Konformitätstest Kapitel 9 – Laufzeit.
+// Regel: R-9.11, R-9.12, R-9.18
+// Erwartet: Ausgabe "öffne a\nöffne b\nschließe b\nschließe a\ngefangen"; Exit-Code 0
+class Resource {
+public:
+    string name;
+    constructor(string n) {
+        this.name = n;
+        print("öffne " + n);
+    }
+    destructor() { print("schließe " + name); }
+}
+
+class Work {
+public:
+    static void tief() {
+        Resource b = new Resource("b");
+        throw new Exception("abbruch");
+    }
+
+    static void mitte() {
+        Resource a = new Resource("a");
+        tief();
+        print("nie");
+    }
+}
+
+i32 main(string[] args) {
+    try {
+        Work::mitte();
+    } catch (Exception e) {
+        print("gefangen");
+    }
+    return 0;
+}

@@ -1,0 +1,2 @@
+// Name: Vererbung mit extends
+class A extends B { }

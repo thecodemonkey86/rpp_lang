@@ -1,0 +1,2 @@
+// Name: Kopie ohne Klammern
+class T { void m() { Foo b = copy a; } }

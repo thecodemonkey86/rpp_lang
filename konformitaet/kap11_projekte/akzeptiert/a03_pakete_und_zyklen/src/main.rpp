@@ -1,0 +1,9 @@
+// Wurzelpaket: keine package-Zeile.
+using app.model.Point;
+
+i32 main(string[] args) {
+    Point p = new Point(1, 2);
+    app.view.Render r = new app.view.Render();
+    print(r.show(p));
+    return 0;
+}

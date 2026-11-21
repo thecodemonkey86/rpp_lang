@@ -1,0 +1,2 @@
+// Name: as als Name
+class T { void m() { i32 as = 1; } }

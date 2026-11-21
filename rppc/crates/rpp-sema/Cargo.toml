@@ -1,0 +1,9 @@
+[package]
+name = "rpp-sema"
+description = "R++: Projekte, Namensauflösung und Typprüfung (Kapitel 4, 7, 8, 10, 11, 13)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpp-syntax = { path = "../rpp-syntax" }

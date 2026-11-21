@@ -1,0 +1,2 @@
+// Name: freie Funktion außer main
+void helper() { }

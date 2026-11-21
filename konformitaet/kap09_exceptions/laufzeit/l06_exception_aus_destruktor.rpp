@@ -1,0 +1,18 @@
+// Konformitätstest Kapitel 9 – Laufzeit.
+// Regel: R-9.12, R-7.9
+// Erwartet: Exit-Code 2; Fehlerausgabe enthält "DestructorError"
+class Bad {
+public:
+    destructor() {
+        throw new Exception("im Destruktor");
+    }
+}
+
+i32 main(string[] args) {
+    try {
+        Bad b = new Bad();
+    } catch (Exception e) {
+        print("gefangen");
+    }
+    return 0;
+}

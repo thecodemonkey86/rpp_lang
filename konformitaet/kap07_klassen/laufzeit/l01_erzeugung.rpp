@@ -1,0 +1,32 @@
+// Konformitätstest Kapitel 7 – Laufzeit.
+// Regel: R-7.6, R-7.8
+// Erwartet: Ausgabe "Base.feld\nBase.konstruktor\nDerived.feld\nDerived.konstruktor\nDerived"; Exit-Code 0
+class Log {
+public:
+    static string log(string s) {
+        print(s);
+        return s;
+    }
+}
+
+class Base {
+public:
+    string tag = Log::log("Base.feld");
+    constructor() { print("Base.konstruktor"); }
+    virtual string name() { return "Base"; }
+}
+
+class Derived : Base {
+public:
+    string extra = Log::log("Derived.feld");
+    constructor() : base() {
+        print("Derived.konstruktor");
+        print(name());
+    }
+    override string name() { return "Derived"; }
+}
+
+i32 main(string[] args) {
+    Derived d = new Derived();
+    return 0;
+}

@@ -1,0 +1,7 @@
+package acme.a;
+using acme.b.Thing;
+
+export class Wrapper {
+public:
+    i32 n = 0;
+}

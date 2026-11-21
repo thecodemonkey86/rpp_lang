@@ -1,0 +1,2 @@
+// Name: Gleitkommazahl ohne führende Ziffer
+class T { void m() { f64 x = .5; } }

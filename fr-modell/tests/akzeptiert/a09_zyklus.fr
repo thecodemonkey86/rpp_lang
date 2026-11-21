@@ -1,0 +1,14 @@
+// Regeln: Abschnitt 6.1: Zyklen sind Lecks, keine Fehler
+// erwartet: Ausgabe 1
+class Base {
+}
+class C : Base {
+    shared Base next;
+    destructor() { print(2); }
+}
+main {
+    shared Base dummy = share new Base();
+    shared C c = share new C(copy dummy);
+    c.next = copy c;
+    print(1);
+}

@@ -1,0 +1,19 @@
+class Tuples {
+public:
+    (i32, string) pair() {
+        return (1, "eins");
+    }
+
+    (i32, string, f64) triple(i32 x) {
+        return (x, "x", 1.5);
+    }
+
+    void use() {
+        (i32 a, string b) = pair();
+        (i32 c, string d, f64 e) = triple(a);
+        (i32, string) t = pair();
+        (a, b) = pair();
+        i32 sum = (a + c) * 2;
+        (Foo?, Bar[]) u = make();
+    }
+}

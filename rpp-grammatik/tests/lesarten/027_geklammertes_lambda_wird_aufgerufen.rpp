@@ -1,0 +1,3 @@
+// Name: geklammertes Lambda wird aufgerufen
+// Lesart: exprStatement
+class T { void m() { x = ((i32 a) => a)(3); } }

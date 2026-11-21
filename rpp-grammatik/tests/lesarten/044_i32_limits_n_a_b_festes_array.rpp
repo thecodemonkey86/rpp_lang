@@ -1,0 +1,3 @@
+// Name: i32[Limits::N] a = b;  festes Array
+// Lesart: localVarDecl
+class T { void m() { i32[Limits::N] a = b; } }

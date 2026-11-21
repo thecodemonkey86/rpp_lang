@@ -1,0 +1,2 @@
+// Name: Mixin mit Feld
+mixin M { i32 x; }

@@ -1,0 +1,18 @@
+// Konformitätstest Kapitel 11 – muss übersetzt werden.
+// Regel: R-11.4, R-11.7, R-11.8
+package konformitaet.kap11;
+
+using rpp.collections.Map;
+using Dict = rpp.collections.Map;
+
+class Point {
+public:
+    i32 x = 0;
+}
+
+class Registry {
+public:
+    Map<string, Point> byName = new Map<string, Point>();
+    Dict<string, i32> counts = new Dict<string, i32>();
+    rpp.collections.Set<string> seen = new rpp.collections.Set<string>();
+}

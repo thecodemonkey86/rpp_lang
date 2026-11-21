@@ -1,0 +1,2 @@
+// Name: ref void als Rückgabetyp
+class T { ref void f() { } }

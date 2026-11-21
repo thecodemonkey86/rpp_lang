@@ -1,0 +1,17 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.10
+// Erwartet: Ausgabe "9999"; Exit-Code 0
+class Rec {
+public:
+    static i32 tiefe(i32 n) {
+        if (n == 0) {
+            return 0;
+        }
+        return 1 + tiefe(n - 1);
+    }
+}
+
+i32 main(string[] args) {
+    print(Rec::tiefe(9_999).toString());
+    return 0;
+}

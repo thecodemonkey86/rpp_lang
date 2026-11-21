@@ -1,0 +1,15 @@
+// Konformitätstest Kapitel 9 – Laufzeit.
+// Regel: R-9.16, R-9.15
+// Erwartet (debug): Exit-Code 1; Fehlerausgabe enthält "tiefeMethode"
+// Erwartet (release): Exit-Code 1; Fehlerausgabe enthält "weg"
+class Deep {
+public:
+    static void tiefeMethode() {
+        throw new Exception("weg");
+    }
+}
+
+i32 main(string[] args) {
+    Deep::tiefeMethode();
+    return 0;
+}

@@ -1,0 +1,28 @@
+// Konformitätstest Kapitel 9 – muss abgelehnt werden.
+// Regel: R-9.19, R-8.26
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (assert kann normal enden; es fehlt ein return).
+package konformitaet.kap09;
+using rpp.core.Exception;
+
+class ParseError : Exception {
+public:
+    i64 line;
+    constructor(string message, i64 line) : base(message) {
+        this.line = line;
+    }
+}
+
+class SyntaxError : ParseError {
+public:
+    constructor(string message) : base(message, 0) { }
+}
+
+class T {
+public:
+    i32 m(i32 x) {
+        if (x >= 0) {
+            return x;
+        }
+        assert(false, "unmöglich");
+    } // FEHLER
+}

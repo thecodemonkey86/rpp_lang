@@ -1,0 +1,2 @@
+// Name: Mixin mit Konstruktor
+mixin M { constructor() { } }

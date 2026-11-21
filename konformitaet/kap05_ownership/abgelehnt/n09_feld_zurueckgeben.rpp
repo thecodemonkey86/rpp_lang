@@ -1,0 +1,21 @@
+// Konformitätstest Kapitel 5 – muss abgelehnt werden.
+// Regel: R-5.20 (T-Methode), V-3, V-4
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (die Rückgabe würde aus dem Feld verschieben).
+package konformitaet.kap05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() & { this.value = this.value + 1; }
+}
+
+class Holder {
+public:
+    Foo payload;
+    constructor(own Foo p) { this.payload = p; }
+    Foo get() {
+        return this.payload; // FEHLER
+    }
+}

@@ -1,0 +1,3 @@
+// Name: Foo? f = flag ? a : b;
+// Lesart: localVarDecl
+class T { void m() { Foo? f = flag ? a : b; } }

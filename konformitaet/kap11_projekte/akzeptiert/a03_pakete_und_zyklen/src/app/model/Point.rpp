@@ -1,0 +1,14 @@
+package app.model;
+using app.view.Render;
+
+// app.model und app.view verwenden sich gegenseitig (R-11.5).
+class Point {
+public:
+    i32 x;
+    i32 y;
+    constructor(i32 x, i32 y) { this.x = x; this.y = y; }
+    string describe() {
+        Render r = new Render();
+        return r.show(this);
+    }
+}

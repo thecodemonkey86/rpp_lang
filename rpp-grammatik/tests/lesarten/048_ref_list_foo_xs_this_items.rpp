@@ -1,0 +1,3 @@
+// Name: ref List<Foo> xs = this.items;
+// Lesart: refDecl
+class T { void m() { ref List<Foo> xs = this.items; } }

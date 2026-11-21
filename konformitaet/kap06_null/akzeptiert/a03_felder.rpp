@@ -1,0 +1,41 @@
+// Konformitätstest Kapitel 6 – muss übersetzt werden.
+// Regel: R-6.5, R-6.15, R-6.22, R-6.23
+package konformitaet.kap06;
+
+class Node {
+public:
+    string name;
+    Node? child;
+    shared Node? next;
+    weak Node? parent;
+    i32? count;
+    Node?[] slots;
+    constructor(string n) { this.name = n; }
+    bool ok() { return true; }
+    void run() { }
+    void touch() & { }
+}
+
+class T {
+public:
+    void holen(Node& n, i64 i) {
+        ref Node? c = n.child;
+        if (c != null) {
+            c.run();
+        }
+        shared Node? s = n.next;
+        if (s != null) {
+            s.run();
+        }
+        shared Node? p = n.parent?.lock();
+        i32? k = n.count;
+        if (k != null) {
+            i32 doppelt = k * 2;
+        }
+        ref Node? e = n.slots[i];
+        if (e != null) {
+            e.run();
+        }
+        Node? weg = take(&n.child);
+    }
+}

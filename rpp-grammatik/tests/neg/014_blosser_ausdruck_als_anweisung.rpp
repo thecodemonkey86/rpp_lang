@@ -1,0 +1,2 @@
+// Name: bloßer Ausdruck als Anweisung
+class T { void m() { a + b; } }

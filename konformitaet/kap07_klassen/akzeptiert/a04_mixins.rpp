@@ -1,0 +1,50 @@
+// Konformitätstest Kapitel 7 – muss übersetzt werden.
+// Regel: R-7.15, R-7.18, R-7.19, R-7.20, R-7.21, R-7.22
+package konformitaet.kap07;
+
+mixin Named {
+    string name();
+    string greet() { return "Hallo " + name(); }
+}
+
+mixin Printable {
+    string describe() { return "druckbar"; }
+}
+
+mixin Describable {
+    string describe() { return "beschreibbar"; }
+}
+
+mixin Equatable<T> {
+    bool equals(T other);
+}
+
+mixin Comparable<T> {
+    import Equatable<T>;
+    i32 compareTo(T other);
+    bool less(T other) { return compareTo(other) < 0; }
+}
+
+class Person {
+    import Named;
+    import Printable;
+    import Describable;
+    import Comparable<Person>;
+public:
+    string n;
+    i32 age;
+    constructor(string n, i32 age) { this.n = n; this.age = age; }
+    string name() { return n; }
+    override string describe() {
+        return Printable::describe() + " und " + Describable::describe();
+    }
+    bool equals(Person other) { return age == other.age; }
+    i32 compareTo(Person other) { return age - other.age; }
+}
+
+class Use {
+public:
+    string demo(Person p, Named n) {
+        return p.greet() + n.greet();
+    }
+}

@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.20
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (i8 + i32 ergibt i32, das nicht in i8 passt).
+package konformitaet.kap08;
+
+class T {
+public:
+    void m(i32 n, f64 d, string s, bool flag) {
+        i8 small = 1;
+        small += n; // FEHLER
+    }
+}

@@ -1,0 +1,7 @@
+// Konformitätstest Kapitel 11 – muss abgelehnt werden.
+// Regel: R-11.3
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (package ist ein Schlüsselwort).
+package my.package; // FEHLER
+
+class Foo {
+}

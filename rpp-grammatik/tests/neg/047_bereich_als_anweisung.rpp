@@ -1,0 +1,2 @@
+// Name: Bereich als Anweisung
+class T { void m() { a[1..3]; } }

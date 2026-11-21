@@ -1,0 +1,3 @@
+// Name: Lambda mit Block und Zuweisung
+// Lesart: exprStatement
+class T { void m() { f((i32 a) => { x = a; }); } }

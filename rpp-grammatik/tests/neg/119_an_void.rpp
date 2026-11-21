@@ -1,0 +1,2 @@
+// Name: & an void
+class T { void m() { Func<Foo, void&> f = g; } }

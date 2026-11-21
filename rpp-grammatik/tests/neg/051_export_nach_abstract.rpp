@@ -1,0 +1,2 @@
+// Name: export nach abstract
+abstract export class A { }

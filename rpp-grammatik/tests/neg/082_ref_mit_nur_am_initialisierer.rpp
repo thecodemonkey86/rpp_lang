@@ -1,0 +1,2 @@
+// Name: ref mit & nur am Initialisierer
+class T { void m() { ref Foo f = &x; } }

@@ -1,0 +1,2 @@
+// Name: ref an einem Parameter
+class T { void f(ref Foo x) { } }

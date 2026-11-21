@@ -1,0 +1,3 @@
+// Name: discard list.pop();
+// Lesart: discardStmt
+class T { void m() { discard list.pop(); } }

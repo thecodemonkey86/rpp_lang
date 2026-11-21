@@ -1,0 +1,2 @@
+// Name: export an main
+export i32 main(string[] args) { return 0; }

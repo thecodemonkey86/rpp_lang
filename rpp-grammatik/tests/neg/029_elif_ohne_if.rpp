@@ -1,0 +1,4 @@
+// Name: #elif ohne #if
+class T {
+#elif debug
+}

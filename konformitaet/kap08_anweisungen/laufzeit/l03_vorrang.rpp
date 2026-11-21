@@ -1,0 +1,15 @@
+// Konformitätstest Kapitel 8 – Laufzeit.
+// Regel: R-8.6
+// Erwartet: Ausgabe "14\n13\n8\ntrue\n-6\n3\n2"; Exit-Code 0
+i32 main(string[] args) {
+    print((2 + 3 * 4).toString());
+    print((20 - 4 - 3).toString());
+    print((1 << 2 + 1).toString());
+    print((true || false && false).toString());
+    print((-2 * 3).toString());
+    print((1 | 2 ^ 3 & 1).toString());
+    i32? a = null;
+    i32? b = null;
+    print((a ?? b ?? 2).toString());
+    return 0;
+}

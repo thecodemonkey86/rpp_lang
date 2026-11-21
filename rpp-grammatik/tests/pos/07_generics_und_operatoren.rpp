@@ -1,0 +1,48 @@
+mixin Printable {
+    string toString();
+
+    void print() {
+        print(this.toString());
+    }
+}
+
+class List<T : Printable> {
+private:
+    T[] items;
+public:
+    void add(own T item) & {
+        items.push(item);
+    }
+}
+
+class Pair<A, B> {
+public:
+    A first;
+    B second;
+}
+
+class Ops {
+public:
+    void demo(i32 a, i32 b, i32 c, i32 d) {
+        List<Foo> xs = new List<Foo>();
+        List<List<Foo>> nested = new List<List<Foo>>();
+        Pair<i32, List<string?>> p = new Pair<i32, List<string?>>();
+        Func<i32, i32> f = own (i32 x) => x + 1;
+        Func<List<Foo>, bool>? g = null;
+        List<Foo> made = List<Foo>::create();
+        i64 count = my.pkg.Registry<Foo>::count();
+        Foo dup = copy(made.first());
+        shared Foo s = copy(dup);
+
+        bool r1 = a < b && c > d;
+        bool r2 = a < b == c > d;
+        i32 s1 = a >> 2;
+        i32 s2 = a << b << 1;
+        i32 s3 = a >> b > c ? 1 : 0;
+        i32 bits = a & b | c ^ ~d;
+        bool r3 = !(a <= b) || a >= b && a != b;
+        i32 calc = -a + b * c % d - a / b;
+        a += 1; b -= 2; c *= 3; d /= 4; a %= 5;
+        a++; --b;
+    }
+}

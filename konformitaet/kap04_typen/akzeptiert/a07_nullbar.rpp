@@ -1,0 +1,24 @@
+// Konformitätstest Kapitel 4 – muss übersetzt werden.
+// Regel: R-4.39, R-4.40, R-4.46, R-4.47
+package konformitaet.kap04;
+
+class Node {
+public:
+    Node? next;
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+
+    i32 demo(bool flag) {
+        i32? maybe = null;
+        i32 x;
+        if (flag) {
+            x = 1;
+        } else {
+            x = 2;
+        }
+        Node? n = null;
+        shared Node? s = null;
+        i32 y = maybe ?? x;
+        return y;
+    }
+}

@@ -1,0 +1,2 @@
+// Name: bloßer Name als Anweisung
+class T { void m() { foo; } }

@@ -1,0 +1,7 @@
+using acme.geo.Circle;
+
+i32 main(string[] args) {
+    Circle c = new Circle(2.0);
+    print(c.area().toString());
+    return 0;
+}

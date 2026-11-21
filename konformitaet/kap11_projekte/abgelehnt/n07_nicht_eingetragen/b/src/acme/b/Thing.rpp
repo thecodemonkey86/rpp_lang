@@ -1,0 +1,6 @@
+package acme.b;
+
+export class Thing {
+public:
+    i32 n = 0;
+}

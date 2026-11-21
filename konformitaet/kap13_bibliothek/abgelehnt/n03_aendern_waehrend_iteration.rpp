@@ -1,0 +1,23 @@
+// Konformitätstest Kapitel 13 – muss abgelehnt werden.
+// Regel: R-13.10, Kapitel 5 Satz 5.2
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (table ist durch die Schleife geliehen).
+package konformitaet.kap13;
+using rpp.collections.Map;
+using rpp.collections.Entry;
+
+class Symbol {
+public:
+    string name;
+    i32 uses = 0;
+    constructor(string n) { this.name = n; }
+    void use() & { uses++; }
+}
+
+class T {
+public:
+    void m(Map<string, Symbol>& table) {
+        for (Entry<string, Symbol> e : table) {
+            table.put("neu", new Symbol("neu")); // FEHLER
+        }
+    }
+}

@@ -1,0 +1,10 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.13
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (author ist kein bekannter Eintrag).
+name: pakete
+version: 0.1.0
+type: executable
+author: jemand   # FEHLER
+main: src/main.rpp
+sources:
+  - src

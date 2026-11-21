@@ -1,0 +1,2 @@
+// Name: Verbundzuweisung als Operand
+class T { void m() { y = (x += 1) * 2; } }

@@ -1,0 +1,2 @@
+// Name: ref ohne Initialisierung
+class T { void m() { ref Foo f; } }

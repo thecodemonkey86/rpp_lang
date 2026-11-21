@@ -1,0 +1,2 @@
+// Name: catch ohne Typ
+class T { void m() { try { f(); } catch (e) { } } }

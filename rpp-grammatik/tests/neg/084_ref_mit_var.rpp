@@ -1,0 +1,2 @@
+// Name: ref mit var
+class T { void m() { ref var f = x; } }

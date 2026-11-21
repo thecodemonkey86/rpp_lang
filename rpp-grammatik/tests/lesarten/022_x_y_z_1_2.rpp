@@ -1,0 +1,3 @@
+// Name: x = y ?? z ? 1 : 2;
+// Lesart: exprStatement
+class T { void m() { x = y ?? z ? 1 : 2; } }

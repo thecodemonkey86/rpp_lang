@@ -1,0 +1,35 @@
+// erwartet: Fehler R-5.7 in der mit FEHLER markierten Zeile
+// ohne Typprüfung: Fehlerzustand
+// x und y verweisen auf dasselbe Objekt. Schreiben über x gibt das Objekt frei,
+// auf das der Borrow z über y zeigt.
+class A {
+    int v;
+    int get() ro { return copy this.v; }
+    int inc() mut { this.v = copy this.v + 1; return 0; }
+    destructor() { print(copy this.v); }
+}
+class Ops {
+    int take(own A a) ro { return 0; }
+    int swap(mut A x, mut A y) ro { x.v = copy y.v; return 0; }
+    int mix(own A x, ref A y) ro { return 0; }
+    int mix2(ref A x, own A y) ro {
+        own A z = move y;
+        z = new A(0);
+        return x.get();
+    }
+}
+class H {
+    own A a;
+    int m(ref H x, ref H y) ro {
+        borrow z = &ro y.a {
+            x.a = new A(2); // FEHLER
+            print(z.get());
+        }
+        return 0;
+    }
+}
+main {
+    own H h = new H(new A(1));
+    own H k = new H(new A(0));
+    k.m(&ro h, &ro h);
+}

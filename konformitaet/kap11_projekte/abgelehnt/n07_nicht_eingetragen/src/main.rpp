@@ -1,0 +1,6 @@
+using acme.a.Wrapper;
+using acme.b.Thing; // FEHLER
+
+i32 main(string[] args) {
+    return 0;
+}

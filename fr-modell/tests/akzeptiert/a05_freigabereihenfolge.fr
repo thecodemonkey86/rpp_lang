@@ -1,0 +1,19 @@
+// Regeln: V-7
+// erwartet: Ausgabe 3 10 20 2 1 5
+class A {
+    int v;
+    destructor() { print(copy this.v); }
+}
+class Base {
+    own A b1;
+    destructor() { print(20); }
+}
+class Derived : Base {
+    own A d1;
+    destructor() { print(10); }
+}
+main {
+    own A x = new A(5);
+    own Derived d = new Derived(new A(1), new A(2));
+    own A y = new A(3);
+}

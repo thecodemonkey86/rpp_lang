@@ -1,0 +1,16 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.11, Kapitel 5 V-7
+// Erwartet: Ausgabe "c\nb\na"; Exit-Code 0
+class Named {
+public:
+    string n;
+    constructor(string n) { this.n = n; }
+    destructor() { print(n); }
+}
+
+i32 main(string[] args) {
+    Named a = new Named("a");
+    Named b = new Named("b");
+    Named c = new Named("c");
+    return 0;
+}

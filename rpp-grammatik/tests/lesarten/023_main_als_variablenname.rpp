@@ -1,0 +1,3 @@
+// Name: main als Variablenname
+// Lesart: localVarDecl
+class T { void m() { i32 main = 1; } }

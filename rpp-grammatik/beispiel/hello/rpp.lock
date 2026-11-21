@@ -1,0 +1,9 @@
+# Von der Implementierung erzeugt, nicht von Hand bearbeiten (Kapitel 11, R-11.20).
+# Für jede Bibliothek: gewählte Version (Minimal Version Selection) und Prüfsumme des Inhalts.
+# Die Prüfsummen hier sind Platzhalter.
+libraries:
+  - name: acme.json
+    version: 1.4.2
+    checksum: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: mathlib
+    path: ../mathlib

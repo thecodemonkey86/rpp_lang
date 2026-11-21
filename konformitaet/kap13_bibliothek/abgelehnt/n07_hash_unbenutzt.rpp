@@ -1,0 +1,17 @@
+// Konformitätstest Kapitel 13 – muss abgelehnt werden.
+// Regel: R-13.8, R-8.15
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (hash ist nodiscard).
+package konformitaet.kap13;
+
+class Key {
+    import Hashable;
+public:
+    i64 hash() { return 1; }
+}
+
+class Use {
+public:
+    void m(Key k) {
+        discard k.hash(); // FEHLER
+    }
+}

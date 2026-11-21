@@ -1,0 +1,5 @@
+// Name: Vergleich in Bedingung
+class T {
+#if VERSION == 2
+#endif
+}

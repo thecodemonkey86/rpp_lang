@@ -1,0 +1,3 @@
+// Name: a[i] = b[1..3].length;
+// Lesart: exprStatement
+class T { void m() { a[i] = b[1..3].length; } }

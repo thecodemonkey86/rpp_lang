@@ -1,0 +1,2 @@
+// Name: Lambda ohne Parametertypen
+class T { void m() { var f = (a) => a; } }

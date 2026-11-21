@@ -1,0 +1,3 @@
+// Name: else gehört zum inneren if
+// Lesart: ifStmt
+class T { void m() { if (a) if (b) f(); else g(); } }

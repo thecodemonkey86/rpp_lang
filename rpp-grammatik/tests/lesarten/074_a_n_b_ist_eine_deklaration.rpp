@@ -1,0 +1,3 @@
+// Name: a[N] b;  ist eine Deklaration
+// Lesart: localVarDecl
+class T { void m() { a[N] b; } }

@@ -1,0 +1,13 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.5, R-4.9, R-4.10
+// Erwartet (debug): Exit-Code 2; Fehlerausgabe enthält "CastError"
+// Erwartet (release): Ausgabe "44\n127"; Exit-Code 0
+i32 main(string[] args) {
+    i32 big = 300;
+    i8 low = cast<i8>(big);
+    print(low.toString());
+    f64 huge = 1.0e10;
+    i8 sat = cast<i8>(huge);
+    print(sat.toString());
+    return 0;
+}

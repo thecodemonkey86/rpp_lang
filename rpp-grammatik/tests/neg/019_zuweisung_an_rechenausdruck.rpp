@@ -1,0 +1,2 @@
+// Name: Zuweisung an Rechenausdruck
+class T { void m() { a + b = c; } }

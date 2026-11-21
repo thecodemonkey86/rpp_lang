@@ -1,0 +1,2 @@
+// Name: nodiscard nach static
+class T { static nodiscard i32 f() { return 1; } }

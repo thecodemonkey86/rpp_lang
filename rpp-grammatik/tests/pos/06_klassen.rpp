@@ -1,0 +1,57 @@
+abstract class Shape {
+public:
+    static const f64 PI = 3.14159;
+    const string kind = "shape";
+
+    abstract f64 area();
+
+    virtual string name() {
+        return "Shape";
+    }
+
+    void print() {
+        print(name());
+    }
+
+    static Shape unit() {
+        return new Circle(1.0);
+    }
+
+    abstract void scale(f64 factor) &;
+}
+
+class Circle : Shape {
+private:
+    f64 radius;
+public:
+    constructor(f64 r) {
+        this.radius = r;
+    }
+
+    destructor() {
+        print("weg");
+    }
+
+    override f64 area() {
+        return Shape::PI * radius * radius;
+    }
+
+    override string name() {
+        return "Circle of " + base.name();
+    }
+
+    override void scale(f64 factor) & {
+        radius *= factor;
+    }
+}
+
+class Ring : Circle {
+private:
+    f64 inner;
+protected:
+    i32 main;
+public:
+    constructor(f64 outer, f64 inner) : base(outer) {
+        this.inner = inner;
+    }
+}

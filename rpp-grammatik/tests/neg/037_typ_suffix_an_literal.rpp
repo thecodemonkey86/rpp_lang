@@ -1,0 +1,2 @@
+// Name: Typ-Suffix an Literal
+class T { void m() { var x = 42i64; } }

@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.9, R-9.14
+// Erwartet: Ausgabe "aufgeräumt"; Exit-Code 2; Fehlerausgabe enthält "IndexError"
+class Guard {
+public:
+    destructor() { print("aufgeräumt"); }
+}
+
+i32 main(string[] args) {
+    Guard g = new Guard();
+    i32[] xs = [1, 2, 3];
+    i32 x = xs[5];
+    return 0;
+}

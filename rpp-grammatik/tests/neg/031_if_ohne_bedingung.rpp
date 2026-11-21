@@ -1,0 +1,5 @@
+// Name: #if ohne Bedingung
+class T {
+#if
+#endif
+}

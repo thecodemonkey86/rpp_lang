@@ -1,0 +1,2 @@
+// Name: abstrakte Methode mit Rumpf
+class T { abstract void f() { } }

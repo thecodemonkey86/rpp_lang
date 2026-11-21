@@ -1,0 +1,41 @@
+// Konformitätstest Kapitel 10 – muss abgelehnt werden.
+// Regel: R-10.15
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Funktionswerte haben kein copy).
+package konformitaet.kap10;
+
+class Foo {
+public:
+    i32 x = 0;
+    void bump() & { x++; }
+    copy(Foo other) { this.x = other.x; }
+}
+
+class Counter {
+public:
+    i32 n = 0;
+    void increment() & { n++; }
+}
+
+class Items {
+public:
+    Foo[] list = [];
+    void forEach(Func<Foo, void> f) {
+        for (Foo e : list) { f(e); }
+    }
+    void update(Func<Foo&, void> f) & {
+        for (Foo& e : &list) { f(&e); }
+    }
+    i32 sum(Func<Foo, i32> f) {
+        i32 s = 0;
+        for (Foo e : list) { s += f(e); }
+        return s;
+    }
+}
+
+class T {
+public:
+    void m() {
+        Func<i32, i32> f = own (i32 x) => x;
+        Func<i32, i32> g = copy(f); // FEHLER
+    }
+}

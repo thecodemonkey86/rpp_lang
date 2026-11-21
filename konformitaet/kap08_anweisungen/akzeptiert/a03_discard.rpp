@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 8 – muss übersetzt werden.
+// Regel: R-8.12, R-8.13, R-8.14, R-8.15
+package konformitaet.kap08;
+
+class Stack {
+public:
+    i32[] items = [];
+
+    i32 pop() & { return items.pop(); }
+    nodiscard bool isEmpty() { return items.length == 0; }
+    void clear() & { items = []; }
+}
+
+mixin Sized {
+    nodiscard i64 size();
+}
+
+class Use {
+public:
+    void demo(Stack& s) {
+        discard s.pop();
+        s.clear();
+        if (!s.isEmpty()) {
+            i32 top = s.pop();
+        }
+    }
+}
