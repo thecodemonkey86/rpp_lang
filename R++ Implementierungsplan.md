@@ -296,4 +296,15 @@ Verglichen wird das Verhalten mit `rppc run` (`rpp-compiler/vergleich_c.py`: erz
 
 Beim Vergleich aufgefallen und behoben: Eine Sicht auf einen `weak`-Verweis wurde beim Speichern nicht gezählt (Laufzeit, Speicherfehler in FR++-Programmen).
 
-Offen: Der übersetzte Code ist noch langsam (Werte mit Art, Aufrufe über Status, Namensvergleich bei eingebauten Methoden); Typargumente generischer Methoden für `new T()` (wie im Interpreter); vollständige Unicode-Tabellen für `char`; der Releasemodus über eine eigene Zwischendarstellung oder LLVM bleibt nach dem Plan offen.
+**Geschwindigkeit (22.11.2026).** Gemessen mit einem Stichproben-Profiler in der Laufzeit (`RPP_PROFILE=DATEI`, Windows; Adressen über die Map-Datei des Linkers aufgelöst). Drei Ursachen und ihre Behebung:
+
+| Ursache | Behebung | `pruefe rpp-compiler` | Selbstübersetzung |
+|---|---|---|---|
+| Ausgangsstand | – | 225 s | 230 s |
+| kleine Laufzeitfunktionen als echte Aufrufe zwischen zwei Übersetzungseinheiten | schnelle Pfade `static inline` im Header (Sichten, Zwischenwerte, Freigabe von Grundwerten, Ganzzahl-Rechnen und -Vergleich, Index, `length`); gemeinsamer Zahltyp als Tabelle | (mit 2.) 28 s | 101 s |
+| Flussanalyse in `Flow.rpp`: sortierte Listen linear durchsucht, Kopien Element für Element | binäre Suche, Schnitt/Vereinigung/Differenz durch Zusammenführen, `copy(…)` für die Kopie; Ergebnisse unverändert | | |
+| geschwätziger Code für Grundwerte | Generator lässt `temp`, `promote`, `own_str` und doppelte Zahlumwandlungen bei Grundwerten weg; Sperrprüfung (V-1) nur, wenn die Wurzelvariable `shared` oder ein Typ-Parameter sein kann | 9,2 s | 10,4 s |
+
+Zum Vergleich: `rppc pruefe` (Rust) braucht 0,6 s, der Interpreter rund 20 Minuten. Der Fixpunkt der Selbstübersetzung hält nach jedem Schritt (zwei Runden, weil der neue Generator erst in der zweiten Runde läuft).
+
+Offen: Der übersetzte Code ist noch rund 15-mal langsamer als `rppc` (Werte mit Art in jedem Ausdruck, Rahmen und Felder je Aufruf, Namensvergleich bei eingebauten Methoden); Typargumente generischer Methoden für `new T()` (wie im Interpreter); vollständige Unicode-Tabellen für `char`; der Releasemodus über eine eigene Zwischendarstellung oder LLVM bleibt nach dem Plan offen.

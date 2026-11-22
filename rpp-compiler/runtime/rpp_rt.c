@@ -15,6 +15,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
 #include <io.h>
 #include <fcntl.h>
 #include <direct.h>
@@ -235,8 +237,8 @@ static rv make_int_w(W v, uint8_t t) {
     return r;
 }
 
-rv rv_int(int64_t v, uint8_t tag) { return make_int_w(w_from_i(v), tag); }
-rv rv_uint(uint64_t v, uint8_t tag) { return make_int_w(w_from_u(v), tag); }
+rv rv_int_slow(int64_t v, uint8_t tag) { return make_int_w(w_from_i(v), tag); }
+rv rv_uint_slow(uint64_t v, uint8_t tag) { return make_int_w(w_from_u(v), tag); }
 
 static const char* prim_name(uint8_t t) {
     switch (t) {
@@ -277,7 +279,7 @@ static int conv_or_same(uint8_t a, uint8_t b) { return a == b || auto_converts(a
 static const uint8_t NUMERIC[10] = { RT_I8, RT_I16, RT_I32, RT_I64, RT_U8, RT_U16, RT_U32, RT_U64, RT_F32, RT_F64 };
 
 /* R-4.12: gemeinsamer Zahltyp; 0 wenn keiner */
-static uint8_t common_numeric(uint8_t a, uint8_t b) {
+static uint8_t common_numeric_calc(uint8_t a, uint8_t b) {
     int both_int = rt_is_int_tag(a) && rt_is_int_tag(b);
     uint8_t cands[10];
     int n = 0;
@@ -291,6 +293,19 @@ static uint8_t common_numeric(uint8_t a, uint8_t b) {
         if (all) return cands[i];
     }
     return 0;
+}
+
+static uint8_t cn_table[32][32];
+static int cn_ready = 0;
+
+static uint8_t common_numeric(uint8_t a, uint8_t b) {
+    if (!cn_ready) {
+        for (int x = 0; x < 32; x++)
+            for (int y = 0; y < 32; y++)
+                cn_table[x][y] = (x >= RT_I8 && x <= RT_F64 && y >= RT_I8 && y <= RT_F64) ? common_numeric_calc((uint8_t)x, (uint8_t)y) : 0;
+        cn_ready = 1;
+    }
+    return cn_table[a & 31][b & 31];
 }
 
 static double as_f64(rv v) {
@@ -687,32 +702,6 @@ rv rt_text(rv v) {
 
 /* ================================================================ Besitz */
 
-rv rv_view(rv v) {
-    switch (v.tag) {
-    case RT_OBJ:
-        if (v.form == F_OWN || v.form == F_SHARED) v.form = F_BORROW;
-        else if (v.form == F_WEAK) v.form = F_WEAKB;
-        return v;
-    case RT_STR: case RT_TUP: case RT_ENUMD: case RT_FUNC:
-        v.form = F_BORROW;
-        return v;
-    default:
-        return v;
-    }
-}
-
-/* Besitzt der Wert etwas, das freigegeben werden muss? (owning; dazu Strings und Lambdas
- * für den Speicher) */
-int rt_owning(rv v) {
-    switch (v.tag) {
-    case RT_OBJ: return v.form == F_OWN || v.form == F_SHARED;
-    case RT_STR: return v.form == F_OWN && ((RStr*)v.v.p)->rc >= 0;
-    case RT_TUP: case RT_ENUMD: return v.form == F_OWN;
-    case RT_FUNC: return v.form == F_OWN;
-    default: return 0;
-    }
-}
-
 static int destruct(RObj* o);
 
 static void obj_free(RObj* o) {
@@ -740,7 +729,7 @@ static int drop_agg(RAgg* a, uint8_t tag) {
     return st;
 }
 
-int rt_drop(rv v) {
+int rt_drop_slow(rv v) {
     switch (v.tag) {
     case RT_OBJ: {
         RObj* o = (RObj*)v.v.p;
@@ -794,10 +783,11 @@ int rt_drop(rv v) {
 /* ---------------------------------------------------------------- Zwischenwerte */
 
 static rv* temps = NULL;
-static int64_t ntemps = 0, captemps = 0;
+int64_t rt_ntemps = 0;
+#define ntemps rt_ntemps
+static int64_t captemps = 0;
 
-rv rt_temp(rv v) {
-    if (!rt_owning(v)) return v;
+rv rt_temp_push(rv v) {
     if (ntemps == captemps) {
         captemps = captemps ? captemps * 2 : 256;
         temps = (rv*)xrealloc(temps, sizeof(rv) * (size_t)captemps);
@@ -806,9 +796,7 @@ rv rt_temp(rv v) {
     return rv_view(v);
 }
 
-int64_t rt_tmark(void) { return ntemps; }
-
-int rt_trelease(int64_t mark, int st) {
+int rt_trelease_slow(int64_t mark, int st) {
     int d = ST_OK;
     while (ntemps > mark) {
         rv t = temps[--ntemps];
@@ -822,7 +810,7 @@ void rt_tdiscard(int64_t mark) {
     if (ntemps > mark) ntemps = mark;
 }
 
-int rt_scope_drop(int st, rv* vars, int n) {
+int rt_scope_drop_slow(int st, rv* vars, int n) {
     for (int i = n - 1; i >= 0; i--) {
         rv x = vars[i];
         vars[i] = rv_moved();
@@ -846,7 +834,7 @@ static RAgg* agg_new(int n) {
     return a;
 }
 
-rv rt_promote(rv v) {
+rv rt_promote_slow(rv v) {
     switch (v.tag) {
     case RT_OBJ: {
         RObj* o = (RObj*)v.v.p;
@@ -1247,7 +1235,7 @@ int rt_unpack(rv v, int n, rv* out) {
     return rt_internal("Tupel oder own-Objekt erwartet");
 }
 
-int rt_index_slot(rv** out, rv ov, rv idx) {
+int rt_index_slot_slow(rv** out, rv ov, rv idx) {
     W w = w_of(idx);
     int64_t i = (int64_t)w.lo;
     int neg = w_neg_p(w) || !rt_is_int_tag(idx.tag);
@@ -1268,7 +1256,7 @@ int rt_index_slot(rv** out, rv ov, rv idx) {
     return rt_internal("Index auf diesem Wert");
 }
 
-int rt_index(rv* out, rv ov, rv idx) {
+int rt_index_slow(rv* out, rv ov, rv idx) {
     if (ov.tag == RT_STR) {
         RStr* s = rt_s(ov);
         int64_t n = rt_str_chars(s);
@@ -1313,7 +1301,7 @@ int rt_slice(rv* out, rv ov, int has_from, rv from, int has_to, rv to) {
     return ST_OK;
 }
 
-int rt_member_len(rv* out, rv ov, int bytes) {
+int rt_member_len_slow(rv* out, rv ov, int bytes) {
     if (ov.tag == RT_STR) {
         RStr* s = rt_s(ov);
         *out = rv_i64(bytes ? s->len : rt_str_chars(s));
@@ -1477,7 +1465,34 @@ int rt_capture_own(rv* cell, rv* out) {
 
 /* ================================================================ Arithmetik */
 
-int rt_arith(rv* out, int op, rv a, rv b) {
+int rt_arith_slow(rv* out, int op, rv a, rv b) {
+    if (a.tag == b.tag && (a.tag == RT_I32 || a.tag == RT_I64) && op <= OP_REM) {
+        int64_t x = a.v.i, y = b.v.i, r;
+        if (a.tag == RT_I32) {
+            switch (op) {
+            case OP_ADD: r = x + y; break;
+            case OP_SUB: r = x - y; break;
+            case OP_MUL: r = x * y; break;
+            default:
+                if (y == 0) return rt_fatal("DivisionError", "Division durch null");
+                r = op == OP_DIV ? x / y : x % y;
+                break;
+            }
+            if (r >= INT32_MIN && r <= INT32_MAX) {
+                *out = rv_i32((int32_t)r);
+                return ST_OK;
+            }
+        } else if (op == OP_ADD && !((y > 0 && x > INT64_MAX - y) || (y < 0 && x < INT64_MIN - y))) {
+            *out = rv_i64(x + y);
+            return ST_OK;
+        } else if (op == OP_SUB && !((y < 0 && x > INT64_MAX + y) || (y > 0 && x < INT64_MIN + y))) {
+            *out = rv_i64(x - y);
+            return ST_OK;
+        } else if ((op == OP_DIV || op == OP_REM) && y != 0 && !(x == INT64_MIN && y == -1)) {
+            *out = rv_i64(op == OP_DIV ? x / y : x % y);
+            return ST_OK;
+        }
+    }
     if (a.tag == RT_STR && b.tag == RT_STR && op == OP_ADD) {
         RStr* x = rt_s(a);
         RStr* y = rt_s(b);
@@ -1592,13 +1607,29 @@ rv rt_bitnot(rv a) {
     return make_int_w(w, p);
 }
 
-int rt_incdec(rv* out, rv cur, int d) {
+int rt_incdec_slow(rv* out, rv cur, int d) {
+    if (cur.tag == RT_I32 && cur.v.i + d >= INT32_MIN && cur.v.i + d <= INT32_MAX) {
+        *out = rv_i32((int32_t)(cur.v.i + d));
+        return ST_OK;
+    }
+    if (cur.tag == RT_I64 && !(d > 0 && cur.v.i == INT64_MAX) && !(d < 0 && cur.v.i == INT64_MIN)) {
+        *out = rv_i64(cur.v.i + d);
+        return ST_OK;
+    }
     uint8_t p = rt_is_int_tag(cur.tag) ? cur.tag : RT_I32;
     W w = rt_is_int_tag(cur.tag) ? w_of(cur) : w_from_i(0);
     return int_result(out, w_add(w, w_from_i(d)), p);
 }
 
-int rt_equal(int* out, rv a, rv b) {
+int rt_equal_slow(int* out, rv a, rv b) {
+    if (a.tag == b.tag && ((a.tag >= RT_I8 && a.tag <= RT_I64) || a.tag == RT_CHAR || a.tag == RT_BOOL || a.tag == RT_BYTE || (a.tag >= RT_U8 && a.tag <= RT_U64))) {
+        *out = a.v.i == b.v.i;
+        return ST_OK;
+    }
+    if (a.tag == RT_ENUM && b.tag == RT_ENUM) {
+        *out = a.x == b.x && a.v.i == b.v.i;
+        return ST_OK;
+    }
     if (a.tag == RT_NULL || b.tag == RT_NULL) { *out = a.tag == b.tag; return ST_OK; }
     if (a.tag == RT_BOOL && b.tag == RT_BOOL) { *out = a.v.i == b.v.i; return ST_OK; }
     if (a.tag == RT_CHAR && b.tag == RT_CHAR) { *out = a.v.u == b.v.u; return ST_OK; }
@@ -1638,7 +1669,11 @@ int rt_equal(int* out, rv a, rv b) {
     return ST_OK;
 }
 
-int rt_compare(int* out, rv a, rv b) {
+int rt_compare_slow(int* out, rv a, rv b) {
+    if (a.tag == b.tag && a.tag >= RT_I8 && a.tag <= RT_I64) {
+        *out = a.v.i < b.v.i ? -1 : a.v.i > b.v.i;
+        return ST_OK;
+    }
     if (a.tag == RT_CHAR && b.tag == RT_CHAR) { *out = a.v.u < b.v.u ? -1 : a.v.u > b.v.u; return ST_OK; }
     if (a.tag == RT_BYTE && b.tag == RT_BYTE) { *out = a.v.u < b.v.u ? -1 : a.v.u > b.v.u; return ST_OK; }
     if (a.tag == RT_STR && b.tag == RT_STR) {
@@ -2908,16 +2943,6 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
 
 /* ================================================================ Hilfen für den erzeugten Code */
 
-rv rt_conv_num(rv v, uint8_t p) {
-    if (rt_is_num_tag(v.tag) && v.tag != p) return rt_num_to(v, p);
-    return v;
-}
-
-rv rt_own_str(rv v) {
-    if (v.tag == RT_STR && v.form == F_BORROW) return rt_promote(v);
-    if (v.tag == RT_OBJ && v.form == F_WEAKB) return rt_promote(v);
-    return v;
-}
 
 rv rt_temp_str(rv v) {
     if (v.tag == RT_STR) return rt_temp(v);
@@ -3055,6 +3080,27 @@ static void run_main(MainArgs* m) {
 }
 
 #ifdef _WIN32
+/* RPP_PROFILE=DATEI: Stichproben des Befehlszählers (1 ms) als Adressen relativ zum Modul */
+static volatile int prof_stop = 0;
+static HANDLE prof_target;
+static DWORD WINAPI prof_thread(LPVOID p) {
+    FILE* f = fopen((const char*)p, "w");
+    if (!f) return 0;
+    uintptr_t base = (uintptr_t)GetModuleHandleA(NULL);
+    timeBeginPeriod(1);
+    while (!prof_stop) {
+        Sleep(1);
+        if (SuspendThread(prof_target) == (DWORD)-1) break;
+        CONTEXT c;
+        memset(&c, 0, sizeof c);
+        c.ContextFlags = CONTEXT_CONTROL;
+        if (GetThreadContext(prof_target, &c)) fprintf(f, "%llx\n", (unsigned long long)(c.Rip - base));
+        ResumeThread(prof_target);
+    }
+    fclose(f);
+    return 0;
+}
+
 static DWORD WINAPI main_thread(LPVOID p) {
     run_main((MainArgs*)p);
     return 0;
@@ -3082,12 +3128,27 @@ int rt_main(int argc, char** argv, int (*body)(rv*, rv), int release) {
     m.argv = argv;
     m.body = body;
     m.exit = 0;
+    /* RPP_MAINTHREAD: ohne eigenen Stack laufen (für Profiler, die nur den Hauptthread sehen) */
+    if (getenv("RPP_MAINTHREAD")) {
+        run_main(&m);
+        return m.exit;
+    }
 #ifdef _WIN32
     HANDLE h = CreateThread(NULL, (SIZE_T)1 << 31, main_thread, &m, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (!h) {
         run_main(&m);
     } else {
+        HANDLE ph = NULL;
+        const char* prof = getenv("RPP_PROFILE");
+        if (prof) {
+            prof_target = h;
+            ph = CreateThread(NULL, 0, prof_thread, (LPVOID)prof, 0, NULL);
+        }
         WaitForSingleObject(h, INFINITE);
+        if (ph) {
+            prof_stop = 1;
+            WaitForSingleObject(ph, INFINITE);
+        }
         CloseHandle(h);
     }
 #else

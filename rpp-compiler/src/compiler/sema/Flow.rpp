@@ -8,20 +8,28 @@ export class IdSet {
 public:
     i64[] items = [];
 
-    bool has(i64 x) {
-        for (i64 y : items) {
-            if (y == x) {
-                return true;
+    // erste Position mit einem Wert >= x (binäre Suche in einer sortierten Liste)
+    static i64 lowerBound(i64[] xs, i64 x) {
+        i64 lo = 0;
+        i64 hi = xs.length;
+        while (lo < hi) {
+            i64 mid = (lo + hi) / 2;
+            if (xs[mid] < x) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
             }
         }
-        return false;
+        return lo;
+    }
+
+    bool has(i64 x) {
+        i64 at = lowerBound(items, x);
+        return at < items.length && items[at] == x;
     }
 
     void add(i64 x) mut {
-        i64 at = 0;
-        while (at < items.length && items[at] < x) {
-            at++;
-        }
+        i64 at = lowerBound(items, x);
         if (at < items.length && items[at] == x) {
             return;
         }
@@ -30,20 +38,17 @@ public:
 
     // entfernt x; true, wenn es enthalten war
     bool remove(i64 x) mut {
-        for (i64 i = 0; i < items.length; i++) {
-            if (items[i] == x) {
-                discard items.remove(i);
-                return true;
-            }
+        i64 at = lowerBound(items, x);
+        if (at < items.length && items[at] == x) {
+            discard items.remove(at);
+            return true;
         }
         return false;
     }
 
     IdSet dup() {
         IdSet c = new IdSet();
-        for (i64 x : items) {
-            c.items.push(x);
-        }
+        c.items = copy(items);
         return c;
     }
 
@@ -59,33 +64,46 @@ public:
         return true;
     }
 
-    static IdSet inter(IdSet a, IdSet b) {
+    // Zusammenführen der sortierten Listen: mode 0 Schnitt, 1 Vereinigung, 2 a ohne b
+    static IdSet merge(IdSet a, IdSet b, i32 mode) {
         IdSet c = new IdSet();
-        for (i64 x : a.items) {
-            if (b.has(x)) {
-                c.items.push(x);
+        i64 i = 0;
+        i64 j = 0;
+        i64 na = a.items.length;
+        i64 nb = b.items.length;
+        while (i < na || j < nb) {
+            if (j >= nb || (i < na && a.items[i] < b.items[j])) {
+                if (mode != 0) {
+                    c.items.push(a.items[i]);
+                }
+                i++;
+            } else if (i >= na || b.items[j] < a.items[i]) {
+                if (mode == 1) {
+                    c.items.push(b.items[j]);
+                }
+                j++;
+            } else {
+                if (mode != 2) {
+                    c.items.push(a.items[i]);
+                }
+                i++;
+                j++;
             }
         }
         return c;
     }
 
+    static IdSet inter(IdSet a, IdSet b) {
+        return merge(a, b, 0);
+    }
+
     static IdSet unite(IdSet a, IdSet b) {
-        IdSet c = a.dup();
-        for (i64 x : b.items) {
-            c.add(x);
-        }
-        return c;
+        return merge(a, b, 1);
     }
 
     // a ohne b
     static IdSet minus(IdSet a, IdSet b) {
-        IdSet c = new IdSet();
-        for (i64 x : a.items) {
-            if (!b.has(x)) {
-                c.items.push(x);
-            }
-        }
-        return c;
+        return merge(a, b, 2);
     }
 }
 
@@ -96,10 +114,9 @@ public:
     string[] vals = [];
 
     i64 find(i64 k) {
-        for (i64 i = 0; i < keys.length; i++) {
-            if (keys[i] == k) {
-                return i;
-            }
+        i64 at = IdSet::lowerBound(keys, k);
+        if (at < keys.length && keys[at] == k) {
+            return at;
         }
         return -1;
     }
@@ -109,10 +126,7 @@ public:
     }
 
     void put(i64 k, string v) mut {
-        i64 at = 0;
-        while (at < keys.length && keys[at] < k) {
-            at++;
-        }
+        i64 at = IdSet::lowerBound(keys, k);
         if (at < keys.length && keys[at] == k) {
             vals[at] = v;
             return;
@@ -133,10 +147,8 @@ public:
 
     IdMap dup() {
         IdMap c = new IdMap();
-        for (i64 i = 0; i < keys.length; i++) {
-            c.keys.push(keys[i]);
-            c.vals.push(vals[i]);
-        }
+        c.keys = copy(keys);
+        c.vals = copy(vals);
         return c;
     }
 

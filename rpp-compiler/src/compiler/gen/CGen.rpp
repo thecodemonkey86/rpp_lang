@@ -325,6 +325,40 @@ private:
         return "0";
     }
 
+    // Grundwert ohne Freigabe (nicht string, nicht nullbar): temp, promote und own_str entfallen
+    bool plainPrim(Node e) {
+        shared Ty? t = typeOf(e);
+        return t != null && t.kind == TK::Prim && t.prim != "string";
+    }
+
+    // kann der Wert ein shared-Verweis sein (Sperren, V-1)?
+    static bool mayBeShared(shared Ty? t) {
+        if (t == null) {
+            return true;
+        }
+        shared Ty u = t;
+        while (u.kind == TK::Nullable) {
+            u = u.args[0];
+        }
+        return u.kind == TK::Shared || u.kind == TK::Param || u.kind == TK::Error;
+    }
+
+    void tempOf(string v, Node e) mut {
+        if (!plainPrim(e)) {
+            emit(v + " = rt_temp(" + v + ");");
+        }
+    }
+
+    // convert, außer der Wert hat schon den Grundtyp des Ziels
+    void convertFrom(string v, shared Ty t, Node e) mut {
+        string p = primOf(t);
+        shared Ty? vt = typeOf(e);
+        if (p != "" && vt != null && vt.kind == TK::Prim && vt.prim == p) {
+            return;
+        }
+        convert(v, t);
+    }
+
     shared Ty? typeOf(Node e) {
         if (e.id < 0) {
             return null;
@@ -1342,7 +1376,7 @@ private:
             string v = store(d.kids[2]);
             shared Ty? dt = declOf(nameNode);
             if (dt != null) {
-                convert(v, dt);
+                convertFrom(v, dt, d.kids[2]);
             }
             i64 x = declare(nameNode.text);
             emit("V[" + x.toString() + "] = " + v + ";");
@@ -1878,6 +1912,9 @@ private:
             return rootVar(e.kids[0]);
         }
         if (e.kind == "name") {
+            if (!mayBeShared(typeOf(e))) {
+                return "";
+            }
             return lookup(e.text);
         }
         return "";
@@ -1969,9 +2006,11 @@ private:
         }
         shared Ty? st = storeOf(e);
         if (st != null) {
-            convert(v, st);
+            convertFrom(v, st, e);
         }
-        emit(v + " = rt_own_str(" + v + ");");
+        if (!plainPrim(e)) {
+            emit(v + " = rt_own_str(" + v + ");");
+        }
         return v;
     }
 
@@ -1980,12 +2019,18 @@ private:
             string cv = lookup(e.text);
             if (cv != "") {
                 string r = tmp();
-                emit(r + " = rt_transfer_var(&" + cv + ");");
+                if (plainPrim(e)) {
+                    emit(r + " = " + cv + ";");
+                } else {
+                    emit(r + " = rt_transfer_var(&" + cv + ");");
+                }
                 return r;
             }
         }
         string v = eval(e);
-        emit(v + " = rt_promote(" + v + ");");
+        if (!plainPrim(e)) {
+            emit(v + " = rt_promote(" + v + ");");
+        }
         return v;
     }
 
@@ -2335,9 +2380,9 @@ private:
             return r;
         }
         string a = eval(e.kids[0]);
-        emit(a + " = rt_temp(" + a + ");");
+        tempOf(a, e.kids[0]);
         string b = eval(e.kids[1]);
-        emit(b + " = rt_temp(" + b + ");");
+        tempOf(b, e.kids[1]);
         if (op == "==" || op == "!=") {
             string bi = intTmp();
             call("rt_equal(&" + bi + ", " + a + ", " + b + ")");
@@ -2417,14 +2462,14 @@ private:
                 f.binding = Program::indexOfInt(locked, i) >= 0;
                 v = eval(a);
                 f.binding = saved;
-                emit(v + " = rt_temp(" + v + ");");
+                tempOf(v, a);
                 shared Ty? st = storeOf(a);
                 if (st != null) {
-                    convert(v, st);
+                    convertFrom(v, st, a);
                 }
             }
             if (i < params.length && primOf(params[i].ty) != "") {
-                convert(v, params[i].ty);
+                convertFrom(v, params[i].ty, a);
             }
             vs.push(v);
         }
@@ -2717,10 +2762,10 @@ private:
                 v = store(a);
             } else {
                 v = eval(a);
-                emit(v + " = rt_temp(" + v + ");");
+                tempOf(v, a);
                 shared Ty? st = storeOf(a);
                 if (st != null) {
-                    convert(v, st);
+                    convertFrom(v, st, a);
                 }
             }
             vs.push(v);

@@ -95,7 +95,7 @@ class Compiler:
 
     def compile(self, c_file, exe):
         if self.gcc:
-            cmd = [GCC, "-std=c17", "-O1", "-w", "-I", str(RUNTIME), str(c_file), str(RUNTIME / "rpp_rt.c"), "-o", str(exe), "-lm", "-Wl,--stack,16777216"]
+            cmd = [GCC, "-std=c17", "-O1", "-w", "-I", str(RUNTIME), str(c_file), str(RUNTIME / "rpp_rt.c"), "-o", str(exe), "-lm", "-lwinmm", "-Wl,--stack,16777216"]
             p = subprocess.run(cmd, capture_output=True)
             return p.returncode == 0, (p.stdout + p.stderr).decode("utf-8", errors="replace")
         if self.rt_obj is None:

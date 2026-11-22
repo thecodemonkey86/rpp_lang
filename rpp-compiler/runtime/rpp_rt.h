@@ -172,8 +172,33 @@ static inline rv rv_i64(int64_t i) { rv r = rv_make(RT_I64); r.v.i = i; return r
 static inline rv rv_i32(int32_t i) { rv r = rv_make(RT_I32); r.v.i = i; return r; }
 static inline rv rv_enum(int32_t def, int64_t idx) { rv r = rv_make(RT_ENUM); r.v.i = idx; r.x = def; return r; }
 static inline rv rv_obj(RObj* o, uint8_t form) { rv r = rv_make(RT_OBJ); r.v.p = o; r.form = form; return r; }
-rv rv_int(int64_t v, uint8_t tag);              /* make_int für Werte, die in i64 passen */
-rv rv_uint(uint64_t v, uint8_t tag);
+rv rv_int_slow(int64_t v, uint8_t tag);
+rv rv_uint_slow(uint64_t v, uint8_t tag);
+/* make_int für Werte, die in i64 bzw. ui64 passen (Abschneiden auf den Typ) */
+static inline rv rv_int(int64_t v, uint8_t tag) {
+    rv r = rv_make(tag);
+    switch (tag) {
+    case RT_I8: r.v.i = (int8_t)v; return r;
+    case RT_I16: r.v.i = (int16_t)v; return r;
+    case RT_I32: r.v.i = (int32_t)v; return r;
+    case RT_I64: r.v.i = v; return r;
+    default: return rv_int_slow(v, tag);
+    }
+}
+static inline rv rv_uint(uint64_t v, uint8_t tag) {
+    rv r = rv_make(tag);
+    switch (tag) {
+    case RT_I8: r.v.i = (int8_t)v; return r;
+    case RT_I16: r.v.i = (int16_t)v; return r;
+    case RT_I32: r.v.i = (int32_t)v; return r;
+    case RT_I64: r.v.i = (int64_t)v; return r;
+    case RT_U8: r.v.u = (uint8_t)v; return r;
+    case RT_U16: r.v.u = (uint16_t)v; return r;
+    case RT_U32: r.v.u = (uint32_t)v; return r;
+    case RT_U64: r.v.u = v; return r;
+    default: return rv_uint_slow(v, tag);
+    }
+}
 static inline int rv_truthy(rv v) { return v.tag == RT_BOOL && v.v.i != 0; }
 static inline int rv_isnull(rv v) { return v.tag == RT_NULL; }
 static inline RObj* rv_o(rv v) { return (RObj*)v.v.p; }
@@ -190,23 +215,78 @@ int64_t rt_str_chars(RStr* s);
 rv rt_text(rv v);                               /* to_text: Text eines Werts (own) */
 
 /* ---------------------------------------------------------------- Besitz */
-rv rv_view(rv v);
-int rt_owning(rv v);
-int rt_drop(rv v);
-rv rt_temp(rv v);                               /* besitzten Zwischenwert bis zum Ende der Anweisung halten */
-int64_t rt_tmark(void);
-int rt_trelease(int64_t mark, int st);          /* Zwischenwerte freigeben, Status zusammenführen */
+/* Die häufigen Fälle (Grundwerte, nichts freizugeben) stehen inline hier; der Rest in rpp_rt.c. */
+extern int64_t rt_ntemps;
+int rt_drop_slow(rv v);
+rv rt_temp_push(rv v);
+int rt_trelease_slow(int64_t mark, int st);
+rv rt_promote_slow(rv v);
+rv rt_num_to(rv v, uint8_t tag);
+
+static inline rv rv_view(rv v) {
+    if (v.tag >= RT_STR) {
+        if (v.tag == RT_OBJ) {
+            if (v.form == F_OWN || v.form == F_SHARED) v.form = F_BORROW;
+            else if (v.form == F_WEAK) v.form = F_WEAKB;
+        } else if (v.tag != RT_ENUM && v.tag != RT_SLICE) {
+            v.form = F_BORROW;
+        }
+    }
+    return v;
+}
+
+/* Besitzt der Wert etwas, das freigegeben werden muss? (owning; dazu Strings und Lambdas) */
+static inline int rt_owning(rv v) {
+    if (v.tag < RT_STR) return 0;
+    switch (v.tag) {
+    case RT_OBJ: return v.form == F_OWN || v.form == F_SHARED;
+    case RT_STR: return v.form == F_OWN && ((RStr*)v.v.p)->rc >= 0;
+    case RT_TUP: case RT_ENUMD: case RT_FUNC: return v.form == F_OWN;
+    default: return 0;
+    }
+}
+
+static inline int rt_drop(rv v) {
+    if (v.tag < RT_STR || v.tag == RT_ENUM || v.tag == RT_SLICE) return ST_OK;
+    return rt_drop_slow(v);
+}
+
+static inline rv rt_temp(rv v) {
+    if (!rt_owning(v)) return v;
+    return rt_temp_push(v);
+}
+
+static inline int64_t rt_tmark(void) { return rt_ntemps; }
+
+static inline int rt_trelease(int64_t mark, int st) {
+    if (rt_ntemps == mark) return st;
+    return rt_trelease_slow(mark, st);
+}
 void rt_tdiscard(int64_t mark);
 int rt_combine(int st, int d);
-rv rt_promote(rv v);
+static inline rv rt_promote(rv v) {
+    if (v.tag < RT_STR) return v;
+    return rt_promote_slow(v);
+}
 rv rt_own_copy(rv v);
 int rt_plain(rv v);
 rv rt_transfer_var(rv* cell);                   /* Variable an einen Besitzer übergeben (transfer) */
 rv rt_to_shared(rv v);                          /* convert in einen shared-Typ */
 int rt_to_weak(rv* v);                          /* convert in einen weak-Typ */
-rv rt_num_to(rv v, uint8_t tag);                /* Zahl in einen anderen Zahltyp */
 int rt_convert_exact(rv* v, uint8_t tag);       /* Ergebnis einer Verbundzuweisung */
-int rt_scope_drop(int st, rv* vars, int n);     /* Variablen in umgekehrter Reihenfolge freigeben */
+int rt_scope_drop_slow(int st, rv* vars, int n);
+int rt_combine(int st, int d);
+/* Variablen in umgekehrter Reihenfolge freigeben */
+static inline int rt_scope_drop(int st, rv* vars, int n) {
+    if (n == 1) {
+        rv x = vars[0];
+        vars[0].tag = RT_MOVED;
+        if (x.tag < RT_STR || x.tag == RT_ENUM || x.tag == RT_SLICE) return st;
+        int d = rt_drop_slow(x);
+        return d ? rt_combine(st, d) : st;
+    }
+    return rt_scope_drop_slow(st, vars, n);
+}
 
 /* ---------------------------------------------------------------- Objekte */
 RObj* rt_obj_new(const RClass* c, const RTy** targs, int32_t ntargs);
@@ -228,10 +308,43 @@ void rt_unlock(RObj* o, int mutable);
 static inline RObj* rt_shared_root(rv v) { return (v.tag == RT_OBJ && v.form == F_SHARED) ? (RObj*)v.v.p : NULL; }
 int rt_lock_weak(rv* out, rv w);                /* w.lock() */
 int rt_unpack(rv v, int n, rv* out);            /* Tupel oder own-Objekt zerlegen (R-5.25) */
-int rt_index(rv* out, rv obj, rv idx);          /* a[i] lesend (Sicht) */
-int rt_index_slot(rv** out, rv obj, rv idx);    /* a[i] als Ort */
+int rt_index_slow(rv* out, rv obj, rv idx);
+int rt_index_slot_slow(rv** out, rv obj, rv idx);
+int rt_member_len_slow(rv* out, rv obj, int bytes);
+
+/* a[i] lesend (Sicht) */
+static inline int rt_index(rv* out, rv obj, rv idx) {
+    if (obj.tag == RT_OBJ && idx.tag >= RT_I8 && idx.tag <= RT_I64) {
+        RObj* o = (RObj*)obj.v.p;
+        if (!o->cls && idx.v.i >= 0 && idx.v.i < o->len) {
+            *out = rv_view(o->slots[idx.v.i]);
+            return ST_OK;
+        }
+    }
+    return rt_index_slow(out, obj, idx);
+}
+
+/* a[i] als Ort */
+static inline int rt_index_slot(rv** out, rv obj, rv idx) {
+    if (obj.tag == RT_OBJ && idx.tag >= RT_I8 && idx.tag <= RT_I64) {
+        RObj* o = (RObj*)obj.v.p;
+        if (idx.v.i >= 0 && idx.v.i < o->len) {
+            *out = &o->slots[idx.v.i];
+            return ST_OK;
+        }
+    }
+    return rt_index_slot_slow(out, obj, idx);
+}
+
+/* length / byteLength */
+static inline int rt_member_len(rv* out, rv obj, int bytes) {
+    if (obj.tag == RT_OBJ && !((RObj*)obj.v.p)->cls) {
+        *out = rv_i64(((RObj*)obj.v.p)->len);
+        return ST_OK;
+    }
+    return rt_member_len_slow(out, obj, bytes);
+}
 int rt_slice(rv* out, rv obj, int has_from, rv from, int has_to, rv to);
-int rt_member_len(rv* out, rv obj, int bytes);  /* length / byteLength */
 int rt_deep_copy(rv* out, rv v);
 int rt_describe(rv* out, rv ex);
 
@@ -258,12 +371,78 @@ rv rt_take_exc(void);
 
 /* Arithmetik und Vergleiche */
 enum { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_REM, OP_AND, OP_OR, OP_XOR, OP_SHL, OP_SHR };
-int rt_arith(rv* out, int op, rv a, rv b);
-int rt_equal(int* out, rv a, rv b);
-int rt_compare(int* out, rv a, rv b);
+int rt_arith_slow(rv* out, int op, rv a, rv b);
+int rt_equal_slow(int* out, rv a, rv b);
+int rt_compare_slow(int* out, rv a, rv b);
+int rt_incdec_slow(rv* out, rv cur, int d);
 int rt_neg(rv* out, rv a);
 rv rt_bitnot(rv a);
-int rt_incdec(rv* out, rv cur, int d);
+
+static inline int rt_is_sint(uint8_t t) { return t >= RT_I8 && t <= RT_I32; }
+
+/* Ganzzahlen mit Vorzeichen bis 64 Bit: gemeinsamer Typ ist der breitere (R-4.12) */
+static inline int rt_arith(rv* out, int op, rv a, rv b) {
+    if (op <= OP_SUB && a.tag >= RT_I8 && a.tag <= RT_I64 && b.tag >= RT_I8 && b.tag <= RT_I64) {
+        uint8_t p = a.tag > b.tag ? a.tag : b.tag;
+        int64_t x = a.v.i, y = b.v.i;
+        if (p != RT_I64) {
+            int64_t r = op == OP_ADD ? x + y : x - y;
+            int64_t lo = p == RT_I32 ? INT32_MIN : p == RT_I16 ? -32768 : -128;
+            int64_t hi = p == RT_I32 ? INT32_MAX : p == RT_I16 ? 32767 : 127;
+            if (r >= lo && r <= hi) {
+                rv v = rv_make(p);
+                v.v.i = r;
+                *out = v;
+                return ST_OK;
+            }
+        } else if (op == OP_ADD ? !((y > 0 && x > INT64_MAX - y) || (y < 0 && x < INT64_MIN - y))
+                                : !((y < 0 && x > INT64_MAX + y) || (y > 0 && x < INT64_MIN + y))) {
+            *out = rv_i64(op == OP_ADD ? x + y : x - y);
+            return ST_OK;
+        }
+    }
+    return rt_arith_slow(out, op, a, b);
+}
+
+static inline int rt_equal(int* out, rv a, rv b) {
+    if (a.tag == b.tag && ((a.tag >= RT_BOOL && a.tag <= RT_U64) || a.tag == RT_NULL)) {
+        *out = a.v.i == b.v.i;
+        return ST_OK;
+    }
+    if (a.tag >= RT_I8 && a.tag <= RT_I64 && b.tag >= RT_I8 && b.tag <= RT_I64) {
+        *out = a.v.i == b.v.i;
+        return ST_OK;
+    }
+    if (a.tag == RT_ENUM && b.tag == RT_ENUM) {
+        *out = a.x == b.x && a.v.i == b.v.i;
+        return ST_OK;
+    }
+    return rt_equal_slow(out, a, b);
+}
+
+static inline int rt_compare(int* out, rv a, rv b) {
+    if (a.tag >= RT_I8 && a.tag <= RT_I64 && b.tag >= RT_I8 && b.tag <= RT_I64) {
+        *out = a.v.i < b.v.i ? -1 : a.v.i > b.v.i;
+        return ST_OK;
+    }
+    if (a.tag == b.tag && (a.tag == RT_CHAR || (a.tag >= RT_U8 && a.tag <= RT_U64) || a.tag == RT_BYTE)) {
+        *out = a.v.u < b.v.u ? -1 : a.v.u > b.v.u;
+        return ST_OK;
+    }
+    return rt_compare_slow(out, a, b);
+}
+
+static inline int rt_incdec(rv* out, rv cur, int d) {
+    if (cur.tag == RT_I32 && cur.v.i + d >= INT32_MIN && cur.v.i + d <= INT32_MAX) {
+        *out = rv_i32((int32_t)(cur.v.i + d));
+        return ST_OK;
+    }
+    if (cur.tag == RT_I64 && !(d > 0 && cur.v.i == INT64_MAX) && !(d < 0 && cur.v.i == INT64_MIN)) {
+        *out = rv_i64(cur.v.i + d);
+        return ST_OK;
+    }
+    return rt_incdec_slow(out, cur, d);
+}
 int rt_cast_prim(rv* out, rv v, uint8_t tag);
 int rt_cast_enum(rv* out, rv v, int32_t def);
 int rt_int_result_i64(rv* out, int64_t v, uint8_t tag);
@@ -280,8 +459,16 @@ int rt_hash(int64_t* out, rv v);
 int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this, int at_cursor);
 
 /* Hilfen für den erzeugten Code */
-rv rt_conv_num(rv v, uint8_t tag);              /* convert in einen Zahltyp */
-rv rt_own_str(rv v);                            /* gespeicherter String besitzt seinen Text */
+/* convert in einen Zahltyp */
+static inline rv rt_conv_num(rv v, uint8_t p) {
+    if (v.tag >= RT_I8 && v.tag <= RT_F64 && v.tag != p) return rt_num_to(v, p);
+    return v;
+}
+/* gespeicherter String besitzt seinen Text; gespeicherter weak-Verweis wird gezählt */
+static inline rv rt_own_str(rv v) {
+    if ((v.tag == RT_STR && v.form == F_BORROW) || (v.tag == RT_OBJ && v.form == F_WEAKB)) return rt_promote_slow(v);
+    return v;
+}
 rv rt_temp_str(rv v);
 int rt_case_int(rv v, uint64_t mag, int neg);
 int rt_variant_is(rv v, int32_t def, int64_t idx);
