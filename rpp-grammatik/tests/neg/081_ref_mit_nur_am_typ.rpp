@@ -1,2 +1,2 @@
-// Name: ref mit & nur am Typ
-class T { void m() { ref Foo& f = x; } }
+// Name: ref mit mut nur am Typ
+class T { void m() { ref mut Foo f = x; } }

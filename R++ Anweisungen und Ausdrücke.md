@@ -62,7 +62,7 @@ Gibt es keinen solchen Typ, ist der Ausdruck ein Fehler; eine gemeinsame Basiskl
 
 **R-8.17 (Verdecken, V-8.1).** Eine lokale Variable darf keine andere sichtbare lokale Variable und keinen Parameter verdecken; auch in einem inneren Block nicht. Felder dürfen verdeckt werden.
 
-**R-8.18 (const).** Eine `const`-Variable wird bei der Deklaration gesetzt und danach nie wieder zugewiesen. `const` gilt tief: Über sie dürfen keine `&`-Methoden aufgerufen und keine Felder gesetzt werden.
+**R-8.18 (const).** Eine `const`-Variable wird bei der Deklaration gesetzt und danach nie wieder zugewiesen. `const` gilt tief: Über sie dürfen keine `mut`-Methoden aufgerufen und keine Felder gesetzt werden.
 
 **R-8.19 (Zuweisungen).** Zuweisungen sind Anweisungen und stehen sonst nur im Kopf einer `for`-Schleife. Ziel ist eine Variable, ein Feld, ein Element oder ein Tupel aus Zielen. Der Wert wird nach Kapitel 4 umgewandelt; für Besitz gilt Kapitel 5. Eine Zuweisung an einen String-Index, eine `const`-Variable, einen Parameter ohne `own` (solche Parameter sind nur lesbar, auch primitive) oder eine `ref`-Variable ist ein Fehler.
 
@@ -79,7 +79,7 @@ Gibt es keinen solchen Typ, ist der Ausdruck ein Fehler; eine gemeinsame Basiskl
 - Strings (Zeichen als `char`) und
 - jede Klasse, die das Bibliotheks-Mixin `Iterable<T>` importiert (Form von `Iterable`: Kapitel 13).
 
-`c` wird für die ganze Schleife lesend geliehen, `x` ist ein lesender Borrow auf das Element (primitive Werte und Strings: eine Kopie). Mit `for (T& x : &c)` sind Sammlung und Element veränderbar geliehen. Während der Schleife kann `c` deshalb nicht wachsen oder schrumpfen (Kapitel 5, Satz 5.2).
+`c` wird für die ganze Schleife lesend geliehen, `x` ist ein lesender Borrow auf das Element (primitive Werte und Strings: eine Kopie). Mit `for (mut T x : mut c)` sind Sammlung und Element veränderbar geliehen. Während der Schleife kann `c` deshalb nicht wachsen oder schrumpfen (Kapitel 5, Satz 5.2).
 
 **R-8.24 (switch).** `switch (e)` ist erlaubt für Ganzzahlen, `char`, `string` und Enums.
 - Jeder `case` nennt eine oder mehrere Marken: Literale, Konstanten oder Enum-Varianten, auch mit Bindungen (`case Shape::Circle(r):`). Doppelte Marken sind ein Fehler.

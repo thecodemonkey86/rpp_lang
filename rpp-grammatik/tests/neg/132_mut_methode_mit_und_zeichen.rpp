@@ -1,0 +1,2 @@
+// Name: & nach der Parameterliste (alte Schreibweise)
+class T { void f() & { } }

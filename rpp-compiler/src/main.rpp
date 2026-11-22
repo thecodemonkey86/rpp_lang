@@ -6,6 +6,8 @@
 //   rppcc defs [--release] STD PFAD
 //                                 Deklarationstabellen und Meldungen der Deklarationsphase (wie `rppc defs`)
 //   rppcc pruefe STD PFAD         alle Meldungen der Prüfung, auch der Rümpfe (wie `rppc pruefe`)
+//   rppcc c [--release] STD PFAD AUSGABE.c
+//                                 C-Code für runtime/rpp_rt.c erzeugen (Codegenerator, M6)
 //                                 Deklarationstabellen und Meldungen der Deklarationsphase (wie `rppc defs`)
 //                                 geladene Projekte, Dateien und Meldungen (wie `rppc projekt`)
 using rpp.io.File;
@@ -38,6 +40,7 @@ using compiler.sema.FieldInfo;
 using compiler.sema.MethodInfo;
 using compiler.sema.CtorInfo;
 using compiler.sema.VariantInfo;
+using compiler.gen.CGen;
 
 class Main {
 public:
@@ -83,7 +86,7 @@ public:
         string[] parts = [];
         for (PInfo x : ps) {
             if (x.mode == Mode::Mut) {
-                parts.push(p.show(x.ty) + "& " + x.name);
+                parts.push("mut " + p.show(x.ty) + " " + x.name);
             } else if (x.mode == Mode::Own) {
                 parts.push("own " + p.show(x.ty) + " " + x.name);
             } else {
@@ -242,7 +245,7 @@ public:
                 } else if (m.ret.kind == RetKind::Ref) {
                     ret = "ref " + p.show(m.ret.ty);
                     if (m.ret.mutable) {
-                        ret = ret + "&";
+                        ret = "ref mut " + p.show(m.ret.ty);
                     }
                 }
                 string tps = "";
@@ -287,6 +290,31 @@ public:
         for (string line : sortedDiags(c.p.diags)) {
             print(line);
         }
+        return 0;
+    }
+
+    // C-Code erzeugen; bei Fehlern der Prüfung die Meldungen wie `pruefe`, Exit-Code 1
+    static i32 genC(string stdDir, string input, string output, bool release) {
+        Workspace ws = Workspace::load(input, stdDir, release);
+        Program p = Program::build(ws);
+        Checker c = new Checker(p);
+        c.withStd = true;
+        c.run(ws);
+        bool failed = false;
+        for (Diag d : c.p.diags) {
+            if (!d.warning) {
+                failed = true;
+            }
+        }
+        if (failed) {
+            for (string line : sortedDiags(c.p.diags)) {
+                print(line);
+            }
+            return 1;
+        }
+        CGen g = new CGen(c, release);
+        string text = g.generate(ws);
+        File::writeText(output, text);
         return 0;
     }
 
@@ -358,7 +386,7 @@ public:
         try {
             Node unit = Source::parse(source, symbols);
             StringBuilder out = new StringBuilder();
-            unit.dump(&out, 0);
+            unit.dump(mut out, 0);
             Console::write(out.toString());
         } catch (SyntaxError e) {
             print("Zeile " + e.line.toString() + ":" + e.col.toString() + " " + e.message);
@@ -379,6 +407,12 @@ i32 main(string[] args) {
     }
     if (args.length == 4 && args[0] == "projekt" && args[1] == "--release") {
         return Main::projekt(args[2], args[3], true);
+    }
+    if (args.length == 5 && args[0] == "c" && args[1] == "--release") {
+        return Main::genC(args[2], args[3], args[4], true);
+    }
+    if (args.length == 4 && args[0] == "c") {
+        return Main::genC(args[1], args[2], args[3], false);
     }
     if (args.length == 3 && args[0] == "pruefe") {
         return Main::pruefe(args[1], args[2]);

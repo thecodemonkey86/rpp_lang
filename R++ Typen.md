@@ -43,7 +43,7 @@ Die meisten Regeln folgen aus den „R++ Designentscheidungen“ (Abschnitte 2, 
 | Typ-Parameter | `T`, `T : Comparable` | 12 |
 | `void` | nur als Rückgabetyp und letztes Argument von `Func` | 13 |
 
-Vor Klassen-, Array-, Tupel- und Funktionstypen kann eine Besitzform stehen (`own`, `shared`, `weak`) oder an Parametern `&` folgen; deren Bedeutung regelt Kapitel 5. Für die Typregeln dieses Kapitels zählt nur der Typ ohne Besitzform, außer wo es ausdrücklich gesagt ist.
+Vor Klassen-, Array-, Tupel- und Funktionstypen kann eine Besitzform stehen (`own`, `shared`, `weak`) oder an Parametern `mut`; deren Bedeutung regelt Kapitel 5. Für die Typregeln dieses Kapitels zählt nur der Typ ohne Besitzform, außer wo es ausdrücklich gesagt ist.
 
 ## 2. Primitive Typen
 
@@ -176,7 +176,7 @@ Ein Wert vom Typ `C` darf überall stehen, wo `D` verlangt wird; das gilt mit de
 
 **R-4.30 (Typen).** `T[N]` ist ein festes Array mit `N` Elementen; `N` ist ein Ganzzahlliteral oder eine `static const`-Ganzzahlkonstante ≥ 0. `T[]` ist ein Vektor. `Slice<T>` ist eine geliehene Sicht auf einen Ausschnitt eines festen Arrays oder Vektors. Alle Elemente haben den Typ `T`. `T[N]` und `T[M]` sind nur bei `N = M` derselbe Typ.
 
-**R-4.31 (Umwandlungen, V-4.9).** `T[N]` und `T[]` werden automatisch als `Slice<T>` geliehen (lesend; mit `&` veränderbar). Zwischen `T[N]` und `T[]` gibt es keine automatische Umwandlung. Arrays sind invariant: `Circle[]` ist kein `Shape[]`.
+**R-4.31 (Umwandlungen, V-4.9).** `T[N]` und `T[]` werden automatisch als `Slice<T>` geliehen (lesend; mit `mut` veränderbar). Zwischen `T[N]` und `T[]` gibt es keine automatische Umwandlung. Arrays sind invariant: `Circle[]` ist kein `Shape[]`.
 
 **R-4.32 (Literale).** Ein Array-Literal `[a, b, c]` hat den Typ, den der Kontext verlangt; jedes Element wird in den Elementtyp umgewandelt. Bei festen Arrays muss die Anzahl stimmen. `[]` braucht einen Kontext.
 
@@ -192,7 +192,7 @@ Ein Wert vom Typ `C` darf überall stehen, wo `D` verlangt wird; das gilt mit de
 
 ## 10. Funktionstypen
 
-**R-4.37 (Func).** `Func<P₁, …, Pₙ, R>` ist der Typ einer Funktion mit Parametern `P₁ … Pₙ` und Rückgabetyp `R`; `Func<R>` hat keine Parameter. `void` darf nur an letzter Stelle stehen. Parameter können wie Methodenparameter markiert sein (`Func<Foo&, void>`, `Func<own Foo, void>`; Kapitel 10, R-10.13). Funktionstypen sind strukturell und invariant: `Func<A, B>` und `Func<C, D>` sind nur bei `A = C` und `B = D` gleich.
+**R-4.37 (Func).** `Func<P₁, …, Pₙ, R>` ist der Typ einer Funktion mit Parametern `P₁ … Pₙ` und Rückgabetyp `R`; `Func<R>` hat keine Parameter. `void` darf nur an letzter Stelle stehen. Parameter können wie Methodenparameter markiert sein (`Func<mut Foo, void>`, `Func<own Foo, void>`; Kapitel 10, R-10.13). Funktionstypen sind strukturell und invariant: `Func<A, B>` und `Func<C, D>` sind nur bei `A = C` und `B = D` gleich.
 
 **R-4.38 (Werte).** Werte eines Funktionstyps entstehen nur aus Lambdas. Ein Parameter vom Typ `Func<…>` nimmt normale und `own`-Lambdas; Variablen, Felder und Rückgabewerte nehmen nur `own`-Lambdas (Kapitel 5, Abschnitt 7). Funktionstypen haben kein `==`.
 

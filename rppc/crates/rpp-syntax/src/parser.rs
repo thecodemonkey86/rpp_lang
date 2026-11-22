@@ -403,7 +403,7 @@ impl Parser {
         let name = self.ident()?;
         let type_params = self.type_params_opt()?;
         let params = self.params()?;
-        let mut_this = self.eat_p(P::Amp);
+        let mut_this = self.eat_k(K::Mut);
         let without_body = modifier == Some(MethodModifier::Abstract) || (in_mixin && modifier.is_none());
         let body = if without_body && self.eat_p(P::Semi) {
             None
@@ -434,8 +434,8 @@ impl Parser {
     }
 
     fn param(&mut self) -> PResult<Param> {
+        let mutable = self.eat_k(K::Mut);
         let ty = self.ty(TypeCtx::Plain)?;
-        let mutable = self.eat_p(P::Amp);
         let name = self.ident()?;
         Ok(Param { ty, mutable, name })
     }
@@ -468,10 +468,10 @@ impl Parser {
             return Ok(ReturnType::Void);
         }
         if self.eat_k(K::Ref) {
+            let mutable = self.eat_k(K::Mut);
             let span = self.span();
             let base = self.base_type(TypeCtx::Plain)?;
             let suffixes = self.type_suffixes(TypeCtx::Plain)?;
-            let mutable = self.eat_p(P::Amp);
             return Ok(ReturnType::Ref { ty: Type { ownership: None, base, suffixes, span }, mutable });
         }
         Ok(ReturnType::Type(self.ty(TypeCtx::Plain)?))
@@ -533,8 +533,8 @@ impl Parser {
             if self.eat_k(K::Void) {
                 args.push(TypeArg::Void);
             } else {
+                let mutable = self.eat_k(K::Mut);
                 let ty = self.ty(TypeCtx::Plain)?;
-                let mutable = self.eat_p(P::Amp);
                 args.push(TypeArg::Type { ty, mutable });
             }
             if !self.eat_p(P::Comma) {
@@ -650,7 +650,7 @@ impl Parser {
                 if self.eat_p(P::Semi) {
                     return Ok(StmtKind::Return { borrow_mut: false, value: None });
                 }
-                let borrow_mut = self.eat_p(P::Amp);
+                let borrow_mut = self.eat_k(K::Mut);
                 let value = Some(self.expression()?);
                 self.expect_p(P::Semi)?;
                 return Ok(StmtKind::Return { borrow_mut, value });
@@ -725,15 +725,15 @@ impl Parser {
 
     fn ref_decl(&mut self) -> PResult<StmtKind> {
         self.expect_k(K::Ref)?;
+        let mutable = self.eat_k(K::Mut);
         let span = self.span();
         let base = self.base_type(TypeCtx::Plain)?;
         let suffixes = self.type_suffixes(TypeCtx::Plain)?;
         let ty = Type { ownership: None, base, suffixes, span };
-        let mutable = self.eat_p(P::Amp);
         let name = self.ident()?;
         self.expect_p(P::Assign)?;
         if mutable {
-            self.expect_p(P::Amp)?;
+            self.expect_k(K::Mut)?;
         }
         let init = self.expression()?;
         Ok(StmtKind::Ref { ty, mutable, name, init })
@@ -789,15 +789,15 @@ impl Parser {
     fn for_stmt(&mut self) -> PResult<StmtKind> {
         self.expect_k(K::For)?;
         self.expect_p(P::LParen)?;
-        // forEachStmt : FOR '(' (type | VAR) '&'? identifier ':' '&'? expression ')' statement
+        // forEachStmt : FOR '(' MUT? (type | VAR) identifier ':' MUT? expression ')' statement
         if let Some((ty, mutable, name)) = self.attempt(|p| {
+            let mutable = p.eat_k(K::Mut);
             let ty = if p.eat_k(K::Var) { VarType::Var } else { VarType::Type(p.ty(TypeCtx::Plain)?) };
-            let mutable = p.eat_p(P::Amp);
             let name = p.ident()?;
             p.expect_p(P::Colon)?;
             Ok((ty, mutable, name))
         }) {
-            let borrow_mut = self.eat_p(P::Amp);
+            let borrow_mut = self.eat_k(K::Mut);
             let iter = self.expression()?;
             self.expect_p(P::RParen)?;
             let body = Box::new(self.statement()?);
@@ -1081,7 +1081,7 @@ impl Parser {
             return Ok(args);
         }
         loop {
-            let borrow_mut = self.eat_p(P::Amp);
+            let borrow_mut = self.eat_k(K::Mut);
             let expr = self.expression()?;
             args.push(Arg { borrow_mut, expr });
             if !self.eat_p(P::Comma) {

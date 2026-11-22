@@ -8,14 +8,14 @@ public:
     i32 value;
     constructor(i32 v) { this.value = v; }
     void run() { }
-    void bump() & { this.value = this.value + 1; }
+    void bump() mut { this.value = this.value + 1; }
 }
 
 class Holder {
 public:
     Foo payload;
     constructor(own Foo p) { this.payload = p; }
-    Foo leere() & {
-        return take(&this.payload); // FEHLER
+    Foo leere() mut {
+        return take(mut this.payload); // FEHLER
     }
 }

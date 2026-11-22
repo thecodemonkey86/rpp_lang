@@ -6,9 +6,9 @@ class Stack {
 public:
     i32[] items = [];
 
-    i32 pop() & { return items.pop(); }
+    i32 pop() mut { return items.pop(); }
     nodiscard bool isEmpty() { return items.length == 0; }
-    void clear() & { items = []; }
+    void clear() mut { items = []; }
 }
 
 mixin Sized {
@@ -17,7 +17,7 @@ mixin Sized {
 
 class Use {
 public:
-    void demo(Stack& s) {
+    void demo(mut Stack s) {
         discard s.pop();
         s.clear();
         if (!s.isEmpty()) {

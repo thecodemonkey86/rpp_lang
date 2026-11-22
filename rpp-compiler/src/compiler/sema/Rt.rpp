@@ -1,0 +1,101 @@
+// Angaben der Prüfung für die Ausführung (wie rppc/crates/rpp-sema/src/rt.rs): was der
+// Codegenerator über einen Ausdruck wissen muss, ohne die Prüfung zu wiederholen.
+// Schlüssel ist die Nummer des Knotens im Arbeitsbereich (Node.id).
+package compiler.sema;
+
+// Was ein Aufruf (oder new, E::V(…), T::x) zur Laufzeit tut
+export enum TargetKind {
+    // Methode einer Klasse oder eines Mixins; bei Instanzmethoden virtuell
+    Method,
+    // base.m() bzw. M::m(): genau diese Fassung
+    Exact,
+    // Konstruktor (m == null: der implizite parameterlose)
+    Ctor,
+    // new T() mit einem Typ-Parameter (def: Nummer des Typ-Parameters)
+    NewParam,
+    // print, assert, fail, take, replace, same
+    Builtin,
+    // Methode eines primitiven Typs, eines Strings oder eines Vektors
+    BuiltinMethod,
+    // i32::parse(…) usw. (prim: der Grundtyp)
+    BuiltinStatic,
+    // Aufruf eines Funktionswerts
+    FuncValue,
+    // Enum-Wert E::V(…) bzw. E::V (def, index)
+    Variant,
+    // statisches Feld T::x (def: Besitzer, name)
+    StaticField,
+    // w.lock()
+    Lock,
+}
+
+export class Target {
+public:
+    TargetKind kind;
+    MethodInfo? m = null;
+    i64 def = -1;
+    i64 index = -1;
+    string name = "";
+    string prim = "";
+    // Parameter nach dem Einsetzen der Typargumente
+    PInfo[] params = [];
+
+    constructor(TargetKind kind) {
+        this.kind = kind;
+    }
+
+    static Target method(TargetKind kind, MethodInfo m) {
+        Target t = new Target(kind);
+        t.m = m.substituted(new Subst());
+        return t;
+    }
+
+    static Target named(TargetKind kind, string name) {
+        Target t = new Target(kind);
+        t.name = name;
+        return t;
+    }
+
+    static Target ofDef(TargetKind kind, i64 def, i64 index) {
+        Target t = new Target(kind);
+        t.def = def;
+        t.index = index;
+        return t;
+    }
+}
+
+export class Captures {
+public:
+    string[] names = [];
+}
+
+export class RtInfo {
+public:
+    // statischer Typ jedes Ausdrucks (nach Verengung)
+    shared Ty?[] types = [];
+    // Zieltyp eines Werts, der gespeichert oder übergeben wird
+    shared Ty?[] stores = [];
+    // Ausdrücke, deren Wert an einen Besitzer geht
+    bool[] consumes = [];
+    Target?[] calls = [];
+    // von einem own-Lambda erfasste Variablen
+    Captures?[] captures = [];
+    // Basiskonstruktor je Konstruktor (Knoten des Konstruktors); hasBase: Eintrag vorhanden
+    MethodInfo?[] baseCtors = [];
+    bool[] hasBase = [];
+    // Typen lokaler Deklarationen (Knoten des Namens)
+    shared Ty?[] decls = [];
+
+    constructor(i64 n) {
+        for (i64 i = 0; i < n; i++) {
+            types.push(null);
+            stores.push(null);
+            consumes.push(false);
+            calls.push(null);
+            captures.push(null);
+            baseCtors.push(null);
+            hasBase.push(false);
+            decls.push(null);
+        }
+    }
+}

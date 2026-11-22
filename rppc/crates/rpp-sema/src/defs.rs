@@ -34,7 +34,7 @@ pub struct PInfo {
 pub enum Ret {
     Void,
     Val(Ty),
-    /// zurückgegebener Borrow `ref T` bzw. `ref T&`
+    /// zurückgegebener Borrow `ref T` bzw. `ref mut T`
     Ref(Ty, bool),
 }
 
@@ -235,7 +235,7 @@ impl Program {
                     .iter()
                     .map(|p| match p.mode {
                         Mode::Read => self.show(&p.ty),
-                        Mode::Mut => format!("{}&", self.show(&p.ty)),
+                        Mode::Mut => format!("mut {}", self.show(&p.ty)),
                         Mode::Own => format!("own {}", self.show(&p.ty)),
                     })
                     .collect();
@@ -396,7 +396,7 @@ impl Program {
             }
             TypeArg::Type { ty, mutable } => {
                 if *mutable {
-                    self.error(file, ty.span, "R-10.13", "& ist nur an Parametern von Func erlaubt");
+                    self.error(file, ty.span, "R-10.13", "mut ist nur an Parametern von Func erlaubt");
                 }
                 self.resolve_type(file, scope, ty)
             }
@@ -473,7 +473,7 @@ impl Program {
                     let t = self.resolve_type(file, scope, ty);
                     if last {
                         if *mutable {
-                            self.error(file, ty.span, "R-10.13", "& ist am Rückgabetyp von Func nicht erlaubt");
+                            self.error(file, ty.span, "R-10.13", "mut ist am Rückgabetyp von Func nicht erlaubt");
                             return Ty::Error;
                         }
                         return Ty::Func(params, Box::new(t));

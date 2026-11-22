@@ -33,7 +33,7 @@ private:
         return pos + offset < chars.length;
     }
 
-    void advance() & {
+    void advance() mut {
         char c = chars[pos];
         pos++;
         if (c == '\n') {
@@ -44,7 +44,7 @@ private:
         }
     }
 
-    string take(i64 n) & {
+    string take(i64 n) mut {
         string s = "";
         for (i64 i = 0; i < n; i++) {
             s = s + chars[pos].toString();
@@ -69,7 +69,7 @@ private:
     }
 
     // Leerraum und Kommentare überspringen; ein offener Blockkommentar ist ein Fehler.
-    Token? skipTrivia() & {
+    Token? skipTrivia() mut {
         while (true) {
             char c = at(0);
             if (inside(0) && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) {
@@ -121,7 +121,7 @@ private:
         return last - offset;
     }
 
-    Token number(i32 l, i32 k) & {
+    Token number(i32 l, i32 k) mut {
         if (at(0) == '0' && at(1) == 'x') {
             i64 hex = digitsLen(2, true);
             if (hex > 0) {
@@ -170,7 +170,7 @@ private:
 
     // StringLiteral : '"' (~["\\\r\n] | '\\' .)* '"'
     // CharLiteral   : '\'' (~['\\\r\n] | '\\' .) '\''
-    Token quoted(char quote, bool many, i32 l, i32 k) & {
+    Token quoted(char quote, bool many, i32 l, i32 k) mut {
         i64 n = 1;
         i64 count = 0;
         while (true) {
@@ -213,7 +213,7 @@ private:
         return 0;
     }
 
-    Token next(i32 l, i32 k) & {
+    Token next(i32 l, i32 k) mut {
         char c = at(0);
         if (identStart(c)) {
             i64 n = 1;
@@ -253,7 +253,7 @@ public:
             "abstract", "as", "base", "bool", "break", "byte", "case", "cast", "catch", "char",
             "class", "const", "constructor", "continue", "copy", "default", "destructor", "discard",
             "do", "else", "enum", "export", "f32", "f64", "false", "finally", "for", "i8", "i16", "i32",
-            "i64", "if", "import", "mixin", "new", "nodiscard", "null", "override", "own",
+            "i64", "if", "import", "mixin", "mut", "new", "nodiscard", "null", "override", "own",
             "package", "private", "protected", "public", "ref", "return", "shared", "static", "string",
             "switch", "this", "throw", "true", "try", "ui8", "ui16", "ui32", "ui64", "using", "var",
             "virtual", "void", "weak", "while"
@@ -269,7 +269,7 @@ public:
     }
 
     // Zerlegt den Text in Tokens; das letzte ist Eof oder ein Fehler.
-    Token[] lex() & {
+    Token[] lex() mut {
         Token[] tokens = [];
         while (true) {
             Token? err = skipTrivia();

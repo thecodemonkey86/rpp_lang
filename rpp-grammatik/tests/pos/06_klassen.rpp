@@ -17,7 +17,7 @@ public:
         return new Circle(1.0);
     }
 
-    abstract void scale(f64 factor) &;
+    abstract void scale(f64 factor) mut;
 }
 
 class Circle : Shape {
@@ -40,7 +40,7 @@ public:
         return "Circle of " + base.name();
     }
 
-    override void scale(f64 factor) & {
+    override void scale(f64 factor) mut {
         radius *= factor;
     }
 }

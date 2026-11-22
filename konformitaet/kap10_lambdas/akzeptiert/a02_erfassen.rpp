@@ -5,14 +5,14 @@ package konformitaet.kap10;
 class Foo {
 public:
     i32 x = 0;
-    void bump() & { x++; }
+    void bump() mut { x++; }
     copy(Foo other) { this.x = other.x; }
 }
 
 class Counter {
 public:
     i32 n = 0;
-    void increment() & { n++; }
+    void increment() mut { n++; }
 }
 
 class Items {
@@ -21,8 +21,8 @@ public:
     void forEach(Func<Foo, void> f) {
         for (Foo e : list) { f(e); }
     }
-    void update(Func<Foo&, void> f) & {
-        for (Foo& e : &list) { f(&e); }
+    void update(Func<mut Foo, void> f) mut {
+        for (mut Foo e : mut list) { f(mut e); }
     }
     i32 sum(Func<Foo, i32> f) {
         i32 s = 0;
@@ -33,7 +33,7 @@ public:
 
 class Capture {
 public:
-    void demo(Items& items, shared Counter c, Foo borrowed) {
+    void demo(mut Items items, shared Counter c, Foo borrowed) {
         i32 limit = 10;
         i32 sum = 0;
         items.forEach((Foo f) => {
@@ -41,7 +41,7 @@ public:
                 sum += f.x;
             }
         });
-        items.update((Foo& f) => f.bump());
+        items.update((mut Foo f) => f.bump());
         Foo owned = new Foo();
         Func<i32> get = own () => owned.x;
         Func<void> inc = own () => c.increment();

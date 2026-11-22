@@ -1,0 +1,207 @@
+// Zusatztest für den C-Codegenerator: Sprachteile, die in den Laufzeittests der
+// Konformitätstests selten vorkommen. Erwartet wird dieselbe Ausgabe wie mit `rppc run`.
+using rpp.text.StringBuilder;
+using rpp.collections.Map;
+
+enum Shape {
+    Circle(f64 r),
+    Rect(f64 w, f64 h),
+    Empty,
+}
+
+enum Color {
+    Red = 1,
+    Green = 2,
+    Blue = 4,
+}
+
+class Node {
+public:
+    string name;
+    Node? next;
+    constructor(string name) {
+        this.name = name;
+    }
+    destructor() {
+        print("weg " + name);
+    }
+}
+
+class Counter {
+public:
+    static const i32 start = 7;
+    i32 n = 0;
+    void add(i32 k) mut {
+        n += k;
+    }
+}
+
+class Animal {
+public:
+    string name;
+    constructor(string name) {
+        this.name = name;
+    }
+    virtual string sound() {
+        return "...";
+    }
+    string describe() {
+        return name + " macht " + sound();
+    }
+}
+
+class Dog : Animal {
+public:
+    constructor(string name) : base(name) { }
+    override string sound() {
+        return "wuff";
+    }
+}
+
+class Box<T> {
+public:
+    T value;
+    constructor(own T value) {
+        this.value = value;
+    }
+    ref T get() {
+        return value;
+    }
+}
+
+class Util {
+public:
+    static f64 area(Shape s) {
+        switch (s) {
+            case Circle(r):
+                return 3.0 * r * r;
+            case Rect(w, h):
+                return w * h;
+            default:
+                return 0.0;
+        }
+    }
+
+    static i32 apply(Func<i32, i32> f, i32 x) {
+        return f(x);
+    }
+
+    static i32 tryReturn() {
+        try {
+            return 1;
+        } finally {
+            print("finally läuft");
+        }
+    }
+
+    static (i32, string) pair(i32 a) {
+        return (a * 2, "p" + a.toString());
+    }
+}
+
+i32 main(string[] args) {
+    // Enums mit Daten und switch
+    print(Util::area(Shape::Circle(2.0)).toString());
+    print(Util::area(Shape::Rect(2.0, 3.5)).toString());
+    print(Util::area(Shape::Empty).toString());
+    print(cast<i32>(Color::Blue).toString());
+    Color c = cast<Color>(2);
+    print((c == Color::Green) ? "grün" : "anders");
+
+    // Lambdas
+    i32 offset = 10;
+    print(Util::apply((i32 x) => x + offset, 5).toString());
+    Func<i32, i32> twice = own (i32 x) => x * 2;
+    print(twice(21).toString());
+
+    // Tupel
+    (i32 a, string b) = Util::pair(4);
+    print(a.toString() + " " + b);
+
+    // try/finally mit return
+    print(Util::tryReturn().toString());
+
+    // Exceptions
+    try {
+        i32 z = i32::parse("x1");
+        print(z.toString());
+    } catch (FormatException e) {
+        print("Format: " + e.message);
+    }
+
+    // virtuelle Aufrufe
+    Animal d = new Dog("Rex");
+    print(d.describe());
+
+    // Generics
+    Box<string> bx = new Box<string>("inhalt");
+    print(bx.get());
+
+    // Vektoren, Slices, Sortieren
+    i32[] xs = [5, 3, 9, 1];
+    xs.sort();
+    string[] ts = [];
+    for (i32 x : xs) {
+        ts.push(x.toString());
+    }
+    print(string::join(",", ts));
+    print(string::join(",", ts[1..3]));
+    xs.sortBy((i32 p, i32 q) => q - p);
+    print(xs[0].toString() + xs[3].toString());
+    print(xs.contains(9).toString());
+
+    // Strings
+    string s = "Grüße, Welt";
+    print(s.length.toString() + " " + s.byteLength.toString());
+    print(s.toUpper());
+    print(s.substring(0, 5));
+    print(s.indexOf("Welt")?.toString() ?? "-");
+    StringBuilder sb = new StringBuilder();
+    for (char ch : "abc") {
+        sb.appendChar(ch);
+        sb.append("-");
+    }
+    print(sb.toString());
+
+    // Map mit Iteration
+    Map<string, i32> m = new Map<string, i32>();
+    m.put("eins", 1);
+    m.put("zwei", 2);
+    i32 sum = 0;
+    for (string k : ["eins", "zwei", "drei"]) {
+        sum += m.get(k) ?? 100;
+    }
+    print(sum.toString());
+
+    // Besitz: Liste mit Destruktoren
+    Node first = new Node("a");
+    first.next = new Node("b");
+    Node? moved = take(mut first.next);
+    print(moved?.name ?? "-");
+
+    // shared und weak
+    shared Node sh = new Node("geteilt");
+    weak Node w = sh;
+    shared Node? got = w.lock();
+    print(got?.name ?? "-");
+
+    // Zahlen
+    i64 big = 9_000_000_000;
+    print((big * 2).toString());
+    ui8 u = 200;
+    print((cast<i32>(u) + 100).toString());
+    f32 f = 1.1;
+    print(f.toString());
+    print((7 / 2).toString() + " " + (-7 % 3).toString());
+
+    Counter cnt = new Counter();
+    for (i32 i = 0; i < 5; i++) {
+        if (i == 3) {
+            continue;
+        }
+        cnt.add(i);
+    }
+    print(cnt.n.toString());
+    print(Counter::start.toString());
+    return 0;
+}

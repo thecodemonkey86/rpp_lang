@@ -1,0 +1,2 @@
+// Name: mut als Name
+class T { void m() { i32 mut = 1; } }

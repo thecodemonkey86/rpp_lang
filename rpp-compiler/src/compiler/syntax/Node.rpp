@@ -12,6 +12,8 @@ public:
     i32 line;
     i32 col;
     Node[] kids = [];
+    // Nummer im Arbeitsbereich (für die Angaben der Prüfung, Kapitel M6); -1: ohne
+    i64 id = -1;
 
     constructor(string kind, string text, i32 line, i32 col) {
         this.kind = kind;
@@ -20,12 +22,22 @@ public:
         this.col = col;
     }
 
-    void add(own Node n) & {
+    // Nummeriert den Baum in Vorordnung ab next; liefert die nächste freie Nummer
+    static i64 number(mut Node n, i64 next) {
+        n.id = next;
+        i64 k = next + 1;
+        for (mut Node c : mut n.kids) {
+            k = number(mut c, k);
+        }
+        return k;
+    }
+
+    void add(own Node n) mut {
         kids.push(n);
     }
 
     // Eine Zeile je Knoten: Einrückung, Art, Text, @zeile:spalte
-    void dump(StringBuilder& out, i32 depth) {
+    void dump(mut StringBuilder out, i32 depth) {
         for (i32 i = 0; i < depth; i++) {
             out.append("  ");
         }
@@ -39,7 +51,7 @@ public:
         }
         out.appendChar('\n');
         for (Node k : kids) {
-            k.dump(&out, depth + 1);
+            k.dump(mut out, depth + 1);
         }
     }
 }

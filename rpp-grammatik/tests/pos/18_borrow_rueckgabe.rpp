@@ -11,15 +11,15 @@ public:
         return null;
     }
 
-    ref V& at(i64 i) & {
-        return &this.entries[i].value;
+    ref mut V at(i64 i) mut {
+        return mut this.entries[i].value;
     }
 
     ref Entry<K, V> first() {
         return this.entries[0];
     }
 
-    abstract ref V& slot(K key) &;
+    abstract ref mut V slot(K key) mut;
 }
 
 mixin Store<T> {
@@ -28,12 +28,12 @@ mixin Store<T> {
 
 class Use {
 public:
-    void demo(Table<string, Foo>& t) {
+    void demo(mut Table<string, Foo> t) {
         ref Foo? f = t.get("a");
         if (f != null) {
             f.run();
         }
-        ref Foo& g = &t.at(0);
+        ref mut Foo g = mut t.at(0);
         g.bump();
         print(t.first().key);
     }

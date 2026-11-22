@@ -39,7 +39,7 @@ public:
 export enum RetKind {
     Void,
     Val,
-    // zurückgegebener Borrow ref T bzw. ref T&
+    // zurückgegebener Borrow ref T bzw. ref mut T
     Ref,
 }
 

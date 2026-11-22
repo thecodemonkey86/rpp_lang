@@ -1,0 +1,3 @@
+// Name: Lambda mit mut-Parameter als Argument
+// Lesart: exprStatement
+class T { void m() { list.forEach((mut Foo f) => f.bump()); } }

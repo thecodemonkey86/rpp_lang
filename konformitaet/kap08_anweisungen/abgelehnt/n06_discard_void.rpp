@@ -6,12 +6,12 @@ package konformitaet.kap08;
 class Stack {
 public:
     i32[] items = [];
-    void clear() & { items = []; }
+    void clear() mut { items = []; }
 }
 
 class T {
 public:
-    void m(Stack& s) {
+    void m(mut Stack s) {
         discard s.clear(); // FEHLER
     }
 }

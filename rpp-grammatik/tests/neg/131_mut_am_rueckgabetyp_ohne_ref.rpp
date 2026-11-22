@@ -1,0 +1,2 @@
+// Name: mut am Rückgabetyp ohne ref
+class T { mut Foo f() { return x; } }

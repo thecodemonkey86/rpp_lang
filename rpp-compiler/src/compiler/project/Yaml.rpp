@@ -166,7 +166,7 @@ private:
     }
 
     // Liest einen Block mit genau der Einrückung indent; null, wenn keiner beginnt
-    YNode? block(i64 indent) & {
+    YNode? block(i64 indent) mut {
         if (pos >= lines.length || lines[pos].indent != indent) {
             return null;
         }
@@ -248,7 +248,7 @@ private:
 
     // Wert nach "schlüssel:" – auf derselben Zeile oder auf den folgenden, tiefer
     // (bei Listen auch gleich) eingerückten Zeilen
-    YNode valueAfter(string v, i32 number, i64 indent) & {
+    YNode valueAfter(string v, i32 number, i64 indent) mut {
         if (v.trim().length > 0) {
             return scalar(v, number);
         }

@@ -272,3 +272,28 @@ Für den Prüfer besitzt der Prüfer das Programm und leiht die Syntaxbäume; `P
 Verglichen wird `pruefe STD PFAD` (alle Meldungen mit Warnungen und Begründungsregeln, sortiert wie `rppc check`). Eingaben sind die Projekte und Einzeldateien der Konformitätstests, die Grammatiktests, die Grenzfälle der Deklarationsphase und die nach R++ übersetzten FR++-Programme (handgeschriebene und 300 Zufallsprogramme): 782 gleich, 0 verschieden. Gegenprobe: Mit R-6.9 statt R-6.8 als Begründung nach einem `if` weicht ein Konformitätstest ab. Auch `rpp-compiler` selbst prüfen beide Seiten gleich (keine Meldung); im Interpreter dauert das gut 20 Minuten, vor allem wegen des Fixpunkts an verschachtelten Schleifen.
 
 Weiter in M6: die Angaben für die Ausführung und ein Codegenerator (Zwischendarstellung oder C), dann die Selbstübersetzung.
+
+**M6: Codegenerator nach C und Selbstübersetzung (22.11.2026).** Entschieden (22.11.2026): Der Codegenerator erzeugt C (C17, übersetzbar mit MSVC und gcc), nicht zuerst eine eigene Zwischendarstellung.
+
+| Teil | Inhalt |
+|---|---|
+| Angaben für die Ausführung | `Checker.rpp` erhebt sie an denselben Stellen wie `body.rs` (`Rt.rpp`, wie `rt.rs`): Typen, Zieltypen, Moves, Aufrufziele, Basiskonstruktoren, Typen der Deklarationen; dazu die Erfassungen aller Lambdas. Die Knoten sind im Arbeitsbereich nummeriert (`Node.id`); mit `withStd` wird auch die Standardbibliothek geprüft. |
+| Codegenerator (`compiler/gen/CGen.rpp`) | setzt die Auswertung des Debug-Interpreters Stelle für Stelle in C um (`eval`, `eval_store`, `transfer`, `temp`, `convert`, `args`, alle Anweisungen); Fehler laufen als Status mit Aufräummarken je Anweisung und Gültigkeitsbereich; virtuelle Aufrufe über Verteiler je Methode; Generics ohne Vervielfältigung, Typargumente am Objekt (R-7.26) einschließlich der Sicht einer Basisklasse |
+| Laufzeit (`runtime/rpp_rt.c`) | Werte mit Art und Besitzform wie `value.rs`; Freigabe mit Zählern für `shared`, `weak` und Strings; Zahlen beider Modi mit 128-Bit-Zwischenwerten wie `i128`; Programmfehler, Stacktrace, Exit-Codes (R-12.9); 12 000 Aufrufe auf einem eigenen Stack; eingebaute Teile der Standardbibliothek |
+| Befehl | `rppcc c [--release] STD PFAD AUSGABE.c` |
+
+Verglichen wird das Verhalten mit `rppc run` (`rpp-compiler/vergleich_c.py`: erzeugen, mit MSVC übersetzen, im frischen Arbeitsverzeichnis ausführen; Ausgabe, Fehlerausgabe und Exit-Code):
+
+| Eingaben | gleich | verschieden |
+|---|---|---|
+| Laufzeittests der Konformitätstests, beide Modi | 84 | 0 |
+| `rpp-compiler/tests_c` (Lambdas, Enums mit Daten, `finally`, Tupel, Slices, `shared`/`weak` …), beide Modi | 2 | 0 |
+| FR++-Programme (handgeschrieben und Zufallsprogramme), beide Modi | 138 (69 Programme) | 0 |
+
+**Selbstübersetzung.** Der interpretierte `rpp-compiler` erzeugt für sich selbst C-Code (217 783 Zeilen, 20 Minuten im Interpreter); MSVC übersetzt ihn in gut einer Minute zu `rppcc.exe`. Dieses Programm
+- erzeugt für sich selbst denselben C-Code, Byte für Byte (Fixpunkt; 3 Minuten 50);
+- stimmt in allen Teilen von `vergleich.py --exe` mit `rppc` überein: `tokens` 539, `pre` 1092, `ast` 1070, `projekt` 596, `defs` 507, `pruefe` 789 gleich, 0 verschieden; `pruefe` jetzt einschließlich `rpp-compiler` selbst (3 Minuten 45 statt rund 20 Minuten im Interpreter).
+
+Beim Vergleich aufgefallen und behoben: Eine Sicht auf einen `weak`-Verweis wurde beim Speichern nicht gezählt (Laufzeit, Speicherfehler in FR++-Programmen).
+
+Offen: Der übersetzte Code ist noch langsam (Werte mit Art, Aufrufe über Status, Namensvergleich bei eingebauten Methoden); Typargumente generischer Methoden für `new T()` (wie im Interpreter); vollständige Unicode-Tabellen für `char`; der Releasemodus über eine eigene Zwischendarstellung oder LLVM bleibt nach dem Plan offen.

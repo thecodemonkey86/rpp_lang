@@ -17,7 +17,7 @@ Mixin-Importe stehen außerhalb der Sichtbarkeitsregeln; die Methoden eines Mixi
 
 **R-7.3 (Felder).** Ein Feld kann einen Initialisierer haben (`i32 count = 0;`). Initialisierer werden beim Erzeugen in Deklarationsreihenfolge ausgewertet (R-7.6). `static const`-Felder brauchen einen Wert, der zur Compilezeit feststeht; veränderbare statische Felder gibt es nicht.
 
-**R-7.4 (this).** In Methoden, Konstruktoren, Destruktor und `copy` bezeichnet `this` das aktuelle Objekt. In einer Methode ohne `&` ist es ein lesender Borrow, in einer `&`-Methode, im Konstruktor, im Destruktor und in `copy` ein veränderbarer Borrow (Kapitel 5). Statische Methoden haben kein `this`.
+**R-7.4 (this).** In Methoden, Konstruktoren, Destruktor und `copy` bezeichnet `this` das aktuelle Objekt. In einer Methode ohne `mut` ist es ein lesender Borrow, in einer `mut`-Methode, im Konstruktor, im Destruktor und in `copy` ein veränderbarer Borrow (Kapitel 5). Statische Methoden haben kein `this`.
 
 ## 2. Konstruktoren
 
@@ -47,7 +47,7 @@ Mixin-Importe stehen außerhalb der Sichtbarkeitsregeln; die Methoden eines Mixi
 **R-7.13 (virtual, abstract, override).**
 - Nur Methoden mit `virtual` oder `abstract` können überschrieben werden. Eine überschriebene Methode bleibt überschreibbar; ein `sealed` gibt es in Version 1 nicht.
 - Eine Methode, die eine geerbte überschreibt oder eine abstrakte implementiert, trägt `override`. Ohne `override` ist eine gleichnamige Methode mit gleichen Parametertypen ein Fehler.
-- `override` verlangt dieselben Parametertypen einschließlich Besitzformen und `&`, denselben `&`-Modus der Methode und denselben Rückgabetyp. Die Sichtbarkeit darf nicht enger werden (`public` bleibt `public`).
+- `override` verlangt dieselben Parametertypen einschließlich Besitzformen und `mut`, denselben `mut`-Modus der Methode und denselben Rückgabetyp. Die Sichtbarkeit darf nicht enger werden (`public` bleibt `public`).
 - Statische Methoden sind nie virtuell.
 
 **R-7.14 (Abstrakte Klassen).** Eine Klasse mit mindestens einer abstrakten Methode, ob eigen, geerbt oder als nicht erfüllte Mixin-Anforderung, muss `abstract class` sein. Abstrakte Klassen können Konstruktoren haben, aber nicht mit `new` erzeugt werden.
@@ -58,7 +58,7 @@ Mixin-Importe stehen außerhalb der Sichtbarkeitsregeln; die Methoden eines Mixi
 
 **R-7.16 (Überladene Methoden).** Mehrere Methoden oder Konstruktoren einer Klasse dürfen gleich heißen, wenn sich ihre Parameterlisten unterscheiden. Nicht erlaubt sind Varianten, die sich nur
 - im Rückgabetyp oder
-- in Besitzform oder Borrow-Markierung der Parameter (`f(Foo x)` neben `f(own Foo x)` oder `f(Foo& x)`)
+- in Besitzform oder Borrow-Markierung der Parameter (`f(Foo x)` neben `f(own Foo x)` oder `f(mut Foo x)`)
 
 unterscheiden. Eine statische und eine Instanzmethode dürfen nicht gleich heißen. Geerbte und aus Mixins importierte Methoden zählen bei der Auflösung mit.
 

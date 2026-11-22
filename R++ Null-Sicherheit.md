@@ -76,7 +76,7 @@ Daraus folgt die bisherige Form: Nach `if (x == null) { return; }` ist `x` für 
 | Feld | Holen zum Prüfen | Bemerkung |
 |---|---|---|
 | `Foo? child` (own) | `ref Foo? c = this.child;` | ein normales `Foo? c = this.child;` wäre ein Move aus dem Feld (Kapitel 5, V-3) |
-| `Foo? child` (own), herausnehmen | `Foo? c = take(&this.child);` | das Feld ist danach `null` |
+| `Foo? child` (own), herausnehmen | `Foo? c = take(mut this.child);` | das Feld ist danach `null` |
 | `shared Foo? next` | `shared Foo? n = this.next;` | kopiert den Verweis (Zähler + 1) |
 | `weak Foo w` | `shared Foo? n = this.w.lock();` | |
 | Element von `Foo?[] list` | `ref Foo? e = list[i];` | |

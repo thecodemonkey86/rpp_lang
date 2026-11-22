@@ -14,12 +14,12 @@ public:
     constructor(string n) { this.name = n; }
     bool ok() { return true; }
     void run() { }
-    void touch() & { }
+    void touch() mut { }
 }
 
 class T {
 public:
-    void m(Node& n) {
+    void m(mut Node n) {
         Node? c = n.child; // FEHLER
     }
 }

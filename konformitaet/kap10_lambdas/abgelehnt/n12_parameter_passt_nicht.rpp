@@ -1,19 +1,19 @@
 // Konformitätstest Kapitel 10 – muss abgelehnt werden.
 // Regel: R-10.14
-// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Func<Foo&, void> verlangt einen &-Parameter).
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Func<mut Foo, void> verlangt einen mut-Parameter).
 package konformitaet.kap10;
 
 class Foo {
 public:
     i32 x = 0;
-    void bump() & { x++; }
+    void bump() mut { x++; }
     copy(Foo other) { this.x = other.x; }
 }
 
 class Counter {
 public:
     i32 n = 0;
-    void increment() & { n++; }
+    void increment() mut { n++; }
 }
 
 class Items {
@@ -22,8 +22,8 @@ public:
     void forEach(Func<Foo, void> f) {
         for (Foo e : list) { f(e); }
     }
-    void update(Func<Foo&, void> f) & {
-        for (Foo& e : &list) { f(&e); }
+    void update(Func<mut Foo, void> f) mut {
+        for (mut Foo e : mut list) { f(mut e); }
     }
     i32 sum(Func<Foo, i32> f) {
         i32 s = 0;
@@ -34,7 +34,7 @@ public:
 
 class T {
 public:
-    void m(Items& items) {
+    void m(mut Items items) {
         items.update((Foo f) => print("x")); // FEHLER
     }
 }

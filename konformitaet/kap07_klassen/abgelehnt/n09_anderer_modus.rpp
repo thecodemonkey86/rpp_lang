@@ -10,5 +10,5 @@ public:
 
 class Circle : Shape {
 public:
-    override void touch() & { } // FEHLER
+    override void touch() mut { } // FEHLER
 }

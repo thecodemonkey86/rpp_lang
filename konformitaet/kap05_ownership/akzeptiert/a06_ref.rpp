@@ -7,7 +7,7 @@ public:
     i32 value;
     constructor(i32 v) { this.value = v; }
     void run() { }
-    void bump() & { this.value = this.value + 1; }
+    void bump() mut { this.value = this.value + 1; }
 }
 
 class Holder {
@@ -19,7 +19,7 @@ public:
 
 class RefDemo {
 public:
-    void demo(Holder& h) {
+    void demo(mut Holder h) {
         Foo[] list = [new Foo(1), new Foo(2)];
         // Lesender Borrow bis Blockende; zwei lesende Borrows dürfen nebeneinander bestehen.
         {
@@ -32,7 +32,7 @@ public:
         // Nach dem Block ist list wieder frei.
         list.push(new Foo(3));
         // Veränderbarer Borrow auf ein Feld; ein anderes Feld bleibt zugänglich.
-        ref Foo& p = &h.payload;
+        ref mut Foo p = mut h.payload;
         p.bump();
         ref Foo? s = h.spare;
         if (s != null) {

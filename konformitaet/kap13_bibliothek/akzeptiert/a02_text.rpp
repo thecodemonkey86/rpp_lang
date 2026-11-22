@@ -10,7 +10,7 @@ public:
     string name;
     i32 uses = 0;
     constructor(string n) { this.name = n; }
-    void use() & { uses++; }
+    void use() mut { uses++; }
 }
 
 class Report {

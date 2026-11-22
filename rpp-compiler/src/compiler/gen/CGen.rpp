@@ -1,0 +1,2856 @@
+// C-Codegenerator (Meilenstein M6). Erzeugt aus dem geprüften Programm und den Angaben
+// der Prüfung (RtInfo) eine C-Datei für die Laufzeit in runtime/rpp_rt.c. Jede Stelle folgt
+// dem Debug-Interpreter von rppc (rppc/crates/rpp-interp/src/lib.rs, Referenz nach R-12.3):
+// eval, eval_store, transfer, temp, convert, args und die Anweisungen werden zu C-Code,
+// der dieselben Laufzeitfunktionen in derselben Reihenfolge aufruft.
+//
+// Aufbau einer erzeugten Funktion: alle Werte stehen in Feldern T (Zwischenwerte) und V
+// (Variablen); st ist der Status (ST_OK, ST_THROW, ST_FATAL, ST_RET, ST_BRK, ST_CONT).
+// Ein Fehler springt zur Aufräummarke des innersten Gültigkeitsbereichs (X…) bzw. der
+// Anweisung (L…); von dort geht es nach außen weiter.
+package compiler.gen;
+
+using rpp.text.StringBuilder;
+using compiler.syntax.Node;
+using compiler.project.Workspace;
+using compiler.sema.Program;
+using compiler.sema.Checker;
+using compiler.sema.Target;
+using compiler.sema.TargetKind;
+using compiler.sema.Ty;
+using compiler.sema.TK;
+using compiler.sema.Tys;
+using compiler.sema.Mode;
+using compiler.sema.PInfo;
+using compiler.sema.MethodInfo;
+using compiler.sema.RetKind;
+using compiler.sema.DefKind;
+using compiler.sema.FieldInfo;
+using compiler.sema.CtorInfo;
+using compiler.sema.Num;
+using compiler.sema.Subst;
+using compiler.sema.Captures;
+
+// Gültigkeitsbereich im erzeugten Code
+class GScope {
+public:
+    i64 label;
+    i64[] vars = [];
+    i64[] locks = [];
+    bool[] lockMut = [];
+    i64 nameMark;
+    constructor(i64 label, i64 nameMark) {
+        this.label = label;
+        this.nameMark = nameMark;
+    }
+}
+
+// Zustand der gerade erzeugten Funktion
+class Fn {
+public:
+    StringBuilder code = new StringBuilder();
+    i64 temps = 0;
+    i64 maxTemps = 0;
+    i64 vars = 0;
+    i64 labels = 0;
+    i64 marks = 0;
+    i64 ints = 0;
+    i64 maxInts = 0;
+    i64 ptrs = 0;
+    i64 maxPtrs = 0;
+    i64 lockCount = 0;
+    string[] names = [];
+    string[] cvars = [];
+    GScope[] scopes = [];
+    string[] targets = [];
+    // C-Ausdruck für this; leer: kein this
+    string thisExpr = "";
+    // Klasse für Felder und statische Felder; -1: keine
+    i64 cls = -1;
+    bool binding = false;
+    // Schlüssel der Felder von this (Klasse cls)
+    constructor() {
+    }
+}
+
+// Felder einer Klasse in der Reihenfolge des Interpreters (geerbte zuerst)
+class Layout {
+public:
+    string[] names = [];
+    i64 first = 0;
+}
+
+export class CGen {
+public:
+    Checker c;
+    bool release = false;
+
+private:
+    Fn f = new Fn();
+    StringBuilder protos = new StringBuilder();
+    StringBuilder funcs = new StringBuilder();
+    StringBuilder data = new StringBuilder();
+    i64 strings = 0;
+    Layout[] layouts = [];
+    // je Typ und Member: Methode ist eingebaut (Rumpf fail("eingebaut"))
+    bool[][] natives = [];
+    // angeforderte virtuelle Aufrufe (Typ, Member)
+    i64[] dispDefs = [];
+    i64[] dispMembers = [];
+    i64 dispDone = 0;
+
+public:
+    constructor(own Checker c, bool release) {
+        this.c = c;
+        this.release = release;
+    }
+
+    // Erzeugt die ganze C-Datei
+    string generate(Workspace ws) mut {
+        prepare(ws);
+        for (i64 d = 0; d < c.p.defs.length; d++) {
+            genDef(ws, d);
+        }
+        for (i64 fi = 0; fi < ws.files.length; fi++) {
+            if (c.p.projStd[ws.files[fi].project]) {
+                continue;
+            }
+            for (Node m : ws.files[fi].unit.kids) {
+                if (m.kind == "main") {
+                    genMain(m);
+                }
+            }
+        }
+        while (dispDone < dispDefs.length) {
+            i64 k = dispDone;
+            dispDone++;
+            i64 dd = dispDefs[k];
+            i64 dm = dispMembers[k];
+            genDispatcher(dd, dm);
+        }
+        genTables();
+        StringBuilder out = new StringBuilder();
+        out.append("/* erzeugt von rpp-compiler (rppcc c) */\n#include \"rpp_rt.h\"\n#include <string.h>\n\n");
+        out.append(protos.toString());
+        out.append("\n");
+        out.append(data.toString());
+        out.append("\n");
+        out.append(funcs.toString());
+        return out.toString();
+    }
+
+private:
+    // ================================================================ Vorbereitung
+
+    void prepare(Workspace ws) mut {
+        for (i64 d = 0; d < c.p.defs.length; d++) {
+            layouts.push(computeLayout(d));
+            bool[] nat = [];
+            DefKind dk = c.p.defs[d].kind;
+            string full = c.p.defs[d].fullName();
+            bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env";
+            if (dk != DefKind::Enum) {
+                i64 fileIdx = c.p.defs[d].file;
+                i64 declIdx = c.p.defs[d].decl;
+                ref Node decl = ws.files[fileIdx].unit.kids[declIdx];
+                ref Node members = decl.kids[Program::kidIndex(decl, "members")];
+                for (Node m : members.kids) {
+                    bool isNat = false;
+                    if (nativeClass && m.kind == "method" && m.kids.length > 4) {
+                        ref Node body = m.kids[4];
+                        if (body.kids.length > 0 && body.kids[0].kind == "exprstmt") {
+                            ref Node es = body.kids[0].kids[0];
+                            if (es.kind == "eval" && es.kids[0].kind == "call") {
+                                ref Node callee = es.kids[0].kids[0];
+                                isNat = callee.kind == "name" && callee.text == "fail";
+                            }
+                        }
+                    }
+                    nat.push(isNat);
+                }
+            }
+            natives.push(nat);
+        }
+        protos.append("static int MAIN(rv* ret, rv args);\n");
+    }
+
+    Layout computeLayout(i64 d) {
+        Layout l = new Layout();
+        if (c.p.defs[d].kind != DefKind::Class) {
+            return l;
+        }
+        i64[] chain = [d];
+        i64 cur = d;
+        while (baseOf(cur) >= 0) {
+            cur = baseOf(cur);
+            chain.push(cur);
+        }
+        for (i64 i = chain.length - 1; i >= 0; i--) {
+            if (chain[i] == d) {
+                l.first = l.names.length;
+            }
+            for (FieldInfo fi : c.p.defs[chain[i]].fields) {
+                if (!fi.isStatic) {
+                    l.names.push(fi.name);
+                }
+            }
+        }
+        return l;
+    }
+
+    i64 baseOf(i64 d) {
+        shared Ty? b = c.p.defs[d].baseType;
+        if (b == null) {
+            return -1;
+        }
+        shared Ty bc = Tys::core(b);
+        if (bc.kind == TK::Named) {
+            return bc.id;
+        }
+        return -1;
+    }
+
+    i64 fieldIndex(i64 d, string name) {
+        if (d < 0 || d >= layouts.length) {
+            return -1;
+        }
+        for (i64 i = layouts[d].names.length - 1; i >= 0; i--) {
+            if (layouts[d].names[i] == name) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    bool isNative(i64 d, i64 member) {
+        if (d < 0 || member < 0 || member >= natives[d].length) {
+            return false;
+        }
+        return natives[d][member];
+    }
+
+    // ================================================================ Hilfen über Typen
+
+    static string primOf(Ty t) {
+        if (t.kind == TK::Prim) {
+            return t.prim;
+        }
+        if (t.kind == TK::Nullable || t.kind == TK::Shared || t.kind == TK::Weak) {
+            return primOf(t.args[0]);
+        }
+        return "";
+    }
+
+    static i64 classOf(shared Ty t) {
+        shared Ty k = Tys::core(t);
+        if (k.kind == TK::Named) {
+            return k.id;
+        }
+        return -1;
+    }
+
+    static bool isSharedTy(Ty t) {
+        if (t.kind == TK::Shared) {
+            return true;
+        }
+        if (t.kind == TK::Nullable) {
+            return isSharedTy(t.args[0]);
+        }
+        return false;
+    }
+
+    static bool isWeakTy(Ty t) {
+        if (t.kind == TK::Weak) {
+            return true;
+        }
+        if (t.kind == TK::Nullable) {
+            return isWeakTy(t.args[0]);
+        }
+        return false;
+    }
+
+    static bool isNullableTy(Ty t) {
+        if (t.kind == TK::Nullable) {
+            return true;
+        }
+        if (t.kind == TK::Shared || t.kind == TK::Weak) {
+            return isNullableTy(t.args[0]);
+        }
+        return false;
+    }
+
+    static string ctag(string p) {
+        if (p == "bool") {
+            return "RT_BOOL";
+        }
+        if (p == "char") {
+            return "RT_CHAR";
+        }
+        if (p == "byte") {
+            return "RT_BYTE";
+        }
+        if (p == "string") {
+            return "RT_STR";
+        }
+        if (p == "i8") {
+            return "RT_I8";
+        }
+        if (p == "i16") {
+            return "RT_I16";
+        }
+        if (p == "i32") {
+            return "RT_I32";
+        }
+        if (p == "i64") {
+            return "RT_I64";
+        }
+        if (p == "ui8") {
+            return "RT_U8";
+        }
+        if (p == "ui16") {
+            return "RT_U16";
+        }
+        if (p == "ui32") {
+            return "RT_U32";
+        }
+        if (p == "ui64") {
+            return "RT_U64";
+        }
+        if (p == "f32") {
+            return "RT_F32";
+        }
+        if (p == "f64") {
+            return "RT_F64";
+        }
+        return "0";
+    }
+
+    shared Ty? typeOf(Node e) {
+        if (e.id < 0) {
+            return null;
+        }
+        return c.rt.types[e.id];
+    }
+
+    shared Ty? storeOf(Node e) {
+        if (e.id < 0) {
+            return null;
+        }
+        return c.rt.stores[e.id];
+    }
+
+    bool consumes(Node e) {
+        return e.id >= 0 && c.rt.consumes[e.id];
+    }
+
+    shared Ty? declOf(Node name) {
+        if (name.id < 0) {
+            return null;
+        }
+        return c.rt.decls[name.id];
+    }
+
+    // Kopie des Aufrufziels (damit kein Borrow auf this.c bleibt)
+    Target? targetOf(Node e) {
+        if (e.id < 0) {
+            return null;
+        }
+        ref Target? t = c.rt.calls[e.id];
+        if (t == null) {
+            return null;
+        }
+        Target r = new Target(t.kind);
+        r.def = t.def;
+        r.index = t.index;
+        r.name = t.name;
+        r.prim = t.prim;
+        for (PInfo x : t.params) {
+            r.params.push(new PInfo(x.name, x.ty, x.mode));
+        }
+        ref MethodInfo? m = t.m;
+        if (m != null) {
+            r.m = m.substituted(new Subst());
+        }
+        return r;
+    }
+
+    // ================================================================ Textausgabe
+
+    static string cstr(string s) {
+        StringBuilder b = new StringBuilder();
+        b.append("\"");
+        i32[] bytes = [];
+        for (char ch : s) {
+            i64 cp = cast<i64>(ch);
+            if (cp < 128) {
+                bytes.push(cast<i32>(cp));
+            } else if (cp < 2048) {
+                bytes.push(cast<i32>(192 + cp / 64));
+                bytes.push(cast<i32>(128 + cp % 64));
+            } else if (cp < 65536) {
+                bytes.push(cast<i32>(224 + cp / 4096));
+                bytes.push(cast<i32>(128 + (cp / 64) % 64));
+                bytes.push(cast<i32>(128 + cp % 64));
+            } else {
+                bytes.push(cast<i32>(240 + cp / 262144));
+                bytes.push(cast<i32>(128 + (cp / 4096) % 64));
+                bytes.push(cast<i32>(128 + (cp / 64) % 64));
+                bytes.push(cast<i32>(128 + cp % 64));
+            }
+        }
+        for (i32 v : bytes) {
+            if (v == 34) {
+                b.append("\\\"");
+            } else if (v == 92) {
+                b.append("\\\\");
+            } else if (v >= 32 && v < 127 && v != 63) {
+                b.appendChar(cast<char>(v));
+            } else {
+                b.append("\\");
+                b.appendChar(cast<char>(48 + (v / 64) % 8));
+                b.appendChar(cast<char>(48 + (v / 8) % 8));
+                b.appendChar(cast<char>(48 + v % 8));
+            }
+        }
+        b.append("\"");
+        return b.toString();
+    }
+
+    // R++-Escapes auflösen (wie unescape im Interpreter)
+    static string unescape(string s) {
+        StringBuilder out = new StringBuilder();
+        char[] cs = [];
+        for (char ch : s) {
+            cs.push(ch);
+        }
+        i64 i = 0;
+        while (i < cs.length) {
+            char ch = cs[i];
+            i++;
+            if (ch != '\\') {
+                out.appendChar(ch);
+                continue;
+            }
+            if (i >= cs.length) {
+                break;
+            }
+            char e = cs[i];
+            i++;
+            if (e == 'n') {
+                out.appendChar('\n');
+            } else if (e == 't') {
+                out.appendChar('\t');
+            } else if (e == 'r') {
+                out.appendChar('\r');
+            } else if (e == '0') {
+                out.appendChar('\0');
+            } else if (e == 'u') {
+                i64 v = 0;
+                bool ok = true;
+                if (i < cs.length && cs[i] == '{') {
+                    i++;
+                    while (i < cs.length && cs[i] != '}') {
+                        v = v * 16 + hexDigit(cs[i]);
+                        i++;
+                    }
+                    i++;
+                } else {
+                    for (i32 k = 0; k < 4 && i < cs.length; k++) {
+                        v = v * 16 + hexDigit(cs[i]);
+                        i++;
+                    }
+                }
+                if (ok && v >= 0 && v <= 1114111 && !(v >= 55296 && v <= 57343)) {
+                    out.appendChar(cast<char>(v));
+                }
+            } else {
+                out.appendChar(e);
+            }
+        }
+        return out.toString();
+    }
+
+    static i64 hexDigit(char ch) {
+        if (ch >= '0' && ch <= '9') {
+            return cast<i64>(ch) - 48;
+        }
+        if (ch >= 'a' && ch <= 'f') {
+            return cast<i64>(ch) - 87;
+        }
+        if (ch >= 'A' && ch <= 'F') {
+            return cast<i64>(ch) - 55;
+        }
+        return 0;
+    }
+
+    string strLit(string text) mut {
+        i64 k = strings;
+        strings++;
+        protos.append("static RStr* S" + k.toString() + ";\n");
+        string raw = unescape(text);
+        return "rt_lit(&S" + k.toString() + ", " + cstr(raw) + ", " + raw.byteLength.toString() + ")";
+    }
+
+    // ================================================================ Funktionsrahmen
+
+    void emit(string line) mut {
+        f.code.append("    ");
+        f.code.append(line);
+        f.code.append("\n");
+    }
+
+    string tmp() mut {
+        string t = "T[" + f.temps.toString() + "]";
+        f.temps++;
+        if (f.temps > f.maxTemps) {
+            f.maxTemps = f.temps;
+        }
+        return t;
+    }
+
+    string intTmp() mut {
+        string t = "B[" + f.ints.toString() + "]";
+        f.ints++;
+        if (f.ints > f.maxInts) {
+            f.maxInts = f.ints;
+        }
+        return t;
+    }
+
+    string ptrTmp() mut {
+        string t = "P[" + f.ptrs.toString() + "]";
+        f.ptrs++;
+        if (f.ptrs > f.maxPtrs) {
+            f.maxPtrs = f.ptrs;
+        }
+        return t;
+    }
+
+    string newLabel() mut {
+        string l = "L" + f.labels.toString();
+        f.labels++;
+        return l;
+    }
+
+    string target() {
+        return f.targets[f.targets.length - 1];
+    }
+
+    void chk() mut {
+        emit("if (st) goto " + target() + ";");
+    }
+
+    // Aufruf mit Status: st = call; bei Fehler zum Ziel
+    void call(string expr) mut {
+        emit("st = " + expr + ";");
+        chk();
+    }
+
+    void pushScope() mut {
+        i64 l = f.labels;
+        f.labels++;
+        f.scopes.push(new GScope(l, f.names.length));
+        f.targets.push("X" + l.toString());
+    }
+
+    // Aufräumen am Ende des Bereichs: Sperren lösen, Variablen rückwärts freigeben (pop_scope)
+    void popScope() mut {
+        GScope sc = f.scopes.pop();
+        discard f.targets.pop();
+        emit("X" + sc.label.toString() + ":;");
+        for (i64 i = 0; i < sc.locks.length; i++) {
+            string lk = "K[" + sc.locks[i].toString() + "]";
+            string m = "0";
+            if (sc.lockMut[i]) {
+                m = "1";
+            }
+            emit("if (" + lk + ") { rt_unlock(" + lk + ", " + m + "); " + lk + " = NULL; }");
+        }
+        for (i64 i = sc.vars.length - 1; i >= 0; i--) {
+            emit("st = rt_scope_drop(st, &V[" + sc.vars[i].toString() + "], 1);");
+        }
+        while (f.names.length > sc.nameMark) {
+            discard f.names.pop();
+            discard f.cvars.pop();
+        }
+    }
+
+    i64 declare(string name) mut {
+        i64 k = f.vars;
+        f.vars++;
+        f.scopes[f.scopes.length - 1].vars.push(k);
+        f.names.push(name);
+        f.cvars.push("V[" + k.toString() + "]");
+        return k;
+    }
+
+    // Name an einen schon bestehenden C-Ort binden (Erfassung)
+    void bindName(string name, string cexpr) mut {
+        f.names.push(name);
+        f.cvars.push(cexpr);
+    }
+
+    string lookup(string name) {
+        for (i64 i = f.names.length - 1; i >= 0; i--) {
+            if (f.names[i] == name) {
+                return f.cvars[i];
+            }
+        }
+        return "";
+    }
+
+    void beginFn(i64 cls, string thisExpr) mut {
+        f = new Fn();
+        f.cls = cls;
+        f.thisExpr = thisExpr;
+        f.targets.push("XF");
+    }
+
+    // Funktion fertigstellen: Kopf, Felder, Rumpf
+    void endFn(string header) mut {
+        StringBuilder b = new StringBuilder();
+        b.append(header);
+        b.append(" {\n    int st = ST_OK;\n");
+        b.append("    rv T[" + max1(f.maxTemps).toString() + "];\n");
+        b.append("    rv V[" + max1(f.vars).toString() + "];\n");
+        b.append("    int64_t M[" + max1(f.marks).toString() + "];\n");
+        b.append("    int B[" + max1(f.maxInts).toString() + "];\n");
+        b.append("    rv* P[" + max1(f.maxPtrs).toString() + "];\n");
+        b.append("    RObj* K[" + max1(f.lockCount).toString() + "];\n");
+        b.append("    (void)T; (void)M; (void)B; (void)P;\n");
+        b.append("    for (int i = 0; i < " + max1(f.vars).toString() + "; i++) V[i] = rv_moved();\n");
+        b.append("    for (int i = 0; i < " + max1(f.lockCount).toString() + "; i++) K[i] = NULL;\n");
+        b.append(f.code.toString());
+        b.append("}\n\n");
+        funcs.append(b.toString());
+        protos.append(header + ";\n");
+    }
+
+    static i64 max1(i64 n) {
+        if (n < 1) {
+            return 1;
+        }
+        return n;
+    }
+
+    // ================================================================ Typen und Klassen
+
+    void genDef(Workspace ws, i64 d) mut {
+        DefKind dk = c.p.defs[d].kind;
+        if (dk == DefKind::Enum) {
+            return;
+        }
+        i64 fileIdx = c.p.defs[d].file;
+        i64 declIdx = c.p.defs[d].decl;
+        ref Node decl = ws.files[fileIdx].unit.kids[declIdx];
+        ref Node members = decl.kids[Program::kidIndex(decl, "members")];
+        string dn = c.p.defs[d].name;
+        // Methoden mit Rumpf
+        for (i64 mi = 0; mi < c.p.defs[d].methods.length; mi++) {
+            MethodInfo m = c.p.defs[d].methods[mi].substituted(new Subst());
+            ref Node md = members.kids[m.member];
+            if (md.kids.length > 4) {
+                genMethod(d, m, md.kids[4]);
+            }
+        }
+        if (dk != DefKind::Class) {
+            return;
+        }
+        // Feldinitialisierer dieser Stufe
+        genFieldInit(d, members);
+        // Konstruktoren
+        for (i64 ci = 0; ci < c.p.defs[d].ctors.length; ci++) {
+            i64 member = c.p.defs[d].ctors[ci].member;
+            genCtor(d, members.kids[member], member);
+        }
+        genImplicitCtor(d);
+        for (i64 k = 0; k < members.kids.length; k++) {
+            ref Node m = members.kids[k];
+            if (m.kind == "dtor") {
+                beginFn(d, "self");
+                emit("rv self = rv_obj(o, F_BORROW);");
+                emit("if ((st = rt_enter(" + cstr(dn + ".destructor") + ")) != 0) return st;");
+                pushScope();
+                block(m.kids[0]);
+                popScope();
+                emit("XF: rt_leave();");
+                emit("if (st == ST_RET) st = ST_OK;");
+                emit("return st;");
+                endFn("static int Z_" + d.toString() + "(RObj* o)");
+            } else if (m.kind == "copy") {
+                ref Node param = m.kids[0];
+                beginFn(d, "self");
+                emit("rv self = rv_obj(n, F_BORROW);");
+                emit("if ((st = rt_enter(" + cstr(dn + ".copy") + ")) != 0) return st;");
+                pushScope();
+                i64 pv = declare(param.kids[1].text);
+                emit("V[" + pv.toString() + "] = rv_view(src);");
+                block(m.kids[1]);
+                popScope();
+                emit("XF: rt_leave();");
+                emit("if (st == ST_RET) st = ST_OK;");
+                emit("return st;");
+                endFn("static int Y_" + d.toString() + "(RObj* n, rv src)");
+            } else if (m.kind == "field" && Program::flag(m, "static") && m.kids.length > 2) {
+                genStaticField(d, m.kids[1].text, m.kids[2]);
+            }
+        }
+    }
+
+    // Methode: Rahmen, Parameter, Rumpf, Umwandlung des Ergebnisses (call_method)
+    void genMethod(i64 d, MethodInfo m, Node body) mut {
+        string name = "M_" + d.toString() + "_" + m.member.toString();
+        string header = "static int " + name + "(rv* ret, rv self, rv* args)";
+        string label = c.p.defs[d].name + "." + m.name;
+        if (isNative(d, m.member)) {
+            string full = c.p.defs[d].fullName() + "." + m.name;
+            string mt = "0";
+            if (m.mutThis) {
+                mt = "1";
+            }
+            string cursor = "0";
+            if (!m.mutThis && m.params.length > 0 && primOf(m.params[0].ty) == "i64") {
+                cursor = "1";
+            }
+            funcs.append(header + " {\n    return rt_native(ret, " + cstr(full) + ", self, " + m.params.length.toString() + ", args, " + mt + ", " + cursor + ");\n}\n\n");
+            protos.append(header + ";\n");
+            return;
+        }
+        string thisExpr = "self";
+        if (m.isStatic) {
+            thisExpr = "";
+        }
+        beginFn(d, thisExpr);
+        emit("*ret = rv_void();");
+        emit("if ((st = rt_enter(" + cstr(label) + ")) != 0) return st;");
+        pushScope();
+        for (i64 i = 0; i < m.params.length; i++) {
+            i64 v = declare(m.params[i].name);
+            emit("V[" + v.toString() + "] = args[" + i.toString() + "];");
+        }
+        block(body);
+        popScope();
+        emit("XF: rt_leave();");
+        emit("if (st == ST_RET) st = ST_OK;");
+        if (m.ret.kind == RetKind::Val) {
+            f.targets.push("XR");
+            emit("if (st == ST_OK) {");
+            convert("(*ret)", m.ret.ty);
+            emit("}");
+            discard f.targets.pop();
+        }
+        emit("XR: return st;");
+        endFn(header);
+    }
+
+    void genFieldInit(i64 d, Node members) mut {
+        string dn = c.p.defs[d].name;
+        beginFn(d, "self");
+        emit("rv self = rv_obj(o, F_BORROW);");
+        for (Node m : members.kids) {
+            if (m.kind != "field" || Program::flag(m, "static")) {
+                continue;
+            }
+            string fname = m.kids[1].text;
+            i64 idx = fieldIndex(d, fname);
+            if (idx < 0) {
+                continue;
+            }
+            if (m.kids.length > 2) {
+                string lab = newLabel();
+                emit("if ((st = rt_enter(" + cstr(dn + "." + fname) + ")) != 0) return st;");
+                f.targets.push(lab);
+                string v = store(m.kids[2]);
+                discard f.targets.pop();
+                emit("rt_leave();");
+                emit("rv_o(self)->slots[" + idx.toString() + "] = " + v + ";");
+                emit("if (0) { " + lab + ": rt_leave(); return st; }");
+            } else {
+                shared Ty fty = Ty::error();
+                for (FieldInfo x : c.p.defs[d].fields) {
+                    if (x.name == fname) {
+                        fty = x.ty;
+                    }
+                }
+                if (isNullableTy(fty)) {
+                    emit("rv_o(self)->slots[" + idx.toString() + "] = rv_null();");
+                }
+            }
+        }
+        emit("XF: return st;");
+        endFn("static int I_" + d.toString() + "(RObj* o)");
+    }
+
+    // Konstruktor (construct): Basisanteil, Feldinitialisierer, Rumpf; Aufräumen nach R-9.13
+    void genCtor(i64 d, Node cd, i64 member) mut {
+        string dn = c.p.defs[d].name;
+        beginFn(d, "self");
+        emit("rv self = rv_obj(o, F_BORROW);");
+        emit("int base_done = 0; (void)base_done;");
+        emit("if ((st = rt_enter(" + cstr(dn + ".constructor") + ")) != 0) return st;");
+        pushScope();
+        ref Node params = cd.kids[0];
+        for (i64 i = 0; i < params.kids.length; i++) {
+            i64 v = declare(params.kids[i].kids[1].text);
+            emit("V[" + v.toString() + "] = args[" + i.toString() + "];");
+        }
+        i64 b = baseOf(d);
+        if (b >= 0) {
+            i64 bi = Program::kidIndex(cd, "baseargs");
+            if (bi >= 0 && cd.id >= 0 && c.rt.hasBase[cd.id]) {
+                (PInfo[] ps, string kname) = baseCtorOf(cd.id, b);
+                string mk = "M[" + f.marks.toString() + "]";
+                f.marks++;
+                emit(mk + " = rt_tmark();");
+                string lab = newLabel();
+                f.targets.push(lab);
+                string arr = args(cd.kids[bi].kids[0], ps, []);
+                discard f.targets.pop();
+                emit(lab + ": st = rt_trelease(" + mk + ", st);");
+                chk();
+                call(kname + "(o, " + arr + ")");
+            } else {
+                call(defaultCtor(b) + "(o, NULL)");
+            }
+            emit("base_done = 1;");
+        }
+        call("I_" + d.toString() + "(o)");
+        block(cd.kids[cd.kids.length - 1]);
+        popScope();
+        emit("XF: rt_leave();");
+        emit("if (st == ST_RET) st = ST_OK;");
+        ctorCleanup(d);
+        emit("return st;");
+        endFn("static int K_" + d.toString() + "_" + member.toString() + "(RObj* o, rv* args)");
+    }
+
+    (PInfo[], string) baseCtorOf(i64 id, i64 b) {
+        PInfo[] ps = [];
+        string kname = "K_" + b.toString() + "_i";
+        ref MethodInfo? bm = c.rt.baseCtors[id];
+        if (bm != null) {
+            for (PInfo x : bm.params) {
+                ps.push(new PInfo(x.name, x.ty, x.mode));
+            }
+            kname = "K_" + b.toString() + "_" + bm.member.toString();
+        }
+        return (ps, kname);
+    }
+
+    void ctorCleanup(i64 d) mut {
+        emit("if (st) {");
+        emit("    int st0 = st;");
+        i64 b = baseOf(d);
+        if (b >= 0) {
+            emit("    if (base_done) { int d2 = rt_run_dtors(o, &CL_" + b.toString() + "); if (d2) return d2; }");
+        }
+        i64 nf = layouts[d].names.length;
+        emit("    { int d3 = rt_drop_fields(o, " + nf.toString() + "); if (d3) return d3; }");
+        emit("    o->dying = 1;");
+        emit("    return st0;");
+        emit("}");
+    }
+
+    string defaultCtor(i64 d) {
+        for (CtorInfo k : c.p.defs[d].ctors) {
+            if (k.params.length == 0) {
+                return "K_" + d.toString() + "_" + k.member.toString();
+            }
+        }
+        return "K_" + d.toString() + "_i";
+    }
+
+    // construct ohne Konstruktordeklaration
+    void genImplicitCtor(i64 d) mut {
+        string dn = c.p.defs[d].name;
+        beginFn(d, "self");
+        emit("int base_done = 0; (void)base_done; (void)args;");
+        emit("if ((st = rt_enter(" + cstr(dn + ".constructor") + ")) != 0) return st;");
+        i64 b = baseOf(d);
+        if (b >= 0) {
+            call(defaultCtor(b) + "(o, NULL)");
+            emit("base_done = 1;");
+        }
+        call("I_" + d.toString() + "(o)");
+        emit("XF: rt_leave();");
+        ctorCleanup(d);
+        emit("return st;");
+        endFn("static int K_" + d.toString() + "_i(RObj* o, rv* args)");
+    }
+
+    void genStaticField(i64 d, string name, Node init) mut {
+        string key = d.toString() + "_" + name;
+        data.append("static rv SV_" + key + ";\nstatic int SI_" + key + " = 0;\n");
+        beginFn(d, "");
+        emit("if (SI_" + key + ") { *out = rv_view(SV_" + key + "); return ST_OK; }");
+        string lbl = cstr(c.p.defs[d].name + "." + name);
+        emit("if ((st = rt_enter(" + lbl + ")) != 0) return st;");
+        string v = store(init);
+        emit("rt_leave();");
+        emit("SV_" + key + " = " + v + "; SI_" + key + " = 1;");
+        emit("*out = rv_view(SV_" + key + ");");
+        emit("return ST_OK;");
+        emit("XF: rt_leave(); return st;");
+        endFn("static int G_" + key + "(rv* out)");
+    }
+
+    void genMain(Node m) mut {
+        beginFn(-1, "");
+        emit("*ret = rv_i32(0);");
+        emit("if ((st = rt_enter(\"main\")) != 0) return st;");
+        pushScope();
+        i64 v = declare(m.kids[0].text);
+        emit("V[" + v.toString() + "] = args;");
+        block(m.kids[1]);
+        popScope();
+        emit("XF: rt_leave();");
+        emit("if (st == ST_RET) st = ST_OK;");
+        emit("return st;");
+        endFn("static int MAIN(rv* ret, rv args)");
+    }
+
+    // ================================================================ virtuelle Aufrufe
+
+    string dispatchName(MethodInfo m) mut {
+        for (i64 i = 0; i < dispDefs.length; i++) {
+            if (dispDefs[i] == m.owner && dispMembers[i] == m.member) {
+                return "D_" + m.owner.toString() + "_" + m.member.toString();
+            }
+        }
+        dispDefs.push(m.owner);
+        dispMembers.push(m.member);
+        return "D_" + m.owner.toString() + "_" + m.member.toString();
+    }
+
+    // Fassung der Methode in der Klasse d (dispatch im Interpreter)
+    (bool, i64, i64) dispatch(i64 d, MethodInfo m) {
+        shared Ty[] none = [];
+        MethodInfo[] ms = c.p.methodsOf(Ty::named(d, none), m.name);
+        for (MethodInfo x : ms) {
+            if (!x.hasBody || x.params.length != m.params.length) {
+                continue;
+            }
+            bool ok = true;
+            for (i64 i = 0; i < x.params.length; i++) {
+                if (x.params[i].mode != m.params[i].mode) {
+                    ok = false;
+                } else if (!(Ty::unformed(x.params[i].ty).same(Ty::unformed(m.params[i].ty)) || x.params[i].ty.mentionsParam() || m.params[i].ty.mentionsParam())) {
+                    ok = false;
+                }
+            }
+            if (ok) {
+                return (true, x.owner, x.member);
+            }
+        }
+        return (false, -1, -1);
+    }
+
+    void genDispatcher(i64 owner, i64 member) mut {
+        MethodInfo? found = null;
+        for (MethodInfo x : c.p.defs[owner].methods) {
+            if (x.member == member) {
+                found = x.substituted(new Subst());
+            }
+        }
+        if (found == null) {
+            return;
+        }
+        string header = "static int D_" + owner.toString() + "_" + member.toString() + "(rv* ret, rv self, rv* args)";
+        StringBuilder b = new StringBuilder();
+        b.append(header + " {\n");
+        b.append("    if (rt_is_prim(self)) { int h; int st = rt_prim_mixin(ret, " + cstr(found.name) + ", self, args, &h); if (h) return st; }\n");
+        b.append("    if (self.tag == RT_OBJ && rv_o(self)->cls) switch (rv_o(self)->cls->id) {\n");
+        shared Ty[] none = [];
+        shared Ty ownerTy = Ty::named(owner, none);
+        for (i64 d = 0; d < c.p.defs.length; d++) {
+            if (c.p.defs[d].kind != DefKind::Class) {
+                continue;
+            }
+            shared Ty dt = Ty::named(d, none);
+            bool sub = d == owner;
+            for (shared Ty s : c.p.supertypes(dt)) {
+                if (s.kind == TK::Named && s.id == owner) {
+                    sub = true;
+                }
+            }
+            if (!sub) {
+                continue;
+            }
+            (bool ok, i64 io, i64 im) = dispatch(d, found);
+            if (ok && !(io == owner && im == member)) {
+                b.append("    case " + d.toString() + ": return M_" + io.toString() + "_" + im.toString() + "(ret, self, args);\n");
+            }
+        }
+        b.append("    default: break;\n    }\n");
+        if (found.hasBody) {
+            b.append("    return M_" + owner.toString() + "_" + member.toString() + "(ret, self, args);\n");
+        } else {
+            b.append("    return rt_internal(" + cstr("Methode " + found.name + " ohne Rumpf") + ");\n");
+        }
+        b.append("}\n\n");
+        funcs.append(b.toString());
+        protos.append(header + ";\n");
+    }
+
+    // ================================================================ Tabellen
+
+    string methodRef(i64 d, string name, i64 nparams) {
+        shared Ty[] none = [];
+        MethodInfo[] ms = c.p.methodsOf(Ty::named(d, none), name);
+        for (MethodInfo m : ms) {
+            if (m.params.length == nparams && m.hasBody) {
+                return "M_" + m.owner.toString() + "_" + m.member.toString();
+            }
+        }
+        return "NULL";
+    }
+
+    void genTables() mut {
+        StringBuilder t = new StringBuilder();
+        i64 n = c.p.defs.length;
+        for (i64 d = 0; d < n; d++) {
+            DefKind dk = c.p.defs[d].kind;
+            string dn = c.p.defs[d].name;
+            if (dk == DefKind::Enum) {
+                i64 nv = c.p.defs[d].variants.length;
+                bool plain = true;
+                string vals = "";
+                string names = "";
+                for (i64 i = 0; i < nv; i++) {
+                    if (c.p.defs[d].variants[i].fields.length > 0) {
+                        plain = false;
+                    }
+                    i64 v = i;
+                    if (c.p.defs[d].variants[i].hasValue) {
+                        v = c.p.defs[d].variants[i].value;
+                    }
+                    vals = vals + "(int64_t)" + v.toString() + "LL, ";
+                    names = names + cstr(c.p.defs[d].variants[i].name) + ", ";
+                }
+                string pl = "0";
+                if (plain) {
+                    pl = "1";
+                }
+                t.append("static const int64_t EV_" + d.toString() + "[] = { " + vals + "0 };\n");
+                t.append("static const char* const EN_" + d.toString() + "_names[] = { " + names + "0 };\n");
+                t.append("static const REnumDef EN_" + d.toString() + " = { " + cstr(dn) + ", " + nv.toString() + ", EV_" + d.toString() + ", EN_" + d.toString() + "_names, " + pl + " };\n");
+                continue;
+            }
+            if (dk != DefKind::Class) {
+                continue;
+            }
+            shared Ty[] none = [];
+            shared Ty[] sups = c.p.supertypes(Ty::named(d, none));
+            string supers = "";
+            i64 ns = 0;
+            for (shared Ty s : sups) {
+                if (s.kind == TK::Named) {
+                    supers = supers + s.id.toString() + ", ";
+                    ns++;
+                }
+            }
+            t.append("static const int32_t SU_" + d.toString() + "[] = { " + supers + "-1 };\n");
+            data.append("extern const RClass CL_" + d.toString() + ";\n");
+            string baseRef = "NULL";
+            i64 b = baseOf(d);
+            if (b >= 0) {
+                baseRef = "&CL_" + b.toString();
+            }
+            string dtor = "NULL";
+            if (c.p.defs[d].hasDtor) {
+                dtor = "Z_" + d.toString();
+            }
+            string copyRef = "NULL";
+            if (c.p.defs[d].hasCopy) {
+                copyRef = "Y_" + d.toString();
+            }
+            string full = c.p.defs[d].fullName();
+            string nat = "0";
+            if (full == "rpp.text.StringBuilder") {
+                nat = "1";
+            }
+            t.append("const RClass CL_" + d.toString() + " = { " + d.toString() + ", " + cstr(dn) + ", " + cstr(full) + ", " + baseRef + ", " + layouts[d].names.length.toString() + ", " + layouts[d].first.toString() + ", " + ns.toString() + ", SU_" + d.toString() + ", " + dtor + ", I_" + d.toString() + ", " + copyRef + ", " + methodRef(d, "equals", 1) + ", " + methodRef(d, "compareTo", 1) + ", " + methodRef(d, "hash", 0) + ", " + methodRef(d, "describe", 0) + ", " + nat + ", NULL, " + defaultCtor(d) + ", " + tmapFn(d) + " };\n");
+        }
+        // Verzeichnisse
+        t.append("const REnumDef* const rt_enums[] = {\n");
+        for (i64 d = 0; d < n; d++) {
+            if (c.p.defs[d].kind == DefKind::Enum) {
+                t.append("    &EN_" + d.toString() + ",\n");
+            } else {
+                t.append("    NULL,\n");
+            }
+        }
+        t.append("    NULL };\n");
+        t.append("const RClass* const rt_classes[] = {\n");
+        for (i64 d = 0; d < n; d++) {
+            if (c.p.defs[d].kind == DefKind::Class) {
+                t.append("    &CL_" + d.toString() + ",\n");
+            } else {
+                t.append("    NULL,\n");
+            }
+        }
+        t.append("    NULL };\n");
+        t.append("const int32_t rt_def_count = " + n.toString() + ";\n");
+        i64 entry = c.p.lookupFull("rpp.collections.Entry");
+        i64 file = c.p.lookupFull("rpp.io.File");
+        i64 os = c.p.lookupFull("rpp.env.Os");
+        t.append("const RClass* rt_cls_entry = " + clsRef(entry) + ";\n");
+        t.append("const RClass* rt_cls_file = " + clsRef(file) + ";\n");
+        t.append("int32_t rt_os_def = " + os.toString() + ";\n");
+        // Exceptions der Standardbibliothek (std_throw)
+        t.append("int rt_std_new(rv* out, const char* full, int nargs, rv* args) {\n    int st;\n");
+        for (i64 d = 0; d < n; d++) {
+            if (c.p.defs[d].kind != DefKind::Class || !c.p.projStd[c.p.defs[d].project]) {
+                continue;
+            }
+            string full = c.p.defs[d].fullName();
+            for (CtorInfo k : c.p.defs[d].ctors) {
+                t.append("    if (!strcmp(full, " + cstr(full) + ") && nargs == " + k.params.length.toString() + ") { RObj* o = rt_obj_new(&CL_" + d.toString() + ", NULL, 0); st = K_" + d.toString() + "_" + k.member.toString() + "(o, args); if (st) { rt_obj_fail(o); return st; } *out = rv_obj(o, F_OWN); return ST_OK; }\n");
+            }
+        }
+        t.append("    return rt_internal(\"Klasse der Standardbibliothek fehlt\");\n}\n");
+        string rel = "0";
+        if (release) {
+            rel = "1";
+        }
+        t.append("int main(int argc, char** argv) { return rt_main(argc, argv, MAIN, " + rel + "); }\n");
+        funcs.append(t.toString());
+    }
+
+    // Typargumente einer Basisklasse oder eines Mixins aus Sicht der Klasse d (tmap im
+    // Interpreter): Funktion TM_d(targs, n, c, idx); NULL, wenn d keine generischen Obertypen hat
+    string tmapFn(i64 d) mut {
+        shared Ty[] ownArgs = [];
+        for (i64 tp : c.p.defs[d].tparams) {
+            ownArgs.push(Ty::param(tp));
+        }
+        StringBuilder b = new StringBuilder();
+        bool any = false;
+        for (shared Ty s : c.p.supertypes(Ty::named(d, ownArgs))) {
+            if (s.kind != TK::Named || s.args.length == 0) {
+                continue;
+            }
+            any = true;
+            b.append("    if (c == " + s.id.toString() + ") switch (idx) {\n");
+            for (i64 i = 0; i < s.args.length; i++) {
+                b.append("    case " + i.toString() + ": return " + tyFrom(s.args[i], d) + ";\n");
+            }
+            b.append("    default: return NULL;\n    }\n");
+        }
+        if (!any) {
+            return "NULL";
+        }
+        string header = "static const RTy* TM_" + d.toString() + "(const RTy** targs, int n, int32_t c, int idx)";
+        funcs.append(header + " {\n    (void)targs; (void)n;\n" + b.toString() + "    return NULL;\n}\n\n");
+        protos.append(header + ";\n");
+        return "TM_" + d.toString();
+    }
+
+    // Laufzeittyp aus den Typargumenten (targs, n) der Klasse d
+    string tyFrom(shared Ty t0, i64 d) {
+        shared Ty t = Tys::core(t0);
+        if (t.kind == TK::Param) {
+            for (i64 i = 0; i < c.p.defs[d].tparams.length; i++) {
+                if (c.p.defs[d].tparams[i] == t.id) {
+                    return "(" + i.toString() + " < n ? targs[" + i.toString() + "] : NULL)";
+                }
+            }
+            return "NULL";
+        }
+        if (t.kind == TK::Named) {
+            string args = "";
+            for (shared Ty a : t.args) {
+                args = args + ", " + tyFrom(a, d);
+            }
+            return "rt_tyv(" + t.id.toString() + ", " + t.args.length.toString() + args + ")";
+        }
+        return "rt_ty(0, 0, 0, NULL)";
+    }
+
+    static string clsRef(i64 d) {
+        if (d < 0) {
+            return "NULL";
+        }
+        return "&CL_" + d.toString();
+    }
+
+    // ================================================================ Anweisungen
+
+    void block(Node b) mut {
+        pushScope();
+        for (Node s : b.kids) {
+            stmt(s);
+        }
+        popScope();
+        chk();
+    }
+
+    // Eine Anweisung; temporäre Werte werden an ihrem Ende freigegeben (stmt)
+    void stmt(Node s) mut {
+        string mk = "M[" + f.marks.toString() + "]";
+        f.marks++;
+        i64 t0 = f.temps;
+        i64 i0 = f.ints;
+        i64 p0 = f.ptrs;
+        string lab = newLabel();
+        emit(mk + " = rt_tmark();");
+        f.targets.push(lab);
+        stmtKind(s);
+        discard f.targets.pop();
+        emit(lab + ": st = rt_trelease(" + mk + ", st);");
+        chk();
+        f.temps = t0;
+        f.ints = i0;
+        f.ptrs = p0;
+    }
+
+    void subStmt(Node s) mut {
+        pushScope();
+        stmt(s);
+        popScope();
+    }
+
+    // Bedingung mit eigenen temporären Werten (cond); liefert einen C-Ausdruck
+    string cond(Node e) mut {
+        string mk = "M[" + f.marks.toString() + "]";
+        f.marks++;
+        emit(mk + " = rt_tmark();");
+        string lab = newLabel();
+        f.targets.push(lab);
+        string v = eval(e);
+        string b = intTmp();
+        emit(b + " = rv_truthy(" + v + ");");
+        discard f.targets.pop();
+        emit(lab + ": st = rt_trelease(" + mk + ", st);");
+        chk();
+        return b;
+    }
+
+    void stmtKind(Node s) mut {
+        string k = s.kind;
+        if (k == "block") {
+            block(s);
+            return;
+        }
+        if (k == "local") {
+            localVar(s);
+            return;
+        }
+        if (k == "ref") {
+            refStmt(s);
+            return;
+        }
+        if (k == "tupledecl") {
+            tupleDecl(s);
+            return;
+        }
+        if (k == "exprstmt") {
+            exprStmt(s.kids[0]);
+            return;
+        }
+        if (k == "discard") {
+            string v = eval(s.kids[0]);
+            call("rt_drop(" + v + ")");
+            return;
+        }
+        if (k == "if") {
+            string b = cond(s.kids[0]);
+            emit("if (" + b + ") {");
+            subStmt(s.kids[1]);
+            emit("} else {");
+            if (s.kids.length > 2) {
+                subStmt(s.kids[2]);
+            }
+            emit("}");
+            chk();
+            return;
+        }
+        if (k == "while") {
+            string head = newLabel();
+            string end = newLabel();
+            emit(head + ":;");
+            string b = cond(s.kids[0]);
+            emit("if (!" + b + ") goto " + end + ";");
+            loopBody(s.kids[1], end);
+            emit("goto " + head + ";");
+            emit(end + ":;");
+            return;
+        }
+        if (k == "dowhile") {
+            string head = newLabel();
+            string end = newLabel();
+            emit(head + ":;");
+            loopBody(s.kids[0], end);
+            string b = cond(s.kids[1]);
+            emit("if (!" + b + ") goto " + end + ";");
+            emit("goto " + head + ";");
+            emit(end + ":;");
+            return;
+        }
+        if (k == "for") {
+            forStmt(s);
+            return;
+        }
+        if (k == "foreach") {
+            foreachStmt(s);
+            return;
+        }
+        if (k == "switch") {
+            switchStmt(s);
+            return;
+        }
+        if (k == "return") {
+            if (s.kids.length > 0) {
+                string v = store(s.kids[0]);
+                emit("*ret = " + v + ";");
+            }
+            emit("st = ST_RET; goto " + target() + ";");
+            return;
+        }
+        if (k == "break") {
+            emit("st = ST_BRK; goto " + target() + ";");
+            return;
+        }
+        if (k == "continue") {
+            emit("st = ST_CONT; goto " + target() + ";");
+            return;
+        }
+        if (k == "throw") {
+            string v = store(s.kids[0]);
+            emit("st = rt_throw(" + v + "); goto " + target() + ";");
+            return;
+        }
+        if (k == "try") {
+            tryStmt(s);
+            return;
+        }
+        emit("st = rt_internal(" + cstr("Anweisung " + k) + "); goto " + target() + ";");
+    }
+
+    // Schleifenrumpf (sub_stmt) mit break und continue
+    void loopBody(Node body, string end) mut {
+        subStmt(body);
+        emit("if (st == ST_BRK) { st = ST_OK; goto " + end + "; }");
+        emit("if (st == ST_CONT) st = ST_OK;");
+        chk();
+    }
+
+    void localVar(Node d) mut {
+        // Kinder: Typ oder var, Name, Initialisierer
+        ref Node nameNode = d.kids[1];
+        if (d.kids.length > 2) {
+            string v = store(d.kids[2]);
+            shared Ty? dt = declOf(nameNode);
+            if (dt != null) {
+                convert(v, dt);
+            }
+            i64 x = declare(nameNode.text);
+            emit("V[" + x.toString() + "] = " + v + ";");
+        } else {
+            i64 x = declare(nameNode.text);
+            emit("V[" + x.toString() + "] = rv_uninit();");
+        }
+    }
+
+    // ref T x = e: Sperre bis zum Blockende (R-5.24), Sicht auf den Wert
+    void refStmt(Node s) mut {
+        bool mutable = s.text == "mut";
+        ref Node init = s.kids[2];
+        string v = eval(init);
+        Node target = unwrap(init);
+        if (target.kind == "call") {
+            ref Node callee = target.kids[0];
+            if (callee.kind == "member") {
+                lockScope(callee.kids[0], mutable);
+            }
+        } else {
+            lockScope(target, mutable);
+        }
+        emit(v + " = rt_temp(" + v + ");");
+        i64 x = declare(s.kids[1].text);
+        emit("V[" + x.toString() + "] = " + v + ";");
+    }
+
+    static Node unwrap(Node e) {
+        if (e.kind == "paren") {
+            return unwrap(e.kids[0]);
+        }
+        if (e.kind == "as") {
+            return unwrap(e.kids[0]);
+        }
+        return copyNode(e);
+    }
+
+    // flache Kopie eines Knotens mit Kindern (für unwrap, das einen Wert liefert)
+    static Node copyNode(Node e) {
+        Node n = new Node(e.kind, e.text, e.line, e.col);
+        n.id = e.id;
+        for (Node k : e.kids) {
+            n.kids.push(copyNode(k));
+        }
+        return n;
+    }
+
+    void tupleDecl(Node d) mut {
+        ref Node vars = d.kids[0];
+        string v = store(d.kids[1]);
+        bindTuple(vars, v);
+    }
+
+    void bindTuple(Node vars, string v) mut {
+        i64 n = vars.kids.length;
+        string arr = tmpArray(n);
+        call("rt_unpack(" + v + ", " + n.toString() + ", " + arr + ")");
+        for (i64 i = 0; i < n; i++) {
+            ref Node tv = vars.kids[i];
+            string x = "(" + arr + ")[" + i.toString() + "]";
+            string xv = tmp();
+            emit(xv + " = " + x + ";");
+            shared Ty? dt = declOf(tv.kids[1]);
+            if (dt != null) {
+                convert(xv, dt);
+            }
+            i64 k = declare(tv.kids[1].text);
+            emit("V[" + k.toString() + "] = " + xv + ";");
+        }
+    }
+
+    // zusammenhängende Zwischenwerte für ein Feld von n Werten; liefert die Adresse
+    string tmpArray(i64 n) mut {
+        i64 start = f.temps;
+        for (i64 i = 0; i < n; i++) {
+            discard tmp();
+        }
+        if (n == 0) {
+            return "NULL";
+        }
+        return "&T[" + start.toString() + "]";
+    }
+
+    void forStmt(Node s) mut {
+        pushScope();
+        ref Node init = s.kids[0];
+        if (init.kind == "local") {
+            localVar(init);
+        } else if (init.kind == "tupledecl") {
+            tupleDecl(init);
+        } else if (init.kind == "exprs") {
+            for (Node e : init.kids) {
+                exprStmt(e);
+            }
+        }
+        string head = newLabel();
+        string end = newLabel();
+        emit(head + ":;");
+        ref Node condNode = s.kids[1];
+        if (condNode.kind != "nocond") {
+            string b = cond(condNode);
+            emit("if (!" + b + ") goto " + end + ";");
+        }
+        loopBody(s.kids[3], end);
+        for (Node u : s.kids[2].kids) {
+            // temps.push; expr_stmt; temps.pop (ohne Freigabe)
+            string mk = "M[" + f.marks.toString() + "]";
+            f.marks++;
+            emit(mk + " = rt_tmark();");
+            string lab = newLabel();
+            f.targets.push(lab);
+            exprStmt(u);
+            discard f.targets.pop();
+            emit(lab + ": rt_tdiscard(" + mk + ");");
+            chk();
+        }
+        emit("goto " + head + ";");
+        emit(end + ":;");
+        popScope();
+        chk();
+    }
+
+    void foreachStmt(Node s) mut {
+        bool borrowMut = s.text.contains("borrow");
+        ref Node nameNode = s.kids[1];
+        ref Node iter = s.kids[2];
+        ref Node body = s.kids[3];
+        pushScope();
+        lockScope(iter, borrowMut);
+        string coll = eval(iter);
+        emit(coll + " = rt_temp(" + coll + ");");
+        shared Ty? it = typeOf(iter);
+        i64 cd = -1;
+        if (it != null) {
+            cd = classOf(it);
+            if (cd >= 0 && c.p.defs[cd].kind == DefKind::Enum) {
+                cd = -1;
+            }
+        }
+        string end = newLabel();
+        if (cd >= 0) {
+            forIterable(cd, coll, nameNode.text, body, end);
+        } else {
+            string i = intTmp();
+            string pos = intTmp();
+            emit(i + " = 0; " + pos + " = 0;");
+            string head = newLabel();
+            emit(head + ":;");
+            string item = tmp();
+            emit("if (" + coll + ".tag == RT_STR) {");
+            emit("    RStr* s_ = rt_s(" + coll + "); if (" + pos + " >= s_->len) goto " + end + ";");
+            emit("    { rv ch_ = rt_str_char_at(s_, " + pos + "); " + pos + " += rt_str_char_len(s_, " + pos + "); " + item + " = ch_; }");
+            emit("} else if (" + coll + ".tag == RT_SLICE) {");
+            emit("    if (" + coll + ".x + " + i + " >= " + coll + ".y) goto " + end + ";");
+            emit("    " + item + " = rv_view(rv_o(" + coll + ")->slots[" + coll + ".x + " + i + "]);");
+            emit("} else if (" + coll + ".tag == RT_OBJ) {");
+            emit("    if (" + i + " >= rv_o(" + coll + ")->len) goto " + end + ";");
+            emit("    " + item + " = rv_view(rv_o(" + coll + ")->slots[" + i + "]);");
+            emit("} else { st = rt_internal(\"for über diesen Wert\"); goto " + target() + "; }");
+            emit(i + "++;");
+            pushScope();
+            i64 x = declare(nameNode.text);
+            emit("V[" + x.toString() + "] = " + item + ";");
+            stmt(body);
+            popScope();
+            emit("if (st == ST_BRK) { st = ST_OK; goto " + end + "; }");
+            emit("if (st == ST_CONT) st = ST_OK;");
+            chk();
+            emit("goto " + head + ";");
+        }
+        emit(end + ":;");
+        popScope();
+        chk();
+    }
+
+    // R-13.10: for über eine Klasse mit Iterable (begin, done, at, next)
+    void forIterable(i64 d, string coll, string name, Node body, string end) mut {
+        shared Ty[] none = [];
+        string begin = iterMethod(d, "begin", 0);
+        string done = iterMethod(d, "done", 1);
+        string next = iterMethod(d, "next", 1);
+        string at = iterMethod(d, "at", 1);
+        string cur = tmp();
+        string res = tmp();
+        string a1 = tmp();
+        string view = "rv_view(" + coll + ")";
+        call(begin + "(&" + cur + ", " + view + ", NULL)");
+        string head = newLabel();
+        emit(head + ":;");
+        emit(a1 + " = " + cur + ";");
+        call(done + "(&" + res + ", " + view + ", &" + a1 + ")");
+        emit("if (rv_truthy(" + res + ")) goto " + end + ";");
+        string item = tmp();
+        emit(a1 + " = " + cur + ";");
+        call(at + "(&" + item + ", " + view + ", &" + a1 + ")");
+        pushScope();
+        i64 x = declare(name);
+        emit("V[" + x.toString() + "] = " + item + ";");
+        stmt(body);
+        popScope();
+        emit("if (st == ST_BRK) { st = ST_OK; goto " + end + "; }");
+        emit("if (st == ST_CONT) st = ST_OK;");
+        chk();
+        emit(a1 + " = " + cur + ";");
+        call(next + "(&" + cur + ", " + view + ", &" + a1 + ")");
+        emit("goto " + head + ";");
+    }
+
+    string iterMethod(i64 d, string name, i64 nparams) mut {
+        shared Ty[] none = [];
+        MethodInfo[] ms = c.p.methodsOf(Ty::named(d, none), name);
+        for (MethodInfo m : ms) {
+            if (m.params.length == nparams && !m.mutThis) {
+                // call_method ohne virtuellen Aufruf (for_iterable)
+                return "M_" + m.owner.toString() + "_" + m.member.toString();
+            }
+        }
+        return "rt_no_method";
+    }
+
+    void switchStmt(Node s) mut {
+        string v = eval(s.kids[0]);
+        emit(v + " = rt_temp(" + v + ");");
+        shared Ty? st0 = typeOf(s.kids[0]);
+        i64 enumDef = -1;
+        if (st0 != null) {
+            enumDef = classOf(st0);
+        }
+        string sel = intTmp();
+        emit(sel + " = -1;");
+        i64 defaultIdx = -1;
+        for (i64 ci = 1; ci < s.kids.length; ci++) {
+            ref Node cs = s.kids[ci];
+            if (cs.text == "default") {
+                defaultIdx = ci;
+            }
+            for (Node pat : cs.kids[0].kids) {
+                string b = matchPattern(pat, v, enumDef);
+                emit("if (" + sel + " < 0 && (" + b + ")) " + sel + " = " + ci.toString() + ";");
+            }
+        }
+        if (defaultIdx >= 0) {
+            emit("if (" + sel + " < 0) " + sel + " = " + defaultIdx.toString() + ";");
+        }
+        string end = newLabel();
+        for (i64 ci = 1; ci < s.kids.length; ci++) {
+            ref Node cs = s.kids[ci];
+            emit("if (" + sel + " == " + ci.toString() + ") {");
+            pushScope();
+            // Bindungen (Sichten auf die Daten)
+            for (Node pat : cs.kids[0].kids) {
+                if (pat.kind == "pname" && pat.kids.length > 1) {
+                    ref Node binds = pat.kids[1];
+                    string vi = variantIndexOf(pat, enumDef).toString();
+                    emit("if (rt_variant_is(" + v + ", " + enumDef.toString() + ", " + vi + ")) {");
+                    for (i64 bi = 0; bi < binds.kids.length; bi++) {
+                        i64 x = declare(binds.kids[bi].text);
+                        emit("V[" + x.toString() + "] = rt_variant_item(" + v + ", " + bi.toString() + ");");
+                    }
+                    emit("}");
+                }
+            }
+            for (Node st : cs.kids[1].kids) {
+                stmt(st);
+            }
+            popScope();
+            emit("if (st == ST_BRK) st = ST_OK;");
+            chk();
+            emit("goto " + end + ";");
+            emit("}");
+        }
+        emit(end + ":;");
+    }
+
+    i64 variantIndexOf(Node pat, i64 enumDef) {
+        ref Node nm = pat.kids[0];
+        string name = nm.text;
+        if (nm.kind == "sref") {
+            name = nm.kids[1].text;
+        }
+        if (enumDef < 0 || c.p.defs[enumDef].kind != DefKind::Enum) {
+            return -1;
+        }
+        for (i64 i = 0; i < c.p.defs[enumDef].variants.length; i++) {
+            if (c.p.defs[enumDef].variants[i].name == name) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    string matchPattern(Node pat, string v, i64 enumDef) mut {
+        if (pat.kind == "pname") {
+            return "rt_variant_is(" + v + ", " + enumDef.toString() + ", " + variantIndexOf(pat, enumDef).toString() + ")";
+        }
+        bool neg = pat.text == "-";
+        ref Node lit = pat.kids[0];
+        if (lit.kind == "int") {
+            (bool ok, ui64 mag) = Num::value(lit.text);
+            string n = "0";
+            if (neg) {
+                n = "1";
+            }
+            return "rt_case_int(" + v + ", " + mag.toString() + "ULL, " + n + ")";
+        }
+        string pv = "rv_null()";
+        if (lit.kind == "char") {
+            string u = unescape(lit.text);
+            i64 code = 0;
+            for (char ch : u) {
+                code = cast<i64>(ch);
+                break;
+            }
+            pv = "rv_char(" + code.toString() + ")";
+        } else if (lit.kind == "str") {
+            pv = strLit(lit.text);
+        } else if (lit.kind == "bool") {
+            if (lit.text == "true") {
+                pv = "rv_bool(1)";
+            } else {
+                pv = "rv_bool(0)";
+            }
+        }
+        string b = intTmp();
+        call("rt_equal(&" + b + ", " + v + ", " + pv + ")");
+        return b;
+    }
+
+    void tryStmt(Node s) mut {
+        ref Node body = s.kids[0];
+        string afterBody = newLabel();
+        f.targets.push(afterBody);
+        block(body);
+        discard f.targets.pop();
+        emit(afterBody + ":;");
+        string afterCatch = newLabel();
+        f.targets.push(afterCatch);
+        i64 fin = -1;
+        bool first = true;
+        for (i64 i = 1; i < s.kids.length; i++) {
+            ref Node cc = s.kids[i];
+            if (cc.kind == "finally") {
+                fin = i;
+                continue;
+            }
+            shared Ty? ct = declOf(cc.kids[1]);
+            i64 cd = -1;
+            if (ct != null) {
+                cd = classOf(ct);
+            }
+            string pre = "} else if";
+            if (first) {
+                pre = "if (st == ST_THROW) { if";
+                first = false;
+            }
+            emit(pre + " (rt_catch_matches(" + cd.toString() + ")) {");
+            emit("st = ST_OK;");
+            pushScope();
+            i64 x = declare(cc.kids[1].text);
+            emit("V[" + x.toString() + "] = rt_take_exc();");
+            block(cc.kids[2]);
+            popScope();
+            chk();
+        }
+        if (!first) {
+            emit("} }");
+        }
+        discard f.targets.pop();
+        emit(afterCatch + ":;");
+        if (fin >= 0) {
+            string saved = intTmp();
+            string exc = tmp();
+            string tr = "TR" + f.labels.toString();
+            f.labels++;
+            emit(saved + " = st; " + exc + " = rt_exc;");
+            emit("RTrace " + tr + " = rt_exc_trace;");
+            emit("st = ST_OK;");
+            string afterFin = newLabel();
+            f.targets.push(afterFin);
+            block(s.kids[fin].kids[0]);
+            discard f.targets.pop();
+            emit(afterFin + ":;");
+            // R-9.10: Eine neue Exception ersetzt die laufende.
+            emit("if (st != ST_OK) { if (" + saved + " == ST_THROW) { int d_ = rt_drop(" + exc + "); if (d_) st = d_; } }");
+            emit("else { st = " + saved + "; rt_exc = " + exc + "; rt_exc_trace = " + tr + "; }");
+        }
+        chk();
+    }
+
+    // ================================================================ Ausdrucksanweisungen und Zuweisung
+
+    void exprStmt(Node es) mut {
+        if (es.kind == "assign") {
+            assign(es.kids[0], es.text, es.kids[1]);
+            return;
+        }
+        string v = eval(es.kids[0]);
+        call("rt_drop(" + v + ")");
+    }
+
+    void assign(Node target, string op, Node value) mut {
+        if (target.kind == "tuple") {
+            string v = store(value);
+            i64 n = target.kids.length;
+            string arr = tmpArray(n);
+            call("rt_unpack(" + v + ", " + n.toString() + ", " + arr + ")");
+            for (i64 i = 0; i < n; i++) {
+                ref Node t = target.kids[i];
+                string s = slot(t);
+                string x = tmp();
+                emit(x + " = (" + arr + ")[" + i.toString() + "];");
+                shared Ty? tt = typeOf(t);
+                if (tt != null) {
+                    convert(x, tt);
+                }
+                string old = tmp();
+                emit(old + " = *" + s + "; *" + s + " = " + x + ";");
+                call("rt_drop(" + old + ")");
+            }
+            return;
+        }
+        // R-8.2: erst das Ziel, dann der Wert
+        if (target.kind != "name") {
+            checkPlace(target, true);
+        }
+        string s = slot(target);
+        shared Ty? tt = typeOf(target);
+        if (op == "=") {
+            string v = store(value);
+            if (tt != null) {
+                convert(v, tt);
+            }
+            string old = tmp();
+            emit(old + " = *" + s + "; *" + s + " = " + v + ";");
+            call("rt_drop(" + old + ")");
+            return;
+        }
+        string cur = tmp();
+        emit(cur + " = rv_view(*" + s + ");");
+        string rhs = eval(value);
+        string res = tmp();
+        call("rt_arith(&" + res + ", " + arithOp(op.substring(0, 1)) + ", " + cur + ", " + rhs + ")");
+        if (tt != null) {
+            string p = primOf(tt);
+            if (Num::isNumeric(p)) {
+                call("rt_convert_exact(&" + res + ", " + ctag(p) + ")");
+            }
+        }
+        string old = tmp();
+        emit(old + " = *" + s + "; *" + s + " = " + res + ";");
+        emit("if (" + old + ".tag == RT_STR) rt_drop(" + old + ");");
+    }
+
+    static string arithOp(string op) {
+        if (op == "+") {
+            return "OP_ADD";
+        }
+        if (op == "-") {
+            return "OP_SUB";
+        }
+        if (op == "*") {
+            return "OP_MUL";
+        }
+        if (op == "/") {
+            return "OP_DIV";
+        }
+        if (op == "%") {
+            return "OP_REM";
+        }
+        if (op == "&") {
+            return "OP_AND";
+        }
+        if (op == "|") {
+            return "OP_OR";
+        }
+        if (op == "^") {
+            return "OP_XOR";
+        }
+        if (op == "<<") {
+            return "OP_SHL";
+        }
+        return "OP_SHR";
+    }
+
+    // Ort eines Ausdrucks (slot); liefert einen C-Ausdruck vom Typ rv*
+    string slot(Node e) mut {
+        if (e.kind == "paren") {
+            return slot(e.kids[0]);
+        }
+        if (e.kind == "name") {
+            string cv = lookup(e.text);
+            if (cv != "") {
+                return "(&" + cv + ")";
+            }
+            i64 idx = fieldIndex(f.cls, e.text);
+            if (idx >= 0 && f.thisExpr != "") {
+                return "(&rv_o(" + f.thisExpr + ")->slots[" + idx.toString() + "])";
+            }
+            emit("st = rt_internal(" + cstr(e.text + " ist unbekannt") + "); goto " + target() + ";");
+            return "((rv*)NULL)";
+        }
+        if (e.kind == "member") {
+            string ov = eval(e.kids[0]);
+            emit(ov + " = rt_temp(" + ov + ");");
+            i64 d = -1;
+            shared Ty? ot = typeOf(e.kids[0]);
+            if (ot != null) {
+                d = classOf(ot);
+            }
+            i64 idx = fieldIndex(d, e.kids[1].text);
+            string p = ptrTmp();
+            emit(p + " = &rv_o(" + ov + ")->slots[" + idx.toString() + "];");
+            return p;
+        }
+        if (e.kind == "index") {
+            string ov = eval(e.kids[0]);
+            emit(ov + " = rt_temp(" + ov + ");");
+            string iv = eval(e.kids[1]);
+            string p = ptrTmp();
+            call("rt_index_slot(&" + p + ", " + ov + ", " + iv + ")");
+            return p;
+        }
+        emit("st = rt_internal(\"kein Zuweisungsziel\"); goto " + target() + ";");
+        return "((rv*)NULL)";
+    }
+
+    // ================================================================ Sperren (V-1)
+
+    // C-Variable der Wurzel eines Orts (Paren, Member, Index), wenn sie lokal ist
+    string rootVar(Node e) {
+        if (e.kind == "paren" || e.kind == "member" || e.kind == "index") {
+            return rootVar(e.kids[0]);
+        }
+        if (e.kind == "name") {
+            return lookup(e.text);
+        }
+        return "";
+    }
+
+    void checkPlace(Node e, bool mutable) mut {
+        if (f.binding) {
+            return;
+        }
+        string r = rootVar(e);
+        if (r == "") {
+            return;
+        }
+        string m = "0";
+        if (mutable) {
+            m = "1";
+        }
+        emit("if (rt_shared_root(" + r + ")) { st = rt_check_lock(rt_shared_root(" + r + "), " + m + ", " + e.line.toString() + "); if (st) goto " + target() + "; }");
+    }
+
+    void lockScope(Node e, bool mutable) mut {
+        string r = rootVar(e);
+        if (r == "") {
+            return;
+        }
+        i64 k = f.lockCount;
+        f.lockCount++;
+        string lk = "K[" + k.toString() + "]";
+        string m = "0";
+        if (mutable) {
+            m = "1";
+        }
+        emit(lk + " = rt_shared_root(" + r + ");");
+        emit("if (" + lk + ") { st = rt_acquire(" + lk + ", " + m + ", " + e.line.toString() + "); if (st) { " + lk + " = NULL; goto " + target() + "; } }");
+        f.scopes[f.scopes.length - 1].locks.push(k);
+        f.scopes[f.scopes.length - 1].lockMut.push(mutable);
+    }
+
+    // ================================================================ Werte
+
+    // Umwandlung in den Zieltyp (convert): own → shared, shared → weak, Zahlen
+    void convert(string v, shared Ty t) mut {
+        if (isSharedTy(t)) {
+            emit(v + " = rt_to_shared(" + v + ");");
+            return;
+        }
+        if (isWeakTy(t)) {
+            call("rt_to_weak(&" + v + ")");
+            return;
+        }
+        string p = primOf(t);
+        if (Num::isNumeric(p)) {
+            emit(v + " = rt_conv_num(" + v + ", " + ctag(p) + ");");
+        }
+    }
+
+    // Wert für einen Besitzer (eval_store)
+    string store(Node e) mut {
+        if (e.kind == "paren") {
+            return store(e.kids[0]);
+        }
+        if (e.kind == "cond") {
+            string b = cond(e.kids[0]);
+            string r = tmp();
+            emit("if (" + b + ") {");
+            string a = store(e.kids[1]);
+            emit(r + " = " + a + ";");
+            emit("} else {");
+            string x = store(e.kids[2]);
+            emit(r + " = " + x + ";");
+            emit("}");
+            return r;
+        }
+        if (e.kind == "coalesce") {
+            string l = store(e.kids[0]);
+            string r = tmp();
+            emit(r + " = " + l + ";");
+            emit("if (rv_isnull(" + r + ")) {");
+            string x = store(e.kids[1]);
+            emit(r + " = " + x + ";");
+            emit("}");
+            return r;
+        }
+        string v = "";
+        if (consumes(e)) {
+            v = transfer(e);
+        } else {
+            v = eval(e);
+        }
+        shared Ty? st = storeOf(e);
+        if (st != null) {
+            convert(v, st);
+        }
+        emit(v + " = rt_own_str(" + v + ");");
+        return v;
+    }
+
+    string transfer(Node e) mut {
+        if (e.kind == "name") {
+            string cv = lookup(e.text);
+            if (cv != "") {
+                string r = tmp();
+                emit(r + " = rt_transfer_var(&" + cv + ");");
+                return r;
+            }
+        }
+        string v = eval(e);
+        emit(v + " = rt_promote(" + v + ");");
+        return v;
+    }
+
+    string eval(Node e) mut {
+        string k = e.kind;
+        if (k == "int" || k == "float" || k == "str" || k == "char" || k == "bool" || k == "null") {
+            return literal(e, e, false);
+        }
+        if (k == "name") {
+            return name(e);
+        }
+        if (k == "this") {
+            string r = tmp();
+            if (f.thisExpr == "") {
+                emit(r + " = rv_null();");
+            } else {
+                string te = f.thisExpr;
+                emit(r + " = " + te + ";");
+            }
+            return r;
+        }
+        if (k == "paren") {
+            return eval(e.kids[0]);
+        }
+        if (k == "tuple" || k == "array") {
+            i64 n = e.kids.length;
+            string[] vs = [];
+            for (Node x : e.kids) {
+                vs.push(store(x));
+            }
+            string arr = tmpArray(n);
+            for (i64 i = 0; i < n; i++) {
+                emit("(" + arr + ")[" + i.toString() + "] = " + vs[i] + ";");
+            }
+            string r = tmp();
+            if (k == "tuple") {
+                emit(r + " = rt_tuple(" + n.toString() + ", " + arr + ");");
+            } else {
+                emit(r + " = rt_vec_from(" + n.toString() + ", " + arr + ");");
+            }
+            return r;
+        }
+        if (k == "new") {
+            return newExpr(e);
+        }
+        if (k == "cast") {
+            string v = eval(e.kids[1]);
+            shared Ty? t = typeOf(e);
+            string r = tmp();
+            if (t == null) {
+                emit(r + " = " + v + ";");
+                return r;
+            }
+            i64 d = classOf(t);
+            if (d >= 0) {
+                call("rt_cast_enum(&" + r + ", " + v + ", " + d.toString() + ")");
+                return r;
+            }
+            string p = primOf(t);
+            if (p != "") {
+                call("rt_cast_prim(&" + r + ", " + v + ", " + ctag(p) + ")");
+                return r;
+            }
+            emit(r + " = " + v + ";");
+            return r;
+        }
+        if (k == "copy") {
+            string v = eval(e.kids[0]);
+            emit(v + " = rt_temp(" + v + ");");
+            string r = tmp();
+            call("rt_deep_copy(&" + r + ", " + v + ")");
+            return r;
+        }
+        if (k == "static") {
+            return staticExpr(e);
+        }
+        if (k == "lambda") {
+            return lambda(e);
+        }
+        if (k == "unary") {
+            return unary(e);
+        }
+        if (k == "binary") {
+            return binary(e);
+        }
+        if (k == "as") {
+            string v = eval(e.kids[0]);
+            shared Ty? t = typeOf(e);
+            i64 d = -1;
+            if (t != null) {
+                d = classOf(t);
+            }
+            string r = tmp();
+            emit(r + " = (" + v + ".tag == RT_OBJ && rt_is_subclass(rv_o(" + v + ")->cls, " + d.toString() + ")) ? rv_view(" + v + ") : rv_null();");
+            return r;
+        }
+        if (k == "coalesce") {
+            string l = eval(e.kids[0]);
+            string r = tmp();
+            emit(r + " = " + l + ";");
+            emit("if (rv_isnull(" + r + ")) {");
+            string x = eval(e.kids[1]);
+            emit(r + " = " + x + ";");
+            emit("}");
+            return r;
+        }
+        if (k == "cond") {
+            string b = cond(e.kids[0]);
+            string r = tmp();
+            emit("if (" + b + ") {");
+            string a = eval(e.kids[1]);
+            emit(r + " = " + a + ";");
+            emit("} else {");
+            string x = eval(e.kids[2]);
+            emit(r + " = " + x + ";");
+            emit("}");
+            return r;
+        }
+        if (k == "member") {
+            return member(e);
+        }
+        if (k == "call") {
+            return callExpr(e);
+        }
+        if (k == "index") {
+            string ov = eval(e.kids[0]);
+            emit(ov + " = rt_temp(" + ov + ");");
+            string iv = eval(e.kids[1]);
+            string r = tmp();
+            call("rt_index(&" + r + ", " + ov + ", " + iv + ")");
+            return r;
+        }
+        if (k == "slice") {
+            string ov = eval(e.kids[0]);
+            emit(ov + " = rt_temp(" + ov + ");");
+            string a = "rv_null()";
+            string hasA = "0";
+            if (e.kids[1].kind != "none") {
+                a = eval(e.kids[1]);
+                hasA = "1";
+            }
+            string b = "rv_null()";
+            string hasB = "0";
+            if (e.kids[2].kind != "none") {
+                b = eval(e.kids[2]);
+                hasB = "1";
+            }
+            string r = tmp();
+            call("rt_slice(&" + r + ", " + ov + ", " + hasA + ", " + a + ", " + hasB + ", " + b + ")");
+            return r;
+        }
+        if (k == "postinc" || k == "postdec") {
+            string s = slot(e.kids[0]);
+            string cur = tmp();
+            emit(cur + " = *" + s + ";");
+            string nv = tmp();
+            string d = "1";
+            if (k == "postdec") {
+                d = "-1";
+            }
+            call("rt_incdec(&" + nv + ", " + cur + ", " + d + ")");
+            emit("*" + s + " = " + nv + ";");
+            return cur;
+        }
+        string r = tmp();
+        emit("st = rt_internal(" + cstr("Ausdruck " + k) + "); goto " + target() + ";");
+        emit(r + " = rv_null();");
+        return r;
+    }
+
+    string literal(Node e, Node lit, bool negative) mut {
+        string r = tmp();
+        shared Ty? t = typeOf(e);
+        string p = "";
+        if (t != null) {
+            p = primOf(t);
+        }
+        string k = lit.kind;
+        if (k == "int") {
+            (bool ok, ui64 mag) = Num::value(lit.text);
+            string tag = ctag(p);
+            if (p == "" || !(Num::isNumeric(p))) {
+                tag = ctag(Num::defaultInt(negative, mag));
+            }
+            if (negative) {
+                emit(r + " = rv_int((int64_t)(0ULL - " + mag.toString() + "ULL), " + tag + ");");
+            } else {
+                emit(r + " = rv_uint(" + mag.toString() + "ULL, " + tag + ");");
+            }
+            return r;
+        }
+        if (k == "float") {
+            string clean = lit.text.replace("_", "");
+            string sign = "";
+            if (negative) {
+                sign = "-";
+            }
+            if (p == "f32") {
+                emit(r + " = rv_f32(" + sign + floatC(clean) + "f);");
+            } else {
+                emit(r + " = rv_f64(" + sign + floatC(clean) + ");");
+            }
+            return r;
+        }
+        if (k == "str") {
+            string sl = strLit(lit.text);
+            emit(r + " = " + sl + ";");
+            return r;
+        }
+        if (k == "char") {
+            string u = unescape(lit.text);
+            i64 code = 0;
+            for (char ch : u) {
+                code = cast<i64>(ch);
+                break;
+            }
+            emit(r + " = rv_char(" + code.toString() + ");");
+            return r;
+        }
+        if (k == "bool") {
+            if (lit.text == "true") {
+                emit(r + " = rv_bool(1);");
+            } else {
+                emit(r + " = rv_bool(0);");
+            }
+            return r;
+        }
+        emit(r + " = rv_null();");
+        return r;
+    }
+
+    // Gleitkommaliteral für C (immer mit Punkt oder Exponent)
+    static string floatC(string s) {
+        if (s.contains(".") || s.contains("e") || s.contains("E")) {
+            if (s.endsWith(".")) {
+                return s + "0";
+            }
+            return s;
+        }
+        return s + ".0";
+    }
+
+    string name(Node n) mut {
+        string cv = lookup(n.text);
+        string r = tmp();
+        if (cv != "") {
+            emit(r + " = rv_view(" + cv + ");");
+            return r;
+        }
+        i64 idx = fieldIndex(f.cls, n.text);
+        if (idx >= 0 && f.thisExpr != "") {
+            string te = f.thisExpr;
+            emit(r + " = rv_view(rv_o(" + te + ")->slots[" + idx.toString() + "]);");
+            return r;
+        }
+        if (f.cls >= 0) {
+            FieldInfo? fi = c.p.fieldOf(Ty::named(f.cls, typeArgsNone()), n.text);
+            if (fi != null && fi.isStatic) {
+                call("G_" + fi.owner.toString() + "_" + n.text + "(&" + r + ")");
+                return r;
+            }
+        }
+        emit("st = rt_internal(" + cstr(n.text + " ist unbekannt") + "); goto " + target() + ";");
+        return r;
+    }
+
+    static shared Ty[] typeArgsNone() {
+        shared Ty[] none = [];
+        return none;
+    }
+
+    string staticExpr(Node e) mut {
+        Target? t = targetOf(e);
+        string r = tmp();
+        if (t != null && t.kind == TargetKind::Variant) {
+            emit(r + " = rv_enum(" + t.def.toString() + ", " + t.index.toString() + ");");
+            return r;
+        }
+        if (t != null && t.kind == TargetKind::StaticField) {
+            call("G_" + t.def.toString() + "_" + t.name + "(&" + r + ")");
+            return r;
+        }
+        ref Node sr = e.kids[0];
+        ref Node owner = sr.kids[0];
+        string mem = sr.kids[1].text;
+        if (owner.kind == "prim" && (mem == "MIN" || mem == "MAX")) {
+            string mx = "0";
+            if (mem == "MAX") {
+                mx = "1";
+            }
+            emit(r + " = rt_minmax(" + ctag(owner.text) + ", " + mx + ");");
+            return r;
+        }
+        emit("st = rt_internal(\"statischer Wert\"); goto " + target() + ";");
+        return r;
+    }
+
+    string unary(Node e) mut {
+        string op = e.text;
+        ref Node x = e.kids[0];
+        string r = tmp();
+        if (op == "!") {
+            string v = eval(x);
+            emit(r + " = rv_bool(!rv_truthy(" + v + "));");
+            return r;
+        }
+        if (op == "-") {
+            if (x.kind == "int" || x.kind == "float") {
+                return literal(e, x, true);
+            }
+            string v = eval(x);
+            call("rt_neg(&" + r + ", " + v + ")");
+            return r;
+        }
+        if (op == "~") {
+            string v = eval(x);
+            emit(r + " = rt_bitnot(" + v + ");");
+            return r;
+        }
+        // ++x, --x
+        string s = slot(x);
+        string cur = tmp();
+        emit(cur + " = *" + s + ";");
+        string d = "1";
+        if (op == "--") {
+            d = "-1";
+        }
+        call("rt_incdec(&" + r + ", " + cur + ", " + d + ")");
+        emit("*" + s + " = " + r + ";");
+        return r;
+    }
+
+    string binary(Node e) mut {
+        string op = e.text;
+        string r = tmp();
+        if (op == "&&" || op == "||") {
+            string a = eval(e.kids[0]);
+            emit(r + " = rv_bool(rv_truthy(" + a + "));");
+            if (op == "&&") {
+                emit("if (rv_truthy(" + r + ")) {");
+            } else {
+                emit("if (!rv_truthy(" + r + ")) {");
+            }
+            string b = eval(e.kids[1]);
+            emit(r + " = rv_bool(rv_truthy(" + b + "));");
+            emit("}");
+            return r;
+        }
+        string a = eval(e.kids[0]);
+        emit(a + " = rt_temp(" + a + ");");
+        string b = eval(e.kids[1]);
+        emit(b + " = rt_temp(" + b + ");");
+        if (op == "==" || op == "!=") {
+            string bi = intTmp();
+            call("rt_equal(&" + bi + ", " + a + ", " + b + ")");
+            if (op == "==") {
+                emit(r + " = rv_bool(" + bi + ");");
+            } else {
+                emit(r + " = rv_bool(!" + bi + ");");
+            }
+            return r;
+        }
+        if (op == "<" || op == ">" || op == "<=" || op == ">=") {
+            string bi = intTmp();
+            call("rt_compare(&" + bi + ", " + a + ", " + b + ")");
+            emit(r + " = rv_bool(" + bi + " " + op + " 0);");
+            return r;
+        }
+        call("rt_arith(&" + r + ", " + arithOp(op) + ", " + a + ", " + b + ")");
+        return r;
+    }
+
+    string member(Node e) mut {
+        ref Node object = e.kids[0];
+        string fname = e.kids[1].text;
+        bool safe = e.text == "safe";
+        checkPlace(object, false);
+        string ov = eval(object);
+        string r = tmp();
+        if (safe) {
+            emit("if (rv_isnull(" + ov + ")) " + r + " = rv_null(); else {");
+        }
+        emit(ov + " = rt_temp(" + ov + ");");
+        i64 d = -1;
+        shared Ty? ot = typeOf(object);
+        if (ot != null) {
+            d = classOf(ot);
+        }
+        i64 idx = -1;
+        if (d >= 0) {
+            idx = fieldIndex(d, fname);
+        }
+        if (idx >= 0) {
+            emit(r + " = rv_view(rv_o(" + ov + ")->slots[" + idx.toString() + "]);");
+        } else if (fname == "length" || fname == "byteLength") {
+            string bytes = "0";
+            if (fname == "byteLength") {
+                bytes = "1";
+            }
+            call("rt_member_len(&" + r + ", " + ov + ", " + bytes + ")");
+        } else {
+            emit("st = rt_internal(" + cstr("Feld " + fname + " auf diesem Wert") + "); goto " + target() + ";");
+        }
+        if (safe) {
+            emit("}");
+        }
+        return r;
+    }
+
+    // ================================================================ Aufrufe
+
+    // Argumente nach den Parametern (args): own und shared-Ziele übernehmen, sonst leihen.
+    // locked: Nummern der Argumente, deren Ort für den Aufruf gesperrt ist.
+    // Liefert die Adresse eines Felds mit den Werten.
+    string args(Node argsNode, PInfo[] params, i64[] locked) mut {
+        i64 n = argsNode.kids.length;
+        string[] vs = [];
+        for (i64 i = 0; i < n; i++) {
+            ref Node a = argsNode.kids[i].kids[0];
+            bool takes = false;
+            if (i < params.length) {
+                takes = params[i].mode == Mode::Own || isSharedTy(params[i].ty) || isWeakTy(params[i].ty);
+            }
+            string v = "";
+            if (takes || consumes(a)) {
+                v = store(a);
+            } else {
+                bool saved = f.binding;
+                f.binding = Program::indexOfInt(locked, i) >= 0;
+                v = eval(a);
+                f.binding = saved;
+                emit(v + " = rt_temp(" + v + ");");
+                shared Ty? st = storeOf(a);
+                if (st != null) {
+                    convert(v, st);
+                }
+            }
+            if (i < params.length && primOf(params[i].ty) != "") {
+                convert(v, params[i].ty);
+            }
+            vs.push(v);
+        }
+        string arr = tmpArray(n);
+        for (i64 i = 0; i < n; i++) {
+            emit("(" + arr + ")[" + i.toString() + "] = " + vs[i] + ";");
+        }
+        return arr;
+    }
+
+    string newExpr(Node e) mut {
+        Target? t = targetOf(e);
+        string r = tmp();
+        if (t == null) {
+            emit("st = rt_internal(\"new ohne Konstruktor\"); goto " + target() + ";");
+            return r;
+        }
+        if (t.kind == TargetKind::Ctor) {
+            i64 d = t.def;
+            string kname = "K_" + d.toString() + "_i";
+            PInfo[] ps = [];
+            ref MethodInfo? m = t.m;
+            if (m != null) {
+                kname = "K_" + d.toString() + "_" + m.member.toString();
+                for (PInfo x : m.params) {
+                    ps.push(new PInfo(x.name, x.ty, x.mode));
+                }
+            }
+            string arr = args(e.kids[1], ps, []);
+            string targs = typeArgsExpr(e);
+            emit("{ RObj* o_ = rt_obj_new(&CL_" + d.toString() + ", " + targs + "); st = " + kname + "(o_, " + arr + "); if (st) rt_obj_fail(o_); else " + r + " = rv_obj(o_, F_OWN); }");
+            chk();
+            return r;
+        }
+        if (t.kind == TargetKind::NewParam) {
+            string ta = rtTyExpr(Ty::param(t.def));
+            call("rt_new_param(&" + r + ", " + ta + ")");
+            return r;
+        }
+        emit("st = rt_internal(\"new ohne Konstruktor\"); goto " + target() + ";");
+        return r;
+    }
+
+    // Typargumente eines new (R-7.26), als Laufzeittypen; NULL ohne Typargumente
+    string typeArgsExpr(Node e) mut {
+        shared Ty? t = typeOf(e);
+        if (t == null || t.kind != TK::Named || t.args.length == 0) {
+            return "NULL, 0";
+        }
+        string[] parts = [];
+        for (shared Ty a : t.args) {
+            parts.push(rtTyExpr(a));
+        }
+        i64 n = parts.length;
+        string arr = "TA" + f.labels.toString();
+        f.labels++;
+        emit("static const RTy* " + arr + "[" + n.toString() + "];");
+        for (i64 i = 0; i < n; i++) {
+            emit(arr + "[" + i.toString() + "] = " + parts[i] + ";");
+        }
+        return "(const RTy**)rt_targs_copy(" + arr + ", " + n.toString() + "), " + n.toString();
+    }
+
+    // Laufzeittyp; Typ-Parameter über die Typargumente von this
+    string rtTyExpr(shared Ty t0) mut {
+        shared Ty t = Tys::core(t0);
+        if (t.kind == TK::Param) {
+            string self0 = f.thisExpr;
+            if (self0 == "") {
+                self0 = "rv_null()";
+            }
+            return "rt_targ(" + self0 + ", " + f.cls.toString() + ", " + paramIndex(t.id).toString() + ")";
+        }
+        if (t.kind == TK::Named) {
+            if (t.args.length == 0) {
+                return "rt_ty(1, " + t.id.toString() + ", 0, NULL)";
+            }
+            string arr = "TB" + f.labels.toString();
+            f.labels++;
+            emit("const RTy* " + arr + "[" + t.args.length.toString() + "];");
+            for (i64 i = 0; i < t.args.length; i++) {
+                string x = rtTyExpr(t.args[i]);
+                emit(arr + "[" + i.toString() + "] = " + x + ";");
+            }
+            return "rt_ty(1, " + t.id.toString() + ", " + t.args.length.toString() + ", " + arr + ")";
+        }
+        return "rt_ty(0, 0, 0, NULL)";
+    }
+
+    i64 paramIndex(i64 pid) {
+        if (f.cls < 0) {
+            return -1;
+        }
+        for (i64 i = 0; i < c.p.defs[f.cls].tparams.length; i++) {
+            if (c.p.defs[f.cls].tparams[i] == pid) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    string callExpr(Node e) mut {
+        ref Node callee = e.kids[0];
+        ref Node argsNode = e.kids[1];
+        Target? t = targetOf(e);
+        string r = tmp();
+        if (t == null) {
+            // direkt aufgerufenes Lambda
+            string fv = eval(callee);
+            callValue(r, fv, callee, argsNode);
+            return r;
+        }
+        TargetKind k = t.kind;
+        if (k == TargetKind::Builtin) {
+            builtin(r, t.name, argsNode);
+            return r;
+        }
+        if (k == TargetKind::FuncValue) {
+            string fv = eval(callee);
+            callValue(r, fv, callee, argsNode);
+            return r;
+        }
+        if (k == TargetKind::Variant) {
+            i64 n = argsNode.kids.length;
+            string[] vs = [];
+            for (Node a : argsNode.kids) {
+                vs.push(store(a.kids[0]));
+            }
+            string arr = tmpArray(n);
+            for (i64 i = 0; i < n; i++) {
+                emit("(" + arr + ")[" + i.toString() + "] = " + vs[i] + ";");
+            }
+            if (n == 0) {
+                emit(r + " = rv_enum(" + t.def.toString() + ", " + t.index.toString() + ");");
+            } else {
+                emit(r + " = rt_enumd(" + t.def.toString() + ", " + t.index.toString() + ", " + n.toString() + ", " + arr + ");");
+            }
+            return r;
+        }
+        if (k == TargetKind::Lock) {
+            string w = eval(callee.kids[0]);
+            if (callee.text == "safe") {
+                emit("if (rv_isnull(" + w + ")) " + r + " = rv_null(); else");
+            }
+            call("rt_lock_weak(&" + r + ", " + w + ")");
+            return r;
+        }
+        if (k == TargetKind::BuiltinMethod) {
+            string recv = eval(callee.kids[0]);
+            bool safe = callee.text == "safe";
+            if (safe) {
+                emit("if (rv_isnull(" + recv + ")) " + r + " = rv_null(); else {");
+            }
+            emit(recv + " = rt_temp(" + recv + ");");
+            i64[] none = [];
+            string arr = args(argsNode, t.params, none);
+            call("rt_builtin_method(&" + r + ", " + recv + ", " + cstr(t.name) + ", " + argsNode.kids.length.toString() + ", " + arr + ")");
+            if (safe) {
+                emit("}");
+            }
+            return r;
+        }
+        if (k == TargetKind::BuiltinStatic) {
+            i64[] none = [];
+            string arr = args(argsNode, t.params, none);
+            call("rt_builtin_static(&" + r + ", " + ctag(t.prim) + ", " + cstr(t.name) + ", " + argsNode.kids.length.toString() + ", " + arr + ")");
+            return r;
+        }
+        if (k == TargetKind::Method || k == TargetKind::Exact) {
+            methodCall(r, t, callee, argsNode);
+            return r;
+        }
+        emit("st = rt_internal(\"Aufrufziel\"); goto " + target() + ";");
+        return r;
+    }
+
+    void methodCall(string r, Target t, Node callee, Node argsNode) mut {
+        ref MethodInfo? mi = t.m;
+        if (mi == null) {
+            emit("st = rt_internal(\"Methode fehlt\"); goto " + target() + ";");
+            return;
+        }
+        MethodInfo m = mi.substituted(new Subst());
+        bool exact = t.kind == TargetKind::Exact;
+        string recv = "rv_null()";
+        bool safe = false;
+        string closeSafe = "";
+        if (!m.isStatic) {
+            if (callee.kind == "member" && callee.kids[0].kind != "base") {
+                string rv0 = eval(callee.kids[0]);
+                safe = callee.text == "safe";
+                if (safe) {
+                    emit("if (rv_isnull(" + rv0 + ")) " + r + " = rv_null(); else {");
+                }
+                emit(rv0 + " = rt_temp(" + rv0 + ");");
+                recv = rv0;
+            } else if (f.thisExpr != "") {
+                recv = f.thisExpr;
+            }
+        }
+        // V-1: Empfänger und geliehene Argumente mit shared-Wurzel sind während des Aufrufs gesperrt.
+        string relLab = newLabel();
+        string[] held = [];
+        bool[] heldMut = [];
+        f.targets.push(relLab);
+        if (callee.kind == "member") {
+            string root = rootVar(callee.kids[0]);
+            if (root != "") {
+                i64 kk = f.lockCount;
+                f.lockCount++;
+                string lk = "K[" + kk.toString() + "]";
+                string mm = "0";
+                if (m.mutThis) {
+                    mm = "1";
+                }
+                emit(lk + " = rt_shared_root(" + root + ");");
+                emit("if (" + lk + ") { st = rt_acquire(" + lk + ", " + mm + ", " + callee.kids[0].line.toString() + "); if (st) { " + lk + " = NULL; goto " + relLab + "; } }");
+                held.push(lk);
+                heldMut.push(m.mutThis);
+            }
+        }
+        i64[] locked = [];
+        for (i64 i = 0; i < argsNode.kids.length && i < m.params.length; i++) {
+            ref Node a = argsNode.kids[i].kids[0];
+            if (m.params[i].mode != Mode::Own && primOf(m.params[i].ty) == "" && !consumes(a)) {
+                string root = rootVar(a);
+                if (root != "") {
+                    i64 kk = f.lockCount;
+                    f.lockCount++;
+                    string lk = "K[" + kk.toString() + "]";
+                    bool mutable = m.params[i].mode == Mode::Mut;
+                    string mm = "0";
+                    if (mutable) {
+                        mm = "1";
+                    }
+                    emit(lk + " = rt_shared_root(" + root + ");");
+                    emit("if (" + lk + ") { st = rt_acquire(" + lk + ", " + mm + ", " + a.line.toString() + "); if (st) { " + lk + " = NULL; goto " + relLab + "; } }");
+                    held.push(lk);
+                    heldMut.push(mutable);
+                    locked.push(i);
+                }
+            }
+        }
+        string arr = args(argsNode, m.params, locked);
+        string fn = "M_" + m.owner.toString() + "_" + m.member.toString();
+        if (!exact && !m.isStatic) {
+            fn = dispatchName(m);
+        } else if (m.isStatic && !m.hasBody) {
+            fn = dispatchName(m);
+        }
+        string rview = recv;
+        if (recv != "rv_null()") {
+            rview = "rv_view(" + recv + ")";
+        }
+        emit("st = " + fn + "(&" + r + ", " + rview + ", " + arr + ");");
+        discard f.targets.pop();
+        emit(relLab + ":;");
+        for (i64 i = held.length - 1; i >= 0; i--) {
+            string mm = "0";
+            if (heldMut[i]) {
+                mm = "1";
+            }
+            emit("if (" + held[i] + ") { rt_unlock(" + held[i] + ", " + mm + "); " + held[i] + " = NULL; }");
+        }
+        chk();
+        if (safe) {
+            emit("}");
+        }
+    }
+
+    // Aufruf eines Funktionswerts (call_value)
+    void callValue(string r, string fv, Node callee, Node argsNode) mut {
+        shared Ty? ft = typeOf(callee);
+        Mode[] modes = [];
+        if (ft != null) {
+            shared Ty fc = Tys::core(ft);
+            if (fc.kind == TK::Func) {
+                for (Mode md : fc.modes) {
+                    modes.push(md);
+                }
+            }
+        }
+        i64 n = argsNode.kids.length;
+        string[] vs = [];
+        for (i64 i = 0; i < n; i++) {
+            ref Node a = argsNode.kids[i].kids[0];
+            bool takes = i < modes.length && modes[i] == Mode::Own;
+            string v = "";
+            if (takes || consumes(a)) {
+                v = store(a);
+            } else {
+                v = eval(a);
+                emit(v + " = rt_temp(" + v + ");");
+                shared Ty? st = storeOf(a);
+                if (st != null) {
+                    convert(v, st);
+                }
+            }
+            vs.push(v);
+        }
+        string arr = tmpArray(n);
+        for (i64 i = 0; i < n; i++) {
+            emit("(" + arr + ")[" + i.toString() + "] = " + vs[i] + ";");
+        }
+        call("rt_call_value(&" + r + ", " + fv + ", " + arr + ")");
+    }
+
+    void builtin(string r, string name, Node argsNode) mut {
+        if (name == "print") {
+            string v = eval(argsNode.kids[0].kids[0]);
+            emit("rt_print(" + v + "); " + v + " = rt_temp_str(" + v + ");");
+            emit(r + " = rv_void();");
+            return;
+        }
+        if (name == "assert") {
+            string v = eval(argsNode.kids[0].kids[0]);
+            emit("if (!rv_truthy(" + v + ")) {");
+            string msg = eval(argsNode.kids[1].kids[0]);
+            emit("st = rt_fatal_text(\"AssertError\", " + msg + "); goto " + target() + ";");
+            emit("}");
+            emit(r + " = rv_void();");
+            return;
+        }
+        if (name == "fail") {
+            string msg = eval(argsNode.kids[0].kids[0]);
+            emit("st = rt_fatal_text(\"FailError\", " + msg + "); goto " + target() + ";");
+            emit(r + " = rv_void();");
+            return;
+        }
+        if (name == "take") {
+            ref Node place = argsNode.kids[0].kids[0];
+            checkPlace(place, true);
+            string s = slot(place);
+            emit(r + " = *" + s + "; *" + s + " = rv_null();");
+            return;
+        }
+        if (name == "replace") {
+            ref Node place = argsNode.kids[0].kids[0];
+            string v = store(argsNode.kids[1].kids[0]);
+            checkPlace(place, true);
+            string s = slot(place);
+            emit(r + " = *" + s + "; *" + s + " = " + v + ";");
+            return;
+        }
+        if (name == "same") {
+            string a = eval(argsNode.kids[0].kids[0]);
+            string b = eval(argsNode.kids[1].kids[0]);
+            emit(r + " = rv_bool(" + a + ".tag == RT_OBJ && " + b + ".tag == RT_OBJ && " + a + ".v.p == " + b + ".v.p);");
+            return;
+        }
+        emit("st = rt_internal(" + cstr("eingebaute Funktion " + name) + "); goto " + target() + ";");
+    }
+
+    // ================================================================ Lambdas
+
+    string lambda(Node e) mut {
+        bool isOwn = e.text == "own";
+        ref Node params = e.kids[0];
+        ref Node body = e.kids[1];
+        string[] caps = [];
+        if (e.id >= 0) {
+            ref Captures? cl = c.rt.captures[e.id];
+            if (cl != null) {
+                for (string s : cl.names) {
+                    if (s != "this") {
+                        caps.push(s);
+                    }
+                }
+            }
+        }
+        // Erfassungen außen auflösen
+        string[] outer = [];
+        for (string s : caps) {
+            outer.push(lookup(s));
+        }
+        string fname = "L_" + e.id.toString();
+        string r = tmp();
+        string ownFlag = "0";
+        if (isOwn) {
+            ownFlag = "1";
+        }
+        emit("{ RFun* c_ = rt_fun_new(" + fname + ", " + ownFlag + ", " + caps.length.toString() + ");");
+        if (!isOwn && f.thisExpr != "") {
+            string te = f.thisExpr;
+            emit("  c_->self = rv_view(" + te + ");");
+        }
+        for (i64 i = 0; i < caps.length; i++) {
+            if (outer[i] == "") {
+                continue;
+            }
+            if (isOwn) {
+                emit("  rt_capture_own(&" + outer[i] + ", &c_->vals[" + i.toString() + "]);");
+            } else {
+                emit("  c_->cells[" + i.toString() + "] = &" + outer[i] + ";");
+            }
+        }
+        emit("  " + r + " = rv_fun(c_, F_OWN); }");
+        // Rumpf als eigene Funktion
+        Fn saved = replace(mut f, new Fn());
+        f.cls = saved.cls;
+        if (!isOwn && saved.thisExpr != "") {
+            f.thisExpr = "C->self";
+        }
+        f.targets.push("XF");
+        for (i64 i = 0; i < caps.length; i++) {
+            bindName(caps[i], "(*C->cells[" + i.toString() + "])");
+        }
+        emit("*ret = rv_void();");
+        emit("if ((st = rt_enter(\"Lambda\")) != 0) return st;");
+        pushScope();
+        for (i64 i = 0; i < params.kids.length; i++) {
+            i64 v = declare(params.kids[i].kids[1].text);
+            emit("V[" + v.toString() + "] = args[" + i.toString() + "];");
+        }
+        if (body.kind == "block") {
+            block(body);
+        } else {
+            string v = store(body);
+            emit("*ret = " + v + "; st = ST_RET;");
+        }
+        popScope();
+        emit("XF: rt_leave();");
+        emit("if (st == ST_RET) st = ST_OK;");
+        emit("return st;");
+        endFn("static int " + fname + "(rv* ret, RFun* C, rv* args)");
+        f = saved;
+        return r;
+    }
+}

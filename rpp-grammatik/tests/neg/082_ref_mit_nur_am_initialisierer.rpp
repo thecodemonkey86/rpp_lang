@@ -1,2 +1,2 @@
-// Name: ref mit & nur am Initialisierer
-class T { void m() { ref Foo f = &x; } }
+// Name: ref mit mut nur am Initialisierer
+class T { void m() { ref Foo f = mut x; } }

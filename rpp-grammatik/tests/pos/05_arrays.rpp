@@ -1,6 +1,6 @@
 class Arrays {
 public:
-    void demo(string[]& target, Foo[] items) {
+    void demo(mut string[] target, Foo[] items) {
         string[] colors = ["red", "yellow", "blue"];
         colors.push("green");
         i64 n = colors.length;
@@ -17,10 +17,10 @@ public:
             print(item.name());
         }
         Foo[] own_items = [new Foo(), new Foo()];
-        for (Foo& f : &own_items) {
+        for (mut Foo f : mut own_items) {
             f.reset();
         }
-        fill(&colors);
+        fill(mut colors);
         Foo last = own_items.pop();
     }
 }

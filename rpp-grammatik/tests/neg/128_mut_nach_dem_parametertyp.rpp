@@ -1,0 +1,2 @@
+// Name: mut nach dem Parametertyp
+class T { void f(Foo mut x) { } }

@@ -1,0 +1,2 @@
+// Name: & als Veränderbarkeits-Marker (alte Schreibweise)
+class T { void f(Foo& x) { } }

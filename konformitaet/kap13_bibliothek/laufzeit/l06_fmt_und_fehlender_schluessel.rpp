@@ -14,6 +14,6 @@ i32 main(string[] args) {
     print(Fmt::fixed(2.675, 2));
     print(Env::get("RPP_KONFORMITAET_NICHT_GESETZT") ?? "-");
     Map<string, i32> m = new Map<string, i32>();
-    ref i32& x = &m.at("fehlt");
+    ref mut i32 x = mut m.at("fehlt");
     return 0;
 }

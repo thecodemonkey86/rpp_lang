@@ -191,9 +191,16 @@ def run(cmd):
     return r.stdout
 
 
+# --exe PFAD: der mit dem Codegenerator übersetzte rppcc statt des Interpreters
+EXE = None
+
+
 def both(part, args):
     rust = run([str(RPPC), part, *args])
-    rpp = run([str(RPPC), "run", str(ROOT / "rpp-compiler"), "--", part, *args])
+    if EXE:
+        rpp = run([EXE, part, *args])
+    else:
+        rpp = run([str(RPPC), "run", str(ROOT / "rpp-compiler"), "--", part, *args])
     return rust, rpp
 
 
@@ -280,8 +287,8 @@ def fr_programs(tmp, count):
 def pruefe(tmp, verbose, fr_count):
     ok = bad = 0
     std = str(ROOT / "rppc" / "std")
-    # rpp-compiler selbst ist im Interpreter zu langsam für diesen Vergleich
-    inputs = [(str(p.relative_to(ROOT)).replace("\\", "/"), p) for p in defs_inputs() if p != ROOT / "rpp-compiler"]
+    # rpp-compiler selbst ist im Interpreter zu langsam für diesen Vergleich (nur mit --exe)
+    inputs = [(str(p.relative_to(ROOT)).replace("\\", "/"), p) for p in defs_inputs() if p != ROOT / "rpp-compiler" or EXE]
     inputs += fr_programs(tmp, fr_count)
     for name, path in inputs:
         a, b = both("pruefe", [std, str(path)])
@@ -295,6 +302,9 @@ def pruefe(tmp, verbose, fr_count):
 def main():
     verbose = "-v" in sys.argv
     fr_count = 300
+    if "--exe" in sys.argv:
+        global EXE
+        EXE = str(pathlib.Path(sys.argv[sys.argv.index("--exe") + 1]).resolve())
     if "--fr" in sys.argv:
         fr_count = int(sys.argv[sys.argv.index("--fr") + 1])
     alle = ["tokens", "pre", "ast", "projekt", "defs", "pruefe"]

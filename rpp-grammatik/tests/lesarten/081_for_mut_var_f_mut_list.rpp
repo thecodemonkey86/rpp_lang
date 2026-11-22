@@ -1,0 +1,3 @@
+// Name: for (mut var f : mut list) { }
+// Lesart: forEachStmt
+class T { void m() { for (mut var f : mut list) { } } }

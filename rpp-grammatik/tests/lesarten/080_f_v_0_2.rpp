@@ -1,3 +1,0 @@
-// Name: f(&v[0..2]);
-// Lesart: exprStatement
-class T { void m() { f(&v[0..2]); } }

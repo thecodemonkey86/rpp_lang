@@ -2,7 +2,7 @@
 
 Meilenstein M6 (siehe „R++ Implementierungsplan“): Der Compiler wird Schritt für Schritt in R++ geschrieben, mit der ersten Implementierung `rppc` ausgeführt und mit ihr verglichen, bis er sich selbst übersetzt.
 
-Stand 22.11.2026: die ganze Prüfung (Lexer, Präprozessor, Parser, Projekte, Deklarationen, Rümpfe mit Flussanalyse).
+Stand 22.11.2026: die ganze Prüfung (Lexer, Präprozessor, Parser, Projekte, Deklarationen, Rümpfe mit Flussanalyse) und ein Codegenerator nach C (`c`).
 
 ## Inhalt
 
@@ -20,9 +20,13 @@ Stand 22.11.2026: die ganze Prüfung (Lexer, Präprozessor, Parser, Projekte, De
 | `src/compiler/sema/Defs.rpp` | Deklarationstabellen: Typen, Felder, Methoden, Konstruktoren, Varianten |
 | `src/compiler/sema/Program.rpp` | Deklarationsphase: Typen sammeln, Namen auflösen, Membertabellen, Constraints, Regeln auf Ebene von Dateien und Klassen; gleichwertig zu `Program::build` in `defs.rs` |
 | `src/compiler/sema/Flow.rpp` | Zustand der Flussanalyse: Verengung, Initialisierung, Moves, Orte und Loans; gleichwertig zu `flow.rs` |
-| `src/compiler/sema/Checker.rpp` | Prüfung der Rümpfe: Anweisungen, Ausdrücke, Aufrufe, Lambdas, Eingebautes, Flussanalyse; gleichwertig zu `body.rs` (ohne die Angaben für die Ausführung) |
-| `src/main.rpp` | Befehle `tokens`, `pre`, `ast`, `projekt`, `defs`, `pruefe` |
+| `src/compiler/sema/Checker.rpp` | Prüfung der Rümpfe: Anweisungen, Ausdrücke, Aufrufe, Lambdas, Eingebautes, Flussanalyse; gleichwertig zu `body.rs`, dazu die Angaben für die Ausführung |
+| `src/compiler/sema/Rt.rpp` | Angaben für die Ausführung je Knoten (wie `rt.rs`): Typen, Zieltypen, Moves, Aufrufziele, Erfassungen der Lambdas, Basiskonstruktoren, Typen der Deklarationen |
+| `src/compiler/gen/CGen.rpp` | Codegenerator nach C: setzt die Auswertung des Debug-Interpreters von `rppc` (`rpp-interp`) Stelle für Stelle in C um |
+| `runtime/rpp_rt.h`, `runtime/rpp_rt.c` | Laufzeit für den erzeugten Code (C17, MSVC und gcc): Werte mit Besitzform wie `value.rs`, Freigabe, Exceptions und Programmfehler, Zahlen beider Modi, Strings, Vektoren, eingebaute Teile der Standardbibliothek |
+| `src/main.rpp` | Befehle `tokens`, `pre`, `ast`, `projekt`, `defs`, `pruefe`, `c` |
 | `vergleich.py` | Vergleich mit `rppc` |
+| `vergleich_c.py`, `tests_c/` | Vergleich der übersetzten Programme mit `rppc run` |
 
 Der Syntaxbaum ist einheitlich aufgebaut statt mit einer Klasse je Knotenart. Seine Textform (ein Knoten je Zeile mit Art, Text und Position) erzeugt auf der Rust-Seite `rppc/crates/rpp-syntax/src/dump.rs` aus dem AST von `rppc`.
 
@@ -36,6 +40,7 @@ cargo run -- run ../rpp-compiler -- ast debug,linux DATEI.rpp
 cargo run -- run ../rpp-compiler -- projekt [--release] STD PFAD
 cargo run -- run ../rpp-compiler -- defs STD PFAD
 cargo run -- run ../rpp-compiler -- pruefe STD PFAD
+cargo run -- run ../rpp-compiler -- c [--release] STD PFAD AUSGABE.c
 cargo run -- tokens DATEI.rpp          # dieselben Ausgaben von rppc
 cargo run -- pre debug,linux DATEI.rpp
 cargo run -- ast debug,linux DATEI.rpp
@@ -64,3 +69,20 @@ Stand 22.11.2026:
 | `pruefe` | 782 | 0 | R-6.9 statt R-6.8 nach `if`: 1 Abweichung |
 
 Beim Aufbau des Parsers ist ein Fehler im Interpreter aufgefallen und behoben: Ein `own`-Argument, das über `??`, `?:` oder Klammern kam, wurde geliehen statt verschoben (neuer Laufzeittest `kap05_ownership/laufzeit/l02_own_argument_ausdruck.rpp`).
+
+## Codegenerator nach C
+
+`rppcc c [--release] STD PFAD AUSGABE.c` prüft das Programm einschließlich der Standardbibliothek und erzeugt eine C-Datei; sie wird zusammen mit `runtime/rpp_rt.c` übersetzt:
+
+```
+cl /std:c17 /O2 /I runtime AUSGABE.c runtimepp_rt.c /link /STACK:16777216
+gcc -std=c17 -O2 -I runtime AUSGABE.c runtime/rpp_rt.c -lm
+```
+
+Der Codegenerator folgt dem Debug-Interpreter von `rppc`, der Referenz nach R-12.3: Jeder Ausdruck wird zu C-Code, der dieselben Schritte in derselben Reihenfolge ausführt (`eval`, `eval_store`, `transfer`, `temp`, `convert`, `args`). Ein Wert (`rv`) trägt wie `Value` im Interpreter seine Art und bei Objekten die Besitzform am Verweis; Freigabe, Destruktoren (V-7), Sperren (V-1), Unwinding mit `finally`, Programmfehler, Stacktrace und Exit-Codes (R-12.9) verhalten sich wie dort. Fehler laufen als Status durch die Aufrufe; jede Anweisung und jeder Gültigkeitsbereich hat eine Aufräummarke. Generics werden nicht vervielfältigt; Typargumente stehen wie im Interpreter am Objekt (R-7.26). Der Modus (debug oder release) wird beim Erzeugen gewählt.
+
+Die Angaben, die der Interpreter aus `Program::rt` liest, erhebt `Checker.rpp` an denselben Stellen wie `body.rs` (`Rt.rpp`); die Knoten des Syntaxbaums sind dafür nummeriert (`Node.id`).
+
+Vergleich: `py -X utf8 vergleich_c.py [--fr N] [--nur-fr] [--gcc] [MUSTER]` erzeugt, übersetzt (MSVC; mit `--gcc` gcc) und startet jeden Laufzeittest der Konformitätstests und jedes Programm in `tests_c/` in beiden Modi in einem frischen Arbeitsverzeichnis und vergleicht Ausgabe, Fehlerausgabe und Exit-Code mit `rppc run`; mit `--fr N` auch die nach R++ übersetzten FR++-Programme.
+
+Abweichungen der Laufzeit vom Interpreter, die bekannt sind: Groß- und Kleinschreibung und die Buchstabenklassen von `char` decken nur Latein, Griechisch und Kyrillisch und einige Schriften ab; Texte von Betriebssystemfehlern in `IOException` kommen aus der C-Bibliothek.

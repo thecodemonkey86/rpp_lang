@@ -1,2 +1,0 @@
-// Name: return & ohne Ausdruck
-class T { void m() { return &; } }

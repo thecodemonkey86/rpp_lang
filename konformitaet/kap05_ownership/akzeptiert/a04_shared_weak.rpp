@@ -12,7 +12,7 @@ public:
         this.next = null;
         this.parent = null;
     }
-    void rename(string n) & { this.name = n; }
+    void rename(string n) mut { this.name = n; }
     string getName() { return this.name; }
 }
 

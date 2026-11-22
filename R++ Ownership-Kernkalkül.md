@@ -20,7 +20,7 @@ V-1 bis V-11 sind entschieden; V-3 ist gegenüber dem ersten Vorschlag um `take`
 |---|---|---|
 | V-1 | `shared`-Objekte sind veränderbar. Die Exklusivität wird für sie zur Laufzeit geprüft (Sperrzustand pro Objekt); ein Verstoß wirft `BorrowError` – in **beiden** Modi, weil die Prüfung die Speichersicherheit trägt. | Ohne Prüfung könnte über einen zweiten `shared`-Alias ein Vektor wachsen, über den gerade iteriert wird. Alternative: `shared` nur lesend; dann lassen sich Graphen und Beobachter-Strukturen nicht verändern. |
 | V-2 | Ein Pfad geht nie *durch* ein `shared`- oder `weak`-Feld hindurch. `this.next.name()` übersetzt der Compiler in eine lokale Kopie: `shared Node t = this.next; t.name();` | Die Sperre braucht eine Variable, die das Objekt für die Dauer des Zugriffs am Leben hält. Entspricht der Regel aus Abschnitt 4 der Designentscheidungen, dass nullbare Felder vor dem Zugriff in eine lokale Variable geholt werden. |
-| V-3 | Aus einem Feld kann nicht herausbewegt werden. Stattdessen gibt es zwei eingebaute Funktionen: `replace(&x.f, neu)` setzt den neuen Wert ein und gibt den alten zurück; `take(&x.f)` gibt es nur für nullbare Felder, es setzt das Feld auf `null` und gibt den alten Wert zurück. | Ein Feld ohne Wert wäre ein Loch im Objekt. `take(&x.f)` ist gleichbedeutend mit `replace(&x.f, null)` und im Kalkül deshalb kein eigenes Konstrukt. |
+| V-3 | Aus einem Feld kann nicht herausbewegt werden. Stattdessen gibt es zwei eingebaute Funktionen: `replace(mut x.f, neu)` setzt den neuen Wert ein und gibt den alten zurück; `take(mut x.f)` gibt es nur für nullbare Felder, es setzt das Feld auf `null` und gibt den alten Wert zurück. | Ein Feld ohne Wert wäre ein Loch im Objekt. `take(mut x.f)` ist gleichbedeutend mit `replace(mut x.f, null)` und im Kalkül deshalb kein eigenes Konstrukt. |
 | V-4 | ~~In Version 1 geben Methoden keine Borrows zurück.~~ **Geändert am 21.11.2026:** Eine Methode darf einen Borrow zurückgeben, der von `this` ausgeht (`ref V get(K k)`). An der Aufrufstelle gilt er als Loan auf den Empfänger, bis zum Ende der Anweisung oder, mit `ref` gebunden, bis zum Blockende (R-5.23, R-5.24). | Ohne Borrow-Rückgabe wären `map.get(k)`, `list.first()` und Iteratoren über `own`-Elemente unmöglich. Weil der Borrow nur von `this` ausgehen darf, reicht ein Loan auf den Empfänger; Lifetimes sind weiter nicht nötig. |
 | V-5 | Ein Move darf in nur einem Zweig eines `if` stehen. Danach gilt die Variable als verschoben; ob sie freigegeben werden muss, entscheidet zur Laufzeit ein Drop-Flag. | Wie in Rust; vermeidet unnötige Fehlermeldungen. |
 | V-6 | `weak` entsteht nur aus `shared`. Zugriff über `w.lock()`, das `shared T?` liefert; danach greift die Null-Prüfung aus Kapitel 6. | Kein neues Sprachmittel nötig. |
@@ -71,7 +71,7 @@ Anweisung    s ::= S x = e;              Deklaration
                |  (S₁ x₁, …, Sₙ xₙ) = move y;          own-Objekt zerlegen (R-5.25)
 ```
 
-Entsprechung zur Oberfläche: `ref C` ist ein Parameter `Foo`, `mut C` ein Parameter `Foo&`, `own C` eine lokale Variable `Foo` oder ein Parameter `own Foo`; `μ = mut` ist eine Methode mit `&` hinter der Parameterliste. Felder haben nur Speichertypen; dass Borrows nicht in Feldern stehen, ist damit schon syntaktisch erzwungen.
+Entsprechung zur Oberfläche: `ref C` ist ein Parameter `Foo`, `mut C` ein Parameter `mut Foo`, `own C` eine lokale Variable `Foo` oder ein Parameter `own Foo`; `μ = mut` ist eine Methode mit `mut` hinter der Parameterliste. Felder haben nur Speichertypen; dass Borrows nicht in Feldern stehen, ist damit schon syntaktisch erzwungen.
 
 Annahmen: Alle Variablennamen eines Methodenrumpfs sind verschieden (sonst umbenennen). `D` ist die Basisklasse, `Object` hat keine Felder und Methoden. `felder(C)` und `methode(m, C)` liefern wie in Featherweight Java die geerbten und eigenen Felder bzw. die Signatur.
 
@@ -185,7 +185,7 @@ R-5.10 (T-Aufruf)
 
 Der Empfänger und die Argumente werden von links nach rechts geprüft; jeder Borrow bleibt bis zum Ende des Aufrufs in der Loan-Menge. Damit ist ausgeschlossen:
 
-- `p.m(&mut p.f)` bei einer `&`-Methode `m` (Empfänger und Argument überlappen),
+- `p.m(&mut p.f)` bei einer `mut`-Methode `m` (Empfänger und Argument überlappen),
 - `f(&mut a, &a)` und `f(&mut a, &mut a)`,
 - `f(move a, &a)` (nach dem Move ist `a` nicht mehr verfügbar) und `f(&a, move a)` (Move während eines Loans).
 
@@ -412,48 +412,48 @@ Aus Lemma 5.4, I-2 und I-4 folgt, dass `ziel(p)` für jeden geprüften Ort defin
 | Lokale Variable `Foo x = e;` | `own C x = e;` | R-5.11 |
 | Verwendung von `x` (Typ `own`) als Wert, Feldwert oder `own`-Argument | `move x` | R-5.3 |
 | Verwendung von `x` als Argument für Parameter `Foo` | `&ro x` | R-5.9 |
-| Argument `&x` für Parameter `Foo&` | `&mut x` | R-5.9 |
-| Parameter `Foo` / `Foo&` / `own Foo` / `shared Foo` | `ref C` / `mut C` / `own C` / `shared C` | R-5.20 |
-| Methode mit `&` nach der Parameterliste | `μ = mut` | R-5.10, R-5.20 |
+| Argument `mut x` für Parameter `mut Foo` | `&mut x` | R-5.9 |
+| Parameter `Foo` / `mut Foo` / `own Foo` / `shared Foo` | `ref C` / `mut C` / `own C` / `shared C` | R-5.20 |
+| Methode mit `mut` nach der Parameterliste | `μ = mut` | R-5.10, R-5.20 |
 | `shared Foo s = f;` mit `f` vom Typ `own` | `shared C s = share move f;` | R-5.5, V-9 |
 | `shared Foo t = s;` mit `s` vom Typ `shared` | `shared C t = copy s;` | R-5.2 |
 | `weak Foo w = s;` | `weak C w = demote copy s;` | R-5.6 |
 | `shared Foo? p = w.lock(); if (p != null) { … }` | `upgrade p = w { … } else { }` | R-5.18, V-6 |
 | `this.next.name()` mit `shared`-Feld `next` | `shared C t = copy this.next; t.name();` (Hilfsvariable des Compilers) | V-2 |
 | `this.payload = p;` | `this.payload = move p;` | R-5.13 |
-| `Foo alt = replace(&this.payload, neu);` | `own C alt = replace(this.payload, …);` | R-5.7, V-3 |
-| `Foo? alt = take(&this.cache);` (nur bei nullbarem Feld) | wie `replace(this.cache, null)` | R-5.7, V-3 |
+| `Foo alt = replace(mut this.payload, neu);` | `own C alt = replace(this.payload, …);` | R-5.7, V-3 |
+| `Foo? alt = take(mut this.cache);` (nur bei nullbarem Feld) | wie `replace(this.cache, null)` | R-5.7, V-3 |
 | `copy(a)` | Aufruf der Kopiermethode mit `&ro a`; Ergebnis `own C` | R-5.10 |
 | `(K k, V v) = e;` mit `e` vom Typ einer Klasse | `(own K k, own V v) = move y;` mit `y` der lokalen Variablen bzw. einer Hilfsvariablen für einen temporären Wert; Felder in Deklarationsreihenfolge, geerbte zuerst; jedes Feld muss an der Stelle sichtbar sein (R-7.2) | R-5.25 |
 | `new Foo(args)` mit Konstruktor | Konstruktor als Methode, die mit `new C(…)` endet; Felder vorher vollständig gesetzt | V-10 |
 | `for (Foo f : list) { … }` | `borrow l = &ro list { … borrow f = &ro l[i] { … } … }` | R-5.17 |
-| `for (Foo& f : &list) { … }` | wie oben mit `&mut` | R-5.17 |
+| `for (mut Foo f : mut list) { … }` | wie oben mit `&mut` | R-5.17 |
 | `Slice<T> s = v[1..3];` (lokal) | `borrow s = &ro v { Rest des Blocks }` | R-5.17 |
 | `ref Foo f = p;` | `borrow f = &ro p { Rest des Blocks }` | R-5.17 |
-| `ref Foo& g = &p;` | `borrow g = &mut p { Rest des Blocks }` | R-5.17 |
-| Methode `ref V get(K k)` / `ref V& at(K k) &` | `brw(ro, V) get(…) ro` / `brw(mut, V) at(…) mut`; Rumpf endet mit `return this…;` bzw. `return &this…;` | R-5.23 |
+| `ref mut Foo g = mut p;` | `borrow g = &mut p { Rest des Blocks }` | R-5.17 |
+| Methode `ref V get(K k)` / `ref mut V at(K k) mut` | `brw(ro, V) get(…) ro` / `brw(mut, V) at(…) mut`; Rumpf endet mit `return this…;` bzw. `return mut this…;` | R-5.23 |
 | `ref V v = map.get(k);` | `borrow v = map.get(k) { Rest des Blocks }` | R-5.24 |
 | `print(map.get(k).name);` (Ergebnis nicht gebunden) | `borrow tmp = map.get(k) { print(tmp.name); }`: Der Loan gilt bis zum Ende der Anweisung | R-5.24 |
-| Parameter `Slice<T>& s` | `mut` auf den Vektor | R-5.9 |
+| Parameter `mut Slice<T> s` | `mut` auf den Vektor | R-5.9 |
 | Normales Lambda als Argument | jede erfasste Variable wird für die Dauer des Aufrufs ausgeliehen, lesend oder veränderbar je nach Rumpf | R-5.9, R-5.10 |
 | `own`-Lambda | `new Closure(…)` mit einem Feld pro Erfassung: primitive Werte und `shared` kopiert, `own` verschoben | R-5.4 |
 
-**Vektoren und Indizes.** Ein Vektor besitzt seine Elemente wie ein Objekt seine Felder. `a[i]` ist ein Ort mit unbekanntem Index: `a[i]` und `a[j]` gelten immer als überlappend, `swap(&a[i], &a[j])` ist deshalb ein Fehler. Grenzverletzungen werfen eine Exception. Herausnehmen geht nur über `&`-Methoden wie `pop()` und `remove(i)`, die `own T` liefern.
+**Vektoren und Indizes.** Ein Vektor besitzt seine Elemente wie ein Objekt seine Felder. `a[i]` ist ein Ort mit unbekanntem Index: `a[i]` und `a[j]` gelten immer als überlappend, `swap(mut a[i], mut a[j])` ist deshalb ein Fehler. Grenzverletzungen werfen eine Exception. Herausnehmen geht nur über `mut`-Methoden wie `pop()` und `remove(i)`, die `own T` liefern.
 
 **Exceptions.** Beim Unwinding werden Sperren freigegeben und die Variablen jedes verlassenen Blocks freigegeben wie am normalen Blockende; Drop-Flags (`⊥`) verhindern doppelte Freigaben. Verlässt eine Exception einen Destruktor, endet das Programm (V-11).
 
 **Threads.** An einen anderen Thread geht nur ein `own`-Wert, dessen Besitzbaum keine `shared`- oder `weak`-Felder enthält, weil der Referenzzähler nicht atomar ist. Strings sind davon ausgenommen und brauchen einen atomaren Zähler.
 
-**Primitive Borrows.** Parameter wie `i32& n` und von Lambdas veränderbar erfasste primitive Variablen funktionieren wie Borrows auf Objektorte; das Kalkül lässt sie zur Vereinfachung weg. Für die Sicherheit ändert sich nichts.
+**Primitive Borrows.** Parameter wie `mut i32 n` und von Lambdas veränderbar erfasste primitive Variablen funktionieren wie Borrows auf Objektorte; das Kalkül lässt sie zur Vereinfachung weg. Für die Sicherheit ändert sich nichts.
 
 **Strings** verhalten sich im Kalkül wie `int`: unveränderlich, kopierbar, ohne Borrows.
 
 ## 8. Grenzen und mögliche Erweiterungen
 
-- **Borrows zurückgeben (V-4).** Umgesetzt in R-5.23 und R-5.24, aber nur für Borrows, die von `this` ausgehen. Borrows auf Parameter zurückzugeben (wie `T& max(T& a, T& b)`) würde Lifetimes oder eine Regel verlangen, welche Argumente der Loan an der Aufrufstelle umfasst; das ist nicht Teil von Version 1.
+- **Borrows zurückgeben (V-4).** Umgesetzt in R-5.23 und R-5.24, aber nur für Borrows, die von `this` ausgehen. Borrows auf Parameter zurückzugeben (wie `ref mut T max(mut T a, mut T b)`) würde Lifetimes oder eine Regel verlangen, welche Argumente der Loan an der Aufrufstelle umfasst; das ist nicht Teil von Version 1.
 - **Lebensdauer benannter Borrows.** Ein `ref`-Borrow und ein lokaler Slice gelten bis zum Blockende, nicht nur bis zur letzten Verwendung. `ref Foo f = list[0]; f.run(); list.push(x);` ist deshalb ein Fehler; man setzt einen eigenen Block. Eine Regel „bis zur letzten Verwendung“ (wie Rusts Non-Lexical Lifetimes) wäre bequemer, verlangt aber eine Datenflussanalyse und eine Erweiterung des Kalküls.
 - **Feinere Sperren.** Ein `shared`-Objekt wird als Ganzes gesperrt; zwei Borrows auf verschiedene Felder desselben `shared`-Objekts sind deshalb ein Fehler.
-- **Rückrufe auf shared-Objekte.** Ruft eine `&`-Methode eines `shared`-Objekts über einen zweiten Verweis eine Methode desselben Objekts auf, wirft das `BorrowError`. Das ist die bekannte Schwäche dieses Ansatzes (wie `RefCell` in Rust) und der Preis für V-1.
+- **Rückrufe auf shared-Objekte.** Ruft eine `mut`-Methode eines `shared`-Objekts über einen zweiten Verweis eine Methode desselben Objekts auf, wirft das `BorrowError`. Das ist die bekannte Schwäche dieses Ansatzes (wie `RefCell` in Rust) und der Preis für V-1.
 - **Lecks durch Zyklen** werden nicht verhindert; `weak` ist das Mittel dagegen.
 
 ## 9. Konformitätstests

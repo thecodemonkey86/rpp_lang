@@ -122,7 +122,7 @@ public:
             for (i64 i = 0; i < t.modes.length; i++) {
                 string p = show(t.args[i]);
                 if (t.modes[i] == Mode::Mut) {
-                    p = p + "&";
+                    p = "mut " + p;
                 } else if (t.modes[i] == Mode::Own) {
                     p = "own " + p;
                 }
@@ -149,17 +149,17 @@ public:
     }
 
     // Löst einen Typnamen (Knoten "typename") auf, wie ein Typ ohne Besitzform und Suffixe
-    shared Ty resolveTypeName(i64 file, i64[] scope, Node tn, i32 line, i32 col) & {
+    shared Ty resolveTypeName(i64 file, i64[] scope, Node tn, i32 line, i32 col) mut {
         return resolveNamed(file, scope, tn, line, col);
     }
 
     // Verwirft noch nicht geprüfte Verwendungen (nach einer Probeprüfung)
-    void dropPending() & {
+    void dropPending() mut {
         pending = [];
     }
 
     // Meldung mit weiteren begründenden Regeln oder als Warnung (R-8.1)
-    void report(i64 file, i32 line, i32 col, string rule, string[] also, string message, bool warning) & {
+    void report(i64 file, i32 line, i32 col, string rule, string[] also, string message, bool warning) mut {
         Diag d = new Diag(paths[file], line, col, rule, message);
         for (string a : also) {
             if (a != rule && !hasString(d.also, a)) {
@@ -171,7 +171,7 @@ public:
     }
 
     // Kürzt die Meldungen auf n (nach einer Probeprüfung)
-    void truncateDiags(i64 n) & {
+    void truncateDiags(i64 n) mut {
         while (diags.length > n) {
             discard diags.pop();
         }
@@ -341,12 +341,12 @@ public:
         return true;
     }
 
-    static void collectNamed(Ty t, i64[]& out) {
+    static void collectNamed(Ty t, mut i64[] out) {
         if (t.kind == TK::Named) {
             out.push(t.id);
         }
         for (shared Ty a : t.args) {
-            collectNamed(a, &out);
+            collectNamed(a, mut out);
         }
     }
 
@@ -362,7 +362,7 @@ public:
     }
 
 private:
-    void error(i64 file, i32 line, i32 col, string rule, string message) & {
+    void error(i64 file, i32 line, i32 col, string rule, string message) mut {
         diags.push(new Diag(paths[file], line, col, rule, message));
     }
 
@@ -370,13 +370,13 @@ private:
         return new Diag(paths[file], line, col, rule, message);
     }
 
-    void flush(Diag[] found) & {
+    void flush(Diag[] found) mut {
         for (Diag x : found) {
             diags.push(new Diag(x.file, x.line, x.col, x.rule, x.message));
         }
     }
 
-    i64 newTParam(string name) & {
+    i64 newTParam(string name) mut {
         tparams.push(new TParam(name));
         return tparams.length - 1;
     }
@@ -384,7 +384,7 @@ private:
     // ------------------------------------------------------------ Phase 1
 
     // alle Typdeklarationen mit Namen erfassen
-    void collect(Workspace ws) & {
+    void collect(Workspace ws) mut {
         for (i64 f = 0; f < ws.files.length; f++) {
             string pkg = ws.files[f].packageName();
             i64 project = ws.files[f].project;
@@ -437,7 +437,7 @@ private:
     }
 
     // Sucht einen einfachen Typnamen in einer Datei (R-11.8): eigenes Paket, using, rpp.core
-    i64 lookupSimple(i64 file, string name, i32 line, i32 col) & {
+    i64 lookupSimple(i64 file, string name, i32 line, i32 col) mut {
         i64 project = fileInfos[file].project;
         string pkg = fileInfos[file].pkg;
         for (i64 i = 0; i < defs.length; i++) {
@@ -478,7 +478,7 @@ private:
 public:
     // Löst einen Typ aus dem Syntaxbaum auf (Knoten "type"). Fehler werden gemeldet;
     // das Ergebnis ist dann der Fehlertyp.
-    shared Ty resolveType(i64 file, i64[] scope, Node t) & {
+    shared Ty resolveType(i64 file, i64[] scope, Node t) mut {
         ref Node b = t.kids[0];
         shared Ty ty = Ty::error();
         if (b.kind == "prim") {
@@ -518,18 +518,18 @@ public:
     }
 
 private:
-    shared Ty resolveTypeArg(i64 file, i64[] scope, Node a, i32 line, i32 col) & {
+    shared Ty resolveTypeArg(i64 file, i64[] scope, Node a, i32 line, i32 col) mut {
         if (a.kind == "void") {
             error(file, line, col, "R-4.45", "void ist hier kein Typargument");
             return Ty::error();
         }
         if (a.text == "mut") {
-            error(file, a.kids[0].line, a.kids[0].col, "R-10.13", "& ist nur an Parametern von Func erlaubt");
+            error(file, a.kids[0].line, a.kids[0].col, "R-10.13", "mut ist nur an Parametern von Func erlaubt");
         }
         return resolveType(file, scope, a.kids[0]);
     }
 
-    shared Ty resolveNamed(i64 file, i64[] scope, Node tn, i32 line, i32 col) & {
+    shared Ty resolveNamed(i64 file, i64[] scope, Node tn, i32 line, i32 col) mut {
         ref Node q = tn.kids[0];
         ref Node targs = tn.kids[1];
         ref Node first = q.kids[0];
@@ -594,7 +594,7 @@ private:
     }
 
     // Func<P1, …, Pn, R> (R-4.37, R-10.13)
-    shared Ty resolveFunc(i64 file, i64[] scope, Node targs, i32 line, i32 col) & {
+    shared Ty resolveFunc(i64 file, i64[] scope, Node targs, i32 line, i32 col) mut {
         i64 n = targs.kids.length;
         shared Ty[] ps = [];
         Mode[] modes = [];
@@ -612,7 +612,7 @@ private:
             shared Ty t = resolveType(file, scope, ty);
             if (last) {
                 if (a.text == "mut") {
-                    error(file, ty.line, ty.col, "R-10.13", "& ist am Rückgabetyp von Func nicht erlaubt");
+                    error(file, ty.line, ty.col, "R-10.13", "mut ist am Rückgabetyp von Func nicht erlaubt");
                     return Ty::error();
                 }
                 return Ty::func(ps, modes, t);
@@ -632,7 +632,7 @@ private:
     // ------------------------------------------------------------ Phase 2
 
     // Constraints der Typ-Parameter (Knoten "tparams") an die Nummern ids
-    void constraints(i64 file, i64[] scope, Node tps, i64[] ids) & {
+    void constraints(i64 file, i64[] scope, Node tps, i64[] ids) mut {
         for (i64 i = 0; i < tps.kids.length; i++) {
             ref Node tp = tps.kids[i];
             i64 id = ids[i];
@@ -649,7 +649,7 @@ private:
     }
 
     // Basisklasse, Importe und Constraints
-    void resolveHeaders(Workspace ws) & {
+    void resolveHeaders(Workspace ws) mut {
         for (i64 def = 0; def < defs.length; def++) {
             i64 file = defs[def].file;
             i64[] scope = [];
@@ -744,7 +744,7 @@ private:
         }
     }
 
-    PInfo[] params(i64 file, i64[] scope, Node ps) & {
+    PInfo[] params(i64 file, i64[] scope, Node ps) mut {
         PInfo[] out = [];
         for (Node p : ps.kids) {
             ref Node t = p.kids[0];
@@ -760,7 +760,7 @@ private:
         return out;
     }
 
-    Ret resolveRet(i64 file, i64[] scope, Node r) & {
+    Ret resolveRet(i64 file, i64[] scope, Node r) mut {
         if (r.kind == "void") {
             return new Ret(RetKind::Void, Ty::simple(TK::Void), false);
         }
@@ -771,7 +771,7 @@ private:
     }
 
     // Felder, Methoden, Konstruktoren und Varianten
-    void resolveMembers(Workspace ws) & {
+    void resolveMembers(Workspace ws) mut {
         for (i64 def = 0; def < defs.length; def++) {
             i64 file = defs[def].file;
             i64[] classScope = [];
@@ -862,7 +862,7 @@ private:
         }
     }
 
-    void enumVariants(Workspace ws, i64 def, i64 file, Node variants) & {
+    void enumVariants(Workspace ws, i64 def, i64 file, Node variants) mut {
         i64 next = 0;
         i64[] seenVals = [];
         string[] seenNames = [];
@@ -1065,7 +1065,7 @@ public:
     }
 
     // Prüft die Constraints aller seit dem letzten Aufruf aufgelösten generischen Typen
-    void checkPending() & {
+    void checkPending() mut {
         Diag[] found = [];
         for (Pending p : pending) {
             Subst map = substMap(p.def, p.args);
@@ -1094,7 +1094,7 @@ public:
 private:
     // ------------------------------------------------------------ Dateien
 
-    void checkFiles(Workspace ws) & {
+    void checkFiles(Workspace ws) mut {
         i64[] mainProj = [];
         i64[] mainFile = [];
         i32[] mainLine = [];
@@ -1243,7 +1243,7 @@ public:
     }
 
 private:
-    void checkDefs(Workspace ws) & {
+    void checkDefs(Workspace ws) mut {
         for (i64 def = 0; def < defs.length; def++) {
             if (ws.projects[defs[def].project].isStd) {
                 continue;
@@ -1620,7 +1620,7 @@ private:
         string[] reported = [];
         for (i64 k = 0; k < uses.length; k++) {
             i64[] named = [];
-            collectNamed(uses[k], &named);
+            collectNamed(uses[k], mut named);
             for (i64 n : named) {
                 string key = lines[k].toString() + ":" + cols[k].toString();
                 if (defs[n].project == d.project && !defs[n].exported && !hasString(reported, key)) {

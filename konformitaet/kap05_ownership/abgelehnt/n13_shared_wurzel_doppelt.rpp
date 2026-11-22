@@ -8,7 +8,7 @@ public:
     i32 value;
     constructor(i32 v) { this.value = v; }
     void run() { }
-    void bump() & { this.value = this.value + 1; }
+    void bump() mut { this.value = this.value + 1; }
 }
 
 class Pair {
@@ -20,9 +20,9 @@ public:
 
 class T {
 public:
-    void swapValues(Foo& a, Foo& b) { }
+    void swapValues(mut Foo a, mut Foo b) { }
     void m() {
         shared Pair s = new Pair(new Foo(1), new Foo(2));
-        swapValues(&s.left, &s.right); // FEHLER
+        swapValues(mut s.left, mut s.right); // FEHLER
     }
 }

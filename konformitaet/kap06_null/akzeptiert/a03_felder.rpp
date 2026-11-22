@@ -13,12 +13,12 @@ public:
     constructor(string n) { this.name = n; }
     bool ok() { return true; }
     void run() { }
-    void touch() & { }
+    void touch() mut { }
 }
 
 class T {
 public:
-    void holen(Node& n, i64 i) {
+    void holen(mut Node n, i64 i) {
         // Der Borrow c gilt bis zum Blockende (Kapitel 5, R-5.17); take braucht das Feld danach frei.
         {
             ref Node? c = n.child;
@@ -39,6 +39,6 @@ public:
         if (e != null) {
             e.run();
         }
-        Node? weg = take(&n.child);
+        Node? weg = take(mut n.child);
     }
 }

@@ -1,2 +1,0 @@
-// Name: & vor dem Typargument
-class T { void m() { Func<&Foo, void> f = g; } }

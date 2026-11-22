@@ -6,12 +6,12 @@ package konformitaet.kap08;
 class Stack {
 public:
     i32[] items = [];
-    i32 pop() & { return items.pop(); }
+    i32 pop() mut { return items.pop(); }
 }
 
 class T {
 public:
-    void m(Stack& s) {
+    void m(mut Stack s) {
         s.pop(); // FEHLER
     }
 }

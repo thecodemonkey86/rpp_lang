@@ -41,12 +41,12 @@ Status-Kürzel: **[E]** ausdrücklich entschieden, **[A]** vorgeschlagen und ohn
 - [E] Parameter ohne Markierung sind geliehen (Borrow) und nur lesbar. Objekte werden nie implizit kopiert; Kopieren ist explizit.
 - [E] Borrows dürfen nicht in Feldern gespeichert werden. Es gibt deshalb keine Lifetime-Annotationen.
 - [A] Folge daraus: Felder und lokale Variablen ohne Markierung besitzen ihr Objekt eindeutig. `own` steht nur an Parametern und Lambdas; `shared` und `weak` können überall stehen.
-- [E] Veränderbar geliehen wird mit `&` als Postfix am Parametertyp markiert: `void rename(Foo& f)`.
-- [A] An der Aufrufstelle steht ebenfalls `&`: `rename(&foo)`.
+- [E] Veränderbar geliehen wird mit dem Schlüsselwort `mut` vor dem Parametertyp markiert: `void rename(mut Foo f)` (geändert am 22.11.2026, vorher `Foo& f`).
+- [A] An der Aufrufstelle steht ebenfalls `mut`: `rename(mut foo)`.
 - [A] Nur geliehene Parameter werden markiert. Lokale Variablen und Felder sind ohne Markierung veränderbar.
-- [E] Lokale Variablen, die nur leihen, werden mit `ref` deklariert: `ref Foo f = list[0];`, veränderbar `ref Foo& g = &x;` (siehe Abschnitt 17).
-- [A] Methoden, die `this` verändern, werden mit `&` nach der Parameterliste markiert: `void setName(string n) & { ... }`. Unmarkierte Methoden lesen nur.
-- [A] Exklusivität: Solange ein `&`-Borrow besteht, ist kein anderer Zugriff auf das Objekt erlaubt.
+- [E] Lokale Variablen, die nur leihen, werden mit `ref` deklariert: `ref Foo f = list[0];`, veränderbar `ref mut Foo g = mut x;` (siehe Abschnitt 17).
+- [A] Methoden, die `this` verändern, werden mit `mut` nach der Parameterliste markiert: `void setName(string n) mut { ... }`. Unmarkierte Methoden lesen nur.
+- [A] Exklusivität: Solange ein `mut`-Borrow besteht, ist kein anderer Zugriff auf das Objekt erlaubt.
 
 ## 4. Null-Sicherheit
 
@@ -83,7 +83,7 @@ Status-Kürzel: **[E]** ausdrücklich entschieden, **[A]** vorgeschlagen und ohn
 - [E] Festes Array: `i32[16]` oder `i32[N]` mit einer `static const`-Konstante `N`. Die Größe steht zur Compilezeit fest; die Elemente liegen direkt in der Variable oder im Objekt. Kein `push` oder `pop`.
 - [E] Vektor: `T[]` wächst dynamisch mit Methoden wie `push`.
 - [E] Array-Literale `[1, 2, 3]` werden zu dem Typ, den der Kontext verlangt; bei festen Arrays muss die Länge passen.
-- [E] Slice: Bibliothekstyp `Slice<T>`, eine geliehene Sicht auf einen Ausschnitt eines festen Arrays oder Vektors. Veränderbar als Parameter `Slice<T>& s`.
+- [E] Slice: Bibliothekstyp `Slice<T>`, eine geliehene Sicht auf einen Ausschnitt eines festen Arrays oder Vektors. Veränderbar als Parameter `mut Slice<T> s`.
 - [E] Slices sind Borrows: erlaubt als Parameter und lokale Variablen, nie als Felder. Deshalb braucht es keine Lifetimes.
 - [E] Solange ein Slice auf einen Vektor besteht, kann der Vektor nicht wachsen oder schrumpfen (Exklusivitätsregel).
 - [E] Bereiche mit `..`, Ende exklusiv: `a[1..3]`, `a[..3]`, `a[1..]`, `a[..]`. Grenzen außerhalb des Arrays werfen eine Exception.
@@ -92,7 +92,7 @@ Status-Kürzel: **[E]** ausdrücklich entschieden, **[A]** vorgeschlagen und ohn
 - [A] Einheitlicher Elementtyp; ein leeres `[]` bekommt seinen Typ aus dem Kontext.
 - [A] Zugriff außerhalb der Grenzen wirft eine Exception; es gibt keine Lücken.
 - [A] Ein Array besitzt seine Elemente. `arr[i]` liefert bei Objekten einen Borrow; Herausnehmen aus einem Vektor nur über `pop()` / `remove(i)` oder per Kopie.
-- [A] `push` und andere verändernde Methoden brauchen `&`-Zugriff.
+- [A] `push` und andere verändernde Methoden brauchen `mut`-Zugriff.
 
 ## 8. Klassen und Vererbung
 
@@ -141,8 +141,8 @@ Status-Kürzel: **[E]** ausdrücklich entschieden, **[A]** vorgeschlagen und ohn
 - [E] Lambdas in C#-Schreibweise: `(i32 a) => ausdruck` oder `(i32 a) => { ... }`. Keine Capture-Liste.
 - [E] Normales Lambda: erfasst Variablen automatisch per Borrow (lesend oder verändernd, je nach Rumpf) und darf nur als Argument übergeben, nicht gespeichert werden.
 - [E] `own`-Lambda (`own (i32 x) => x + offset`): erfasst per Wert. Primitive Werte werden kopiert, Strings und `shared`-Objekte geteilt, `own`-Objekte hineinverschoben. Nur `own`-Lambdas dürfen zurückgegeben oder gespeichert werden.
-- [E] Funktionstypen: `Func<Param1, ..., Rückgabetyp>`. Parameter tragen dieselben Markierungen wie Methodenparameter: `Func<Foo&, void>` leiht veränderbar, `Func<own Foo, void>` übernimmt (Abschnitt 23).
-- [E] Schleife über Arrays: `for (string c : colors) { ... }`; das Element ist geliehen. Verändernd: `for (Foo& f : &list) { ... }`.
+- [E] Funktionstypen: `Func<Param1, ..., Rückgabetyp>`. Parameter tragen dieselben Markierungen wie Methodenparameter: `Func<mut Foo, void>` leiht veränderbar, `Func<own Foo, void>` übernimmt (Abschnitt 23).
+- [E] Schleife über Arrays: `for (string c : colors) { ... }`; das Element ist geliehen. Verändernd: `for (mut Foo f : mut list) { ... }`.
 - [E] Funktionstypen ohne Rückgabewert: `Func<i32, void>`; ohne Parameter: `Func<void>` bzw. `Func<string>`. `void` ist als Typargument nur an letzter Stelle von `Func` erlaubt.
 
 ## 12. Threads und C-Anbindung
@@ -193,9 +193,9 @@ Entschieden am 21.11.2026. Punkte mit [A] stammen aus dem Vorschlag und wurden o
 - [E] Pro Deklaration genau eine Variable; `i32 a, b;` gibt es nicht. Mehrere Variablen auf einmal werden nur per Tupel-Deklaration eingeführt: `(i32 a, string b) = f();`
 - [E] Im `for`-Kopf ist auch eine Tupel-Deklaration erlaubt: `for ((i32 i, i32 j) = (0, n); i < j; i++, j--) { ... }`
 - [E] Lokale `const`-Variablen dürfen zur Laufzeit berechnet werden, aber nicht neu zugewiesen werden.
-- [E] `const` gilt tief: Auf einem `const`-Objekt dürfen keine `&`-Methoden aufgerufen werden.
+- [E] `const` gilt tief: Auf einem `const`-Objekt dürfen keine `mut`-Methoden aufgerufen werden.
 - [E] `const`-Felder werden nur im Konstruktor gesetzt. `static const` verlangt einen Wert, der zur Compilezeit feststeht.
-- [E] Parameter tragen kein `const`; ohne `&` sind sie ohnehin nur lesbar.
+- [E] Parameter tragen kein `const`; ohne `mut` sind sie ohnehin nur lesbar.
 - [E] Sichere Initialisierung: Lokale Variablen müssen vor dem ersten Lesen auf jedem Weg zugewiesen sein; es gibt keine Standardwerte. Nullbare Felder ohne Initialisierer sind `null`; alle anderen setzt der Konstruktor.
 
 ## 15. Eingebaute Funktionen und Standardbibliothek
@@ -226,8 +226,8 @@ Beim Ausarbeiten von Kapitel 5 („R++ Ownership-Kernkalkül“) sind folgende P
 
 - [E] V-1: `shared`-Objekte sind veränderbar. Die Exklusivität wird für sie zur Laufzeit geprüft; ein Konflikt wirft `BorrowError`, in beiden Modi.
 - [E] V-2: Zugriffe gehen nie direkt durch ein `shared`- oder `weak`-Feld; der Compiler legt dafür eine lokale Hilfsvariable an. Im Quelltext schreibt man weiterhin `this.next.name()`.
-- [E] V-3: Aus Feldern wird nicht herausbewegt. Dafür gibt es zwei eingebaute Funktionen: `replace(&x.f, neu)` setzt den neuen Wert und liefert den alten; `take(&x.f)` gibt es nur für nullbare Felder, setzt das Feld auf `null` und liefert den alten Wert.
-- [E] V-4 (geändert am 21.11.2026): Methoden dürfen Borrows zurückgeben, die von `this` ausgehen (`ref V get(K k)`, veränderbar `ref V& at(K k) &` mit `return &…;`). An der Aufrufstelle gilt der Borrow als Loan auf den Empfänger bis zum Ende der Anweisung oder, mit `ref` gebunden, bis zum Blockende. Borrows auf Parameter zurückzugeben bleibt verboten. Kernkalkül R-5.23, R-5.24; im FR++-Modell geprüft.
+- [E] V-3: Aus Feldern wird nicht herausbewegt. Dafür gibt es zwei eingebaute Funktionen: `replace(mut x.f, neu)` setzt den neuen Wert und liefert den alten; `take(mut x.f)` gibt es nur für nullbare Felder, setzt das Feld auf `null` und liefert den alten Wert.
+- [E] V-4 (geändert am 21.11.2026): Methoden dürfen Borrows zurückgeben, die von `this` ausgehen (`ref V get(K k)`, veränderbar `ref mut V at(K k) mut` mit `return mut …;`). An der Aufrufstelle gilt der Borrow als Loan auf den Empfänger bis zum Ende der Anweisung oder, mit `ref` gebunden, bis zum Blockende. Borrows auf Parameter zurückzugeben bleibt verboten. Kernkalkül R-5.23, R-5.24; im FR++-Modell geprüft.
 - [E] V-5: Ein Move in nur einem `if`-Zweig ist erlaubt; danach gilt die Variable als verschoben, freigegeben wird per Drop-Flag.
 - [E] V-6: `weak` entsteht nur aus `shared`; Zugriff über `w.lock()` mit Ergebnis `shared T?`.
 - [E] V-7: Freigabereihenfolge: lokale Variablen rückwärts; bei Objekten erst Destruktor, dann Felder rückwärts, Basisklasse zuletzt.
@@ -235,7 +235,7 @@ Beim Ausarbeiten von Kapitel 5 („R++ Ownership-Kernkalkül“) sind folgende P
 - [E] V-9: `shared`-Werte werden bei Zuweisung und Übergabe implizit kopiert (Zähler + 1). Aus `own` wird `shared` nur bei ausdrücklichem `shared`-Ziel (Variable, Feld oder Parameter); aus `shared` wird nie `own`, dafür gibt es `copy(s)`.
 - [E] V-10: Im Konstruktor müssen alle Felder gesetzt sein, bevor `this` anders als zum Setzen von Feldern verwendet wird.
 - [E] V-11: Eine Exception, die einen Destruktor verlässt, beendet das Programm.
-- [E] Benannte lokale Borrows (20.11.2026): `ref Foo f = list[0];` leiht lesend, `ref Foo& g = &x.child;` veränderbar; das `&` steht wie bei Parametern und Aufrufen an Typ und Initialisierer. Der Borrow gilt bis zum Ende des umgebenden Blocks, wie bei lokalen Slices. Der Initialisierer muss ein Ort sein (Variable, Feld- oder Indexzugriff). `ref` gibt es nur bei lokalen Variablen, nicht an Feldern, Parametern, im `for`-Kopf, mit Besitzform oder mit `var`. `ref` ist ein reserviertes Wort.
+- [E] Benannte lokale Borrows (20.11.2026): `ref Foo f = list[0];` leiht lesend, `ref mut Foo g = mut x.child;` veränderbar; das `mut` steht wie bei Parametern und Aufrufen vor Typ und Initialisierer. Der Borrow gilt bis zum Ende des umgebenden Blocks, wie bei lokalen Slices. Der Initialisierer muss ein Ort sein (Variable, Feld- oder Indexzugriff). `ref` gibt es nur bei lokalen Variablen, nicht an Feldern, Parametern, im `for`-Kopf, mit Besitzform oder mit `var`. `ref` ist ein reserviertes Wort.
 
 ## 18. Festlegungen aus Kapitel 4 (Typen)
 
@@ -279,7 +279,7 @@ Entschieden am 21.11.2026; Einzelheiten in „R++ Klassen und Generics“.
 - [E] `copy` ist virtuell: `copy(a)` kopiert nach der tatsächlichen Klasse. Hat eine Klasse `copy`, muss jede Unterklasse ein eigenes `copy` haben; der Basisanteil wird mit dem `copy` der Basisklasse kopiert.
 - [E] Member vor dem ersten Sichtbarkeits-Label sind `private`.
 - [E] Hat eine Klasse keinen Konstruktor, gibt es einen parameterlosen, wenn jedes Feld einen Initialisierer hat oder nullbar ist.
-- [E] `override` verlangt exakt gleiche Parametertypen, Besitzformen, `&`-Modus und Rückgabetyp; die Sichtbarkeit darf nicht enger werden. Überschriebene Methoden bleiben virtuell; kein `sealed` in Version 1.
+- [E] `override` verlangt exakt gleiche Parametertypen, Besitzformen, `mut`-Modus und Rückgabetyp; die Sichtbarkeit darf nicht enger werden. Überschriebene Methoden bleiben virtuell; kein `sealed` in Version 1.
 - [E] Mixins dürfen andere Mixins importieren. Sie haben keine statischen Methoden und keine Konstanten; alle Methoden sind `public`.
 - [E] Generische Erzeugung über den Constraint `new()` wie in C#: `class Pool<T : new()>` erlaubt `new T()`; das Typargument braucht einen parameterlosen Konstruktor.
 - [E] Virtuelle Aufrufe sind im Konstruktor erst nach vollständiger Initialisierung erlaubt und dann dynamisch; im Destruktor ebenfalls dynamisch.
@@ -325,7 +325,7 @@ Entschieden am 21.11.2026; Einzelheiten in „R++ Exceptions“.
 Entschieden am 21.11.2026; Einzelheiten in „R++ Lambdas“.
 
 - [E] Erfasste Werte eines `own`-Lambdas sind unveränderlich; ein Aufruf verändert das Lambda nie. Veränderlicher Zustand liegt in einem erfassten `shared`-Objekt, das über den Verweis veränderbar bleibt (wie V-8).
-- [E] In `Func` tragen Parameter die Markierungen von Methodenparametern: `Func<Foo, …>` lesend, `Func<Foo&, …>` veränderbar, `Func<own Foo, …>` übernommen. `&` ist nur dort erlaubt.
+- [E] In `Func` tragen Parameter die Markierungen von Methodenparametern: `Func<Foo, …>` lesend, `Func<mut Foo, …>` veränderbar, `Func<own Foo, …>` übernommen. `mut` ist nur dort erlaubt.
 - [E] Ein `own`-Lambda darf `this` nicht verwenden; man holt Werte vorher in lokale Variablen.
 - [E] Ein `own`-Lambda ohne erwarteten Typ bekommt seinen `Func`-Typ aus Parametern und Rumpf: `var f = own (i32 x) => x + 1;` ist `Func<i32, i32>`.
 - [E] Ein `own`-Lambda kann keine Borrow-Variable eines Objekttyps erfassen; man schreibt vorher `copy(x)`.
@@ -414,3 +414,4 @@ Entschieden am 21.11.2026; Einzelheiten in „R++ Implementierungsplan“.
 - [E] V-13.8 (Kapitel 13, angenommen am 22.11.2026): `File::exists(path)` und `Path::absolute(p)` in `rpp.io`.
 - [E] M6: Die Deklarationsphase ist nach R++ übertragen; Typen sind dort unveränderliche, geteilte Werte (`shared Ty`).
 - [E] M6: Die Prüfung der Rümpfe ist nach R++ übertragen; der Prüfer besitzt das Programm und leiht die Syntaxbäume. Die Angaben für die Ausführung folgen mit dem Codegenerator.
+- [E] Schlüsselwort `mut` (angenommen am 22.11.2026): Veränderbarkeit wird wie in Rust mit `mut` markiert statt mit `&`, das zugleich bitweises Und und Verbindung von Constraints war. `mut` steht vor dem Typ (`mut Foo f`, `Func<mut Foo, void>`, `ref mut Foo g`, `ref mut V at(K k)`), vor dem Ausdruck (`rename(mut foo)`, `= mut x`, `return mut …;`, `for (mut Foo f : mut list)`) und nach der Parameterliste verändernder Methoden (`void clear() mut`). `mut` ist ein reserviertes Wort. `&` bedeutet nur noch bitweises Und und verbindet Constraints (`T : A & B`).

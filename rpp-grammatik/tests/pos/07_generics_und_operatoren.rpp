@@ -10,7 +10,7 @@ class List<T : Printable> {
 private:
     T[] items;
 public:
-    void add(own T item) & {
+    void add(own T item) mut {
         items.push(item);
     }
 }

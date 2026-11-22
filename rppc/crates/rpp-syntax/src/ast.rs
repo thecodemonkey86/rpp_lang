@@ -157,7 +157,7 @@ pub struct MethodDecl {
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
     pub params: Vec<Param>,
-    /// `&` nach der Parameterliste: veränderbarer Borrow auf `this`
+    /// `mut` nach der Parameterliste: veränderbarer Borrow auf `this`
     pub mut_this: bool,
     pub body: Option<Block>,
 }
@@ -171,7 +171,7 @@ pub struct ConstructorDecl {
     pub span: Span,
 }
 
-/// `type '&'? name`
+/// `MUT? type name`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub ty: Type,
@@ -214,7 +214,7 @@ pub struct TypeName {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeArg {
-    /// Typ, mit `&` bei veränderbaren Parametern von `Func`
+    /// Typ, mit `mut` bei veränderbaren Parametern von `Func`
     Type { ty: Type, mutable: bool },
     Void,
 }
@@ -254,7 +254,7 @@ pub struct Type {
 pub enum ReturnType {
     Void,
     Type(Type),
-    /// `ref T` oder `ref T&`: zurückgegebener Borrow (R-5.23)
+    /// `ref T` oder `ref mut T`: zurückgegebener Borrow (R-5.23)
     Ref { ty: Type, mutable: bool },
 }
 
@@ -346,7 +346,7 @@ pub struct CatchClause {
 pub enum StmtKind {
     Block(Block),
     LocalVar(LocalVarDecl),
-    /// `ref T x = e;` oder `ref T& x = &e;`
+    /// `ref T x = e;` oder `ref mut T x = mut e;`
     Ref { ty: Type, mutable: bool, name: Ident, init: Expr },
     Tuple(TupleDecl),
     Expr(ExprStmt),
@@ -474,7 +474,7 @@ pub struct StaticRef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Arg {
-    /// `&e`: veränderbarer Borrow
+    /// `mut e`: veränderbarer Borrow
     pub borrow_mut: bool,
     pub expr: Expr,
 }

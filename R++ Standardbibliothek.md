@@ -94,7 +94,7 @@ export mixin Iterable<T, C> {
 
 export mixin MutIterable<T, C> {
     import Iterable<T, C>;
-    ref T& atMut(C cursor) &;
+    ref mut T atMut(C cursor) mut;
 }
 ```
 
@@ -110,7 +110,7 @@ export mixin MutIterable<T, C> {
 }
 ```
 
-`for (T& x : &c) S` verlangt `MutIterable<T, C>`, leiht `c` veränderbar und bindet `ref T& x = &k.atMut(cur);`. `break`, `continue` und `return` in `S` funktionieren wie in jeder Schleife. Während der Schleife kann `c` nicht verändert werden (Kapitel 5, Satz 5.2).
+`for (mut T x : mut c) S` verlangt `MutIterable<T, C>`, leiht `c` veränderbar und bindet `ref mut T x = mut k.atMut(cur);`. `break`, `continue` und `return` in `S` funktionieren wie in jeder Schleife. Während der Schleife kann `c` nicht verändert werden (Kapitel 5, Satz 5.2).
 
 ## 3. Eingebaute Methoden der primitiven Typen und von string
 
@@ -153,10 +153,10 @@ export class StringBuilder {
 public:
     constructor();
     nodiscard i64 length();                       // Anzahl Zeichen bisher
-    void append(string s) &;
-    void appendChar(char c) &;
-    void appendLine(string s) &;                  // mit Zeilenumbruch
-    void clear() &;
+    void append(string s) mut;
+    void appendChar(char c) mut;
+    void appendLine(string s) mut;                // mit Zeilenumbruch
+    void clear() mut;
     nodiscard string toString();
 }
 ```
@@ -179,13 +179,13 @@ Vektoren (`T[]`) sind eingebaut. Ihre Methoden und die Sammlungen `Map` und `Set
 
 | Methode | Bedeutung |
 |---|---|
-| `push(own T x) &`, `insert(i64 i, own T x) &` | anfügen, einfügen |
-| `pop() &`, `remove(i64 i) &` | `own T`, entfernt das letzte bzw. das `i`-te Element |
-| `clear() &` | alle Elemente freigeben |
+| `push(own T x) mut`, `insert(i64 i, own T x) mut` | anfügen, einfügen |
+| `pop() mut`, `remove(i64 i) mut` | `own T`, entfernt das letzte bzw. das `i`-te Element |
+| `clear() mut` | alle Elemente freigeben |
 | `ref T? first()`, `ref T? last()` | Borrow auf das erste bzw. letzte Element, `null` bei leerem Vektor |
 | `contains(T x)`, `indexOf(T x)` | verlangen `T : Equatable<T>`; `indexOf` liefert `i64?` |
-| `sort() &` | aufsteigend, stabil; verlangt `T : Comparable<T>` |
-| `sortBy(Func<T, T, i32> cmp) &` | stabil nach `cmp` |
+| `sort() mut` | aufsteigend, stabil; verlangt `T : Comparable<T>` |
+| `sortBy(Func<T, T, i32> cmp) mut` | stabil nach `cmp` |
 
 `pop` und `remove` auf einem leeren Vektor bzw. mit ungültigem Index sind Programmfehler.
 
@@ -199,10 +199,10 @@ public:
     nodiscard i64 length();
     nodiscard bool contains(K key);
     ref V? get(K key);                        // null, wenn key fehlt (V-13.5)
-    ref V& at(K key) &;                       // Programmfehler, wenn key fehlt
-    void put(own K key, own V value) &;       // ersetzt einen vorhandenen Wert (der alte wird freigegeben)
-    V? remove(K key) &;                       // entfernt und liefert den Wert
-    void clear() &;
+    ref mut V at(K key) mut;                  // Programmfehler, wenn key fehlt
+    void put(own K key, own V value) mut;     // ersetzt einen vorhandenen Wert (der alte wird freigegeben)
+    V? remove(K key) mut;                     // entfernt und liefert den Wert
+    void clear() mut;
 }
 
 export class Entry<K, V> {
@@ -214,7 +214,7 @@ public:
 
 Einträge werden in Einfügereihenfolge durchlaufen (V-13.2); `put` mit einem vorhandenen Schlüssel behält die Position.
 
-**R-13.18 (Set).** `Set<T : Hashable & Equatable<T>>` mit `add(own T x) &`, `contains(T x)`, `remove(T x) &`, `clear() &`, `length()`; iterierbar in Einfügereihenfolge.
+**R-13.18 (Set).** `Set<T : Hashable & Equatable<T>>` mit `add(own T x) mut`, `contains(T x)`, `remove(T x) mut`, `clear() mut`, `length()`; iterierbar in Einfügereihenfolge.
 
 ## 7. rpp.io und rpp.env
 

@@ -16,7 +16,7 @@ Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschn
 
 ## 2. Lambdas
 
-**R-10.1 (Schreibweise).** Ein Lambda besteht aus einer Parameterliste mit Typen, `=>` und einem Rumpf: einem Ausdruck oder einem Block. Ein vorangestelltes `own` macht es zu einem `own`-Lambda. Parameter tragen dieselben Markierungen wie Methodenparameter: ohne Markierung lesend geliehen, `&` veränderbar geliehen, `own` übernommen. Eine Capture-Liste gibt es nicht.
+**R-10.1 (Schreibweise).** Ein Lambda besteht aus einer Parameterliste mit Typen, `=>` und einem Rumpf: einem Ausdruck oder einem Block. Ein vorangestelltes `own` macht es zu einem `own`-Lambda. Parameter tragen dieselben Markierungen wie Methodenparameter: ohne Markierung lesend geliehen, `mut` veränderbar geliehen, `own` übernommen. Eine Capture-Liste gibt es nicht.
 
 **R-10.2 (Ausdrucksebene).** Ein Lambda steht auf Ausdrucksebene; sein Rumpf reicht bis zum Ende des umgebenden Ausdrucks. Als Operand oder für einen direkten Aufruf wird es geklammert: `((i32 a) => a)(3)` (Gerüst, Abschnitt 3.1).
 
@@ -31,10 +31,10 @@ Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschn
 **R-10.6 (Was erfasst wird).** Ein Lambda erfasst jede lokale Variable und jeden Parameter der umgebenden Methode, die es im Rumpf verwendet, außerdem `this`, wenn es `this` oder Member ohne Objekt verwendet.
 
 **R-10.7 (Normales Lambda).** Ein normales Lambda erfasst per Borrow:
-- **veränderbar**, wenn der Rumpf der Variable etwas zuweist, sie veränderbar leiht (`&x`) oder eine `&`-Methode auf ihr aufruft, und dasselbe für ihre Felder;
+- **veränderbar**, wenn der Rumpf der Variable etwas zuweist, sie veränderbar leiht (`mut x`) oder eine `mut`-Methode auf ihr aufruft, und dasselbe für ihre Felder;
 - sonst **lesend**.
 
-Ein normales Lambda darf nur als Argument eines Aufrufs stehen oder geklammert direkt aufgerufen werden (`((i32 v) => v + 1)(3)`). Seine Borrows gelten für die Dauer dieses Aufrufs und gehen in die Loan-Prüfung des Aufrufs ein wie Borrow-Argumente (Kapitel 5, R-5.9 und R-5.10). `sort(&list, (Foo a, Foo b) => a.x < list.length)` ist deshalb ein Fehler, weil `list` zugleich veränderbar und lesend geliehen würde.
+Ein normales Lambda darf nur als Argument eines Aufrufs stehen oder geklammert direkt aufgerufen werden (`((i32 v) => v + 1)(3)`). Seine Borrows gelten für die Dauer dieses Aufrufs und gehen in die Loan-Prüfung des Aufrufs ein wie Borrow-Argumente (Kapitel 5, R-5.9 und R-5.10). `sort(mut list, (Foo a, Foo b) => a.x < list.length)` ist deshalb ein Fehler, weil `list` zugleich veränderbar und lesend geliehen würde.
 
 **R-10.8 (`own`-Lambda).** Ein `own`-Lambda erfasst per Wert, und zwar in dem Moment, in dem der Lambda-Ausdruck ausgewertet wird:
 - primitive Werte werden kopiert,
@@ -47,13 +47,13 @@ Spätere Änderungen an der Variable sieht das Lambda nicht.
 
 **R-10.10 (Kein this in `own`-Lambdas).** Ein `own`-Lambda darf `this` weder direkt noch indirekt (über Member ohne Objekt) verwenden, denn `this` ist ein Borrow. Man holt die benötigten Werte vorher in lokale Variablen.
 
-**R-10.11 (Unveränderlich).** Im Rumpf eines `own`-Lambdas sind die erfassten Werte unveränderlich: keine Zuweisung an eine erfasste Variable, und auf einem erfassten `own`-Objekt weder `&`-Borrow noch `&`-Methode. Ein Aufruf verändert das Lambda deshalb nie. Ausgenommen sind Objekte hinter einem erfassten `shared`-Verweis: Sie bleiben veränderbar, wie über jeden `shared`-Verweis (Kapitel 5, V-1 und V-8, mit Laufzeitprüfung). Veränderlichen Zustand hält man deshalb in einem erfassten `shared`-Objekt.
+**R-10.11 (Unveränderlich).** Im Rumpf eines `own`-Lambdas sind die erfassten Werte unveränderlich: keine Zuweisung an eine erfasste Variable, und auf einem erfassten `own`-Objekt weder `mut`-Borrow noch `mut`-Methode. Ein Aufruf verändert das Lambda deshalb nie. Ausgenommen sind Objekte hinter einem erfassten `shared`-Verweis: Sie bleiben veränderbar, wie über jeden `shared`-Verweis (Kapitel 5, V-1 und V-8, mit Laufzeitprüfung). Veränderlichen Zustand hält man deshalb in einem erfassten `shared`-Objekt.
 
 **R-10.12 (Verengung).** Eine verengte Variable ist auch im Lambda verengt (Kapitel 6, R-6.13).
 
 ## 4. Funktionstypen und Funktionswerte
 
-**R-10.13 (Func).** `Func<P₁, …, Pₙ, R>` ist der Typ einer Funktion mit den Parametern `P₁ … Pₙ` und dem Rückgabetyp `R`. Für die Parameter gelten die Markierungen aus R-10.1: `Func<Foo, void>` leiht lesend, `Func<Foo&, void>` veränderbar, `Func<own Foo, void>` übernimmt. `&` ist nur an Parametern von `Func` erlaubt, nicht am Rückgabetyp und nicht in anderen generischen Typen. `void` steht nur an letzter Stelle. Funktionstypen sind strukturell und invariant (R-4.37).
+**R-10.13 (Func).** `Func<P₁, …, Pₙ, R>` ist der Typ einer Funktion mit den Parametern `P₁ … Pₙ` und dem Rückgabetyp `R`. Für die Parameter gelten die Markierungen aus R-10.1: `Func<Foo, void>` leiht lesend, `Func<mut Foo, void>` veränderbar, `Func<own Foo, void>` übernimmt. `mut` ist nur an Parametern von `Func` erlaubt, nicht am Rückgabetyp und nicht in anderen generischen Typen. `void` steht nur an letzter Stelle. Funktionstypen sind strukturell und invariant (R-4.37).
 
 **R-10.14 (Passen).** Ein Lambda passt zu `Func<P₁, …, Pₙ, R>`, wenn es `n` Parameter mit genau den Typen und Markierungen `Pᵢ` hat und sein Rückgabewert in `R` umgewandelt werden kann (bei `R = void`: kein Wert).
 
@@ -72,7 +72,7 @@ class Button {
 private:
     Func<void>? onClick;              // gespeicherter Rückruf: nur own-Lambdas
 public:
-    void setHandler(own Func<void> f) & {
+    void setHandler(own Func<void> f) mut {
         this.onClick = f;
     }
     void click() {
@@ -85,11 +85,11 @@ public:
 
 class Demo {
 public:
-    void run(Foo[]& list, Button& b, shared Counter c) {
+    void run(mut Foo[] list, mut Button b, shared Counter c) {
         i32 limit = 10;
         i32 sum = 0;
         list.forEach((Foo f) => { if (f.x < limit) { sum += f.x; } });   // limit lesend, sum veränderbar geliehen
-        list.forEach((Foo& f) => f.bump());                               // Func<Foo&, void>
+        list.forEach((mut Foo f) => f.bump());                            // Func<mut Foo, void>
         b.setHandler(own () => { c.increment(); });                       // c wird geteilt
         var square = own (i32 x) => x * x;                                // Func<i32, i32>
         i32 n = square(4);
@@ -109,5 +109,5 @@ Die Testprogramme liegen in `konformitaet/kap10_lambdas/`; geprüft werden sie m
 | R-10.5 Rumpf | `a01_grundlagen.rpp` | `n03_break_aus_lambda.rpp` |
 | R-10.7 normales Lambda | `a02_erfassen.rpp` | `n04_normales_lambda_speichern.rpp`, `n05_loan_konflikt.rpp` |
 | R-10.8 – R-10.11 `own`-Lambda | `a02_erfassen.rpp` | `n06_borrow_per_wert.rpp`, `n07_this_im_own_lambda.rpp`, `n08_erfasst_veraendern.rpp`, `n09_nach_erfassen_verschoben.rpp` |
-| R-10.13, R-10.14 Func | `a03_funktionstypen.rpp` | `n10_und_am_rueckgabetyp.rpp`, `n11_und_in_anderem_typ.rpp`, `n12_parameter_passt_nicht.rpp` |
+| R-10.13, R-10.14 Func | `a03_funktionstypen.rpp` | `n10_mut_am_rueckgabetyp.rpp`, `n11_mut_in_anderem_typ.rpp`, `n12_parameter_passt_nicht.rpp` |
 | R-10.15 – R-10.17 Funktionswerte | `a03_funktionstypen.rpp` | `n13_func_kopieren.rpp`, `n14_parameter_speichern.rpp`, `n15_ergebnis_unbenutzt.rpp` |

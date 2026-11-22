@@ -1,0 +1,2 @@
+// Name: & als Markierung am Argument (alte Schreibweise)
+class T { void m() { f(&x); } }

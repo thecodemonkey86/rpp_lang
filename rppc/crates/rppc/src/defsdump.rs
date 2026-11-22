@@ -19,7 +19,7 @@ fn params(p: &Program, ps: &[PInfo]) -> String {
     ps.iter()
         .map(|x| match x.mode {
             Mode::Read => format!("{} {}", p.show(&x.ty), x.name),
-            Mode::Mut => format!("{}& {}", p.show(&x.ty), x.name),
+            Mode::Mut => format!("mut {} {}", p.show(&x.ty), x.name),
             Mode::Own => format!("own {} {}", p.show(&x.ty), x.name),
         })
         .collect::<Vec<_>>()
@@ -108,7 +108,7 @@ pub fn defs(input: &std::path::Path, std_dir: &std::path::Path, release: bool) -
                 Ret::Void => "void".to_string(),
                 Ret::Val(t) => p.show(t),
                 Ret::Ref(t, false) => format!("ref {}", p.show(t)),
-                Ret::Ref(t, true) => format!("ref {}&", p.show(t)),
+                Ret::Ref(t, true) => format!("ref mut {}", p.show(t)),
             };
             let tps = if m.tparams.is_empty() { String::new() } else { format!("<{}>", tparams(&p, &m.tparams)) };
             let _ = writeln!(

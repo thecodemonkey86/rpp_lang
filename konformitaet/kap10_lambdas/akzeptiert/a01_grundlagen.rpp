@@ -5,14 +5,14 @@ package konformitaet.kap10;
 class Foo {
 public:
     i32 x = 0;
-    void bump() & { x++; }
+    void bump() mut { x++; }
     copy(Foo other) { this.x = other.x; }
 }
 
 class Counter {
 public:
     i32 n = 0;
-    void increment() & { n++; }
+    void increment() mut { n++; }
 }
 
 class Items {
@@ -21,8 +21,8 @@ public:
     void forEach(Func<Foo, void> f) {
         for (Foo e : list) { f(e); }
     }
-    void update(Func<Foo&, void> f) & {
-        for (Foo& e : &list) { f(&e); }
+    void update(Func<mut Foo, void> f) mut {
+        for (mut Foo e : mut list) { f(mut e); }
     }
     i32 sum(Func<Foo, i32> f) {
         i32 s = 0;
@@ -33,7 +33,7 @@ public:
 
 class Basics {
 public:
-    void demo(Items& items) {
+    void demo(mut Items items) {
         var square = own (i32 x) => x * x;
         i32 a = square(4);
         Func<i32, i64> widen = own (i32 x) => x;

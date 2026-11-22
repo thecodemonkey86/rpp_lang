@@ -70,10 +70,10 @@ fieldDecl       : (STATIC? CONST)? type identifier ('=' expression)? ';' ;
 // nodiscard: Das Ergebnis darf auch mit discard nicht verworfen werden.
 methodDecl
     : NODISCARD? (STATIC | VIRTUAL | OVERRIDE)? returnType identifier typeParams?
-      '(' paramList? ')' '&'? block
+      '(' paramList? ')' MUT? block
     ;
 abstractMethodDecl
-    : NODISCARD? ABSTRACT returnType identifier typeParams? '(' paramList? ')' '&'? ';'
+    : NODISCARD? ABSTRACT returnType identifier typeParams? '(' paramList? ')' MUT? ';'
     ;
 constructorDecl
     : CONSTRUCTOR '(' paramList? ')' (':' BASE '(' argList? ')')? block
@@ -84,7 +84,7 @@ mixinImport     : IMPORT typeName ';' ;
 
 mixinDecl       : MIXIN identifier typeParams? '{' mixinMember* '}' ;
 mixinMember     : methodDecl | requirement | mixinImport ;
-requirement     : NODISCARD? returnType identifier typeParams? '(' paramList? ')' '&'? ';' ;
+requirement     : NODISCARD? returnType identifier typeParams? '(' paramList? ')' MUT? ';' ;
 
 enumDecl        : ENUM identifier '{' enumVariant (',' enumVariant)* ','? '}' ;
 // Eine Variante trägt entweder Daten oder einen festen Zahlwert: Circle(f64 r), Red = 1
@@ -94,20 +94,21 @@ enumVariant
     ;
 
 paramList       : param (',' param)* ;
-param           : type '&'? identifier ;
+// mut: veränderbar geliehen (void rename(mut Foo f)); ohne mut nur lesend.
+param           : MUT? type identifier ;
 
 // ------------------------------------------------------------------ Typen
 
-// ref T / ref T& : Die Methode liefert einen Borrow, der von this ausgeht (Kapitel 5, R-5.23).
-returnType      : VOID | type | REF baseType typeSuffix* '&'? ;
+// ref T / ref mut T : Die Methode liefert einen Borrow, der von this ausgeht (Kapitel 5, R-5.23).
+returnType      : VOID | type | REF MUT? baseType typeSuffix* ;
 type            : ownership? baseType typeSuffix* ;
 ownership       : OWN | SHARED | WEAK ;
 baseType        : primitiveType | typeName | tupleType ;
 typeName        : qualifiedName typeArgs? ;
 typeArgs        : '<' typeArg (',' typeArg)* '>' ;
-// & (veränderbarer Borrow-Parameter) ist nur in den Parametern von Func erlaubt:
-// Func<Foo&, void>. Das prüft ein späterer Schritt.
-typeArg         : type '&'? | VOID ;
+// mut (veränderbarer Borrow-Parameter) ist nur in den Parametern von Func erlaubt:
+// Func<mut Foo, void>. Das prüft ein späterer Schritt.
+typeArg         : MUT? type | VOID ;
 tupleType       : '(' type ',' type (',' type)* ')' ;
 // T[] ist ein Vektor, T[16], T[N] oder T[Typ::N] ein festes Array (N: static const).
 // Slices sind der Bibliothekstyp Slice<T>.
@@ -136,7 +137,7 @@ statement
     | forStmt
     | forEachStmt
     | switchStmt
-    | RETURN ('&'? expression)? ';'
+    | RETURN (MUT? expression)? ';'
     | BREAK ';'
     | CONTINUE ';'
     | THROW expression ';'
@@ -145,10 +146,10 @@ statement
 
 localVarDecl    : CONST? (type | VAR) identifier ('=' expression)? ;
 // Benannter Borrow, gilt bis zum Ende des Blocks: lesend ohne Markierung,
-// veränderbar mit & an Typ und Initialisierer. Keine Besitzform, kein var.
+// veränderbar mit mut vor Typ und Initialisierer. Keine Besitzform, kein var.
 refDecl
     : REF baseType typeSuffix* identifier '=' expression
-    | REF baseType typeSuffix* '&' identifier '=' '&' expression
+    | REF MUT baseType typeSuffix* identifier '=' MUT expression
     ;
 tupleDecl       : '(' type identifier (',' type identifier)+ ')' '=' expression ;
 
@@ -171,7 +172,7 @@ forStmt         : FOR '(' forInit? ';' expression? ';' forUpdate? ')' statement 
 forInit         : localVarDecl | tupleDecl | exprStatement (',' exprStatement)* ;
 forUpdate       : exprStatement (',' exprStatement)* ;
 forEachStmt
-    : FOR '(' (type | VAR) '&'? identifier ':' '&'? expression ')' statement
+    : FOR '(' MUT? (type | VAR) identifier ':' MUT? expression ')' statement
     ;
 
 switchStmt      : SWITCH '(' expression ')' '{' caseClause* '}' ;
@@ -261,7 +262,7 @@ staticRef       : (qualifiedName typeArgs? | primitiveType) '::' identifier ;
 range           : expression? '..' expression? ;
 
 argList         : argument (',' argument)* ;
-argument        : '&'? expression ;
+argument        : MUT? expression ;
 
 literal
     : IntLiteral | FloatLiteral | StringLiteral | CharLiteral
@@ -281,7 +282,7 @@ F64 : 'f64' ;
 FALSE : 'false' ;         FINALLY : 'finally' ;     FOR : 'for' ;
 I8 : 'i8' ;               I16 : 'i16' ;             I32 : 'i32' ;
 I64 : 'i64' ;             IF : 'if' ;               IMPORT : 'import' ;
-MIXIN : 'mixin' ;         NEW : 'new' ;             NODISCARD : 'nodiscard' ;             NULL : 'null' ;
+MIXIN : 'mixin' ;         MUT : 'mut' ;             NEW : 'new' ;             NODISCARD : 'nodiscard' ;             NULL : 'null' ;
 OVERRIDE : 'override' ;   OWN : 'own' ;             PACKAGE : 'package' ;
 PRIVATE : 'private' ;     PROTECTED : 'protected' ; PUBLIC : 'public' ;
 REF : 'ref' ;             RETURN : 'return' ;       SHARED : 'shared' ;       STATIC : 'static' ;

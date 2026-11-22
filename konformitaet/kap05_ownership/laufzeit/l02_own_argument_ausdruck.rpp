@@ -11,7 +11,7 @@ public:
 class Keeper {
 public:
     Part? last = null;
-    void keep(own Part p) & {
+    void keep(own Part p) mut {
         print("behalten " + p.n.toString());
         // der vorige Teil wird freigegeben
         this.last = p;

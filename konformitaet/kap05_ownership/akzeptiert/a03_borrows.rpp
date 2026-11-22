@@ -7,7 +7,7 @@ public:
     i32 value;
     constructor(i32 v) { this.value = v; }
     void run() { }
-    void bump() & { this.value = this.value + 1; }
+    void bump() mut { this.value = this.value + 1; }
 }
 
 class Pair {
@@ -19,7 +19,7 @@ public:
 
 class Borrows {
 public:
-    void swapValues(Foo& a, Foo& b) {
+    void swapValues(mut Foo a, mut Foo b) {
         i32 t = a.value;
         a.value = b.value;
         b.value = t;
@@ -36,7 +36,7 @@ public:
     void demo() {
         Pair p = new Pair(new Foo(1), new Foo(2));
         // R-5.9, R-5.10: zwei veränderbare Borrows auf disjunkte Orte.
-        swapValues(&p.left, &p.right);
+        swapValues(mut p.left, mut p.right);
         // Zwei lesende Borrows auf denselben Ort.
         i32 s = sum(p.left, p.left);
         // Der Slice lebt nur für die Dauer des Aufrufs.
@@ -45,7 +45,7 @@ public:
         v.push(4);
         // R-5.17: veränderbare und lesende Iteration.
         Foo[] list = [new Foo(1), new Foo(2)];
-        for (Foo& f : &list) { f.bump(); }
+        for (mut Foo f : mut list) { f.bump(); }
         for (Foo f : list) { f.run(); }
         list.push(new Foo(3));
     }

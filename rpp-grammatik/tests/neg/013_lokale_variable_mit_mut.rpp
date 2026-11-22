@@ -1,0 +1,2 @@
+// Name: lokale Variable mit mut
+class T { void m() { mut Foo f = x; } }

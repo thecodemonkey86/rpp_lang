@@ -10,12 +10,12 @@ public:
     string name;
     i32 uses = 0;
     constructor(string n) { this.name = n; }
-    void use() & { uses++; }
+    void use() mut { uses++; }
 }
 
 class T {
 public:
-    void m(Map<string, Symbol>& table) {
+    void m(mut Map<string, Symbol> table) {
         ref Symbol? s = table.get("a");
         table.put("b", new Symbol("b")); // FEHLER
         if (s != null) {

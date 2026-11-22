@@ -20,9 +20,9 @@ enum LocalKind {
     Var,
     Const,
     Param(Mode),
-    /// `ref T x` bzw. `ref T& x` (veränderbar)
+    /// `ref T x` bzw. `ref mut T x` (veränderbar)
     Ref(bool),
-    /// Schleifen- und case-Variablen: Borrows (veränderbar bei `T& x : &v`)
+    /// Schleifen- und case-Variablen: Borrows (veränderbar bei `mut T x : mut v`)
     Bound(bool),
     /// catch-Variable: besitzt die Exception (R-9.8)
     Catch,
@@ -113,7 +113,7 @@ pub struct Checker<'p> {
     place_quiet: usize,
     /// Ort des Empfängers für den nächsten `invoke`
     pending_recv: Option<Place>,
-    /// Darf `this` verändert werden (`&`-Methode, Konstruktor, Destruktor, copy)?
+    /// Darf `this` verändert werden (`mut`-Methode, Konstruktor, Destruktor, copy)?
     this_mut: bool,
 }
 
@@ -574,7 +574,7 @@ impl<'p> Checker<'p> {
     fn writable(&mut self, p: &Place, span: Span, rule: &'static str) -> bool {
         if p.root == THIS {
             if !self.this_mut {
-                self.err(span, rule, "this ist in dieser Methode nur lesend geliehen (Methode ohne &)");
+                self.err(span, rule, "this ist in dieser Methode nur lesend geliehen (Methode ohne mut)");
                 return false;
             }
             return true;
@@ -3110,9 +3110,9 @@ impl<'p> Checker<'p> {
             }
             let is_lambda = matches!(a.expr.kind, E::Lambda { .. });
             if p.mode == Mode::Mut && !a.borrow_mut && !is_lambda && !at.is_error() {
-                self.err(a.expr.span, "R-5.9", format!("der Parameter {} ist veränderbar geliehen; das Argument braucht &", p.name));
+                self.err(a.expr.span, "R-5.9", format!("der Parameter {} ist veränderbar geliehen; das Argument braucht mut", p.name));
             } else if p.mode != Mode::Mut && a.borrow_mut {
-                self.err(a.expr.span, "R-5.9", format!("der Parameter {} ist nicht veränderbar geliehen; & ist hier falsch", p.name));
+                self.err(a.expr.span, "R-5.9", format!("der Parameter {} ist nicht veränderbar geliehen; mut ist hier falsch", p.name));
             }
             // V-9: Ein Parameter vom Typ shared T oder weak T speichert den Wert; ein own-Wert
             // wird dabei verschoben (bei weak wie share mit anschließendem demote).
@@ -3570,7 +3570,7 @@ impl<'p> Checker<'p> {
 }
 
 impl Checker<'_> {
-    /// Das Feld in `take(&x.f)` und `replace(&x.f, v)`: ein Ort, der verändert wird (R-5.7).
+    /// Das Feld in `take(mut x.f)` und `replace(mut x.f, v)`: ein Ort, der verändert wird (R-5.7).
     fn field_arg(&mut self, a: &ast::Arg) -> Ty {
         let t = self.expr(&a.expr, None);
         if let Some(pl) = self.place_of(&a.expr) {

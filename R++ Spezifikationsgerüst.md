@@ -44,7 +44,7 @@ Reservierte Wörter:
 ```
 abstract as base bool break byte case cast catch char class const
 constructor continue copy default destructor discard do else enum export f32 f64 false
-finally for i8 i16 i32 i64 if import mixin new nodiscard null override own package
+finally for i8 i16 i32 i64 if import mixin mut new nodiscard null override own package
 private protected public ref return shared static string switch this throw
 true try ui8 ui16 ui32 ui64 using var virtual void weak while
 ```
@@ -76,7 +76,7 @@ Normativ ist das Projektdokument „RPP.g4“. Dieser Abschnitt hält fest, was 
 15. **Slices** haben keine eigene Syntax; `Slice<T>` ist ein gewöhnlicher generischer Typ.
 16. **`export`** steht vor `class`, `mixin` oder `enum`, bei abstrakten Klassen vor `abstract`: `export abstract class Shape`. An Methoden, Feldern, `main` und `using` ist es nicht erlaubt.
 
-17. **Benannte Borrows** werden mit `ref` deklariert: `ref Foo f = list[0];` (lesend) und `ref Foo& g = &x.child;` (veränderbar, `&` an Typ und Initialisierer). Ohne Initialisierer, mit Besitzform, mit `var`, als Feld, als Parameter und im `for`-Kopf ist `ref` ein Syntaxfehler. Ob der Initialisierer ein Ort ist, prüft ein späterer Schritt.
+17. **Benannte Borrows** werden mit `ref` deklariert: `ref Foo f = list[0];` (lesend) und `ref mut Foo g = mut x.child;` (veränderbar, `mut` vor Typ und Initialisierer). Ohne Initialisierer, mit Besitzform, mit `var`, als Feld, als Parameter und im `for`-Kopf ist `ref` ein Syntaxfehler. Ob der Initialisierer ein Ort ist, prüft ein späterer Schritt.
 
 18. **Downcast mit `as`.** `e as T` ist ein zweistelliger Ausdruck, der stärker bindet als Vergleiche und schwächer als Schiebeoperatoren: `s as Circle != null` ist `(s as Circle) != null`, `a + b as Foo` ist `(a + b) as Foo`.
 19. **Enum-Werte.** Eine Variante trägt entweder Daten oder einen Wert aus einem Ganzzahlliteral, auch negativ: `enum Level { Low = 1, Mid, High = 10 }`. Ausdrücke und Konstantennamen als Wert sind Syntaxfehler.
@@ -89,9 +89,9 @@ Normativ ist das Projektdokument „RPP.g4“. Dieser Abschnitt hält fest, was 
 
 24. **try** hat mindestens ein `catch` oder ein `finally`; `finally` steht nach allen `catch`.
 
-25. **`&` in Typargumenten** ist syntaktisch überall erlaubt (`Func<Foo&, void>`); dass es nur an Parametern von `Func` stehen darf, prüft ein späterer Schritt.
+25. **`mut` in Typargumenten** ist syntaktisch überall erlaubt (`Func<mut Foo, void>`); dass es nur an Parametern von `Func` stehen darf, prüft ein späterer Schritt.
 
-26. **Borrow-Rückgabe.** Ein Rückgabetyp kann `ref T` oder `ref T&` sein (`ref V? get(K key)`, `ref V& at(K key) &`); `return &e;` liefert einen veränderbaren Borrow.
+26. **Borrow-Rückgabe.** Ein Rückgabetyp kann `ref T` oder `ref mut T` sein (`ref V? get(K key)`, `ref mut V at(K key) mut`); `return mut e;` liefert einen veränderbaren Borrow.
 27. **Statische Member primitiver Typen** werden wie bei Klassen mit `::` angesprochen: `i32::MAX`, `i32::parse(s)`, `string::join(sep, parts)`.
 
 28. **using** nennt einen Typ (`using a.b.C;`) oder vergibt einen anderen Namen (`using X = a.b.C;`); `using a.b.*;` ist ein Syntaxfehler.

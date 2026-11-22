@@ -4,21 +4,21 @@ public:
     Node? child;
     Node[] items;
 
-    void rename(string n) & {
+    void rename(string n) mut {
         this.name = n;
     }
 
-    void demo(Node[] list, Node& other) & {
+    void demo(Node[] list, mut Node other) mut {
         ref Node first = list[0];
         print(first.name);
-        ref Node& target = &other.items[1];
+        ref mut Node target = mut other.items[1];
         target.rename("x");
         ref Node? maybe = this.child;
         if (maybe != null) {
             print(maybe.name);
         }
         ref Node[] all = this.items;
-        ref Node& me = &this;
+        ref mut Node me = mut this;
         {
             ref Slice<Node> part = list[1..];
             print(part.length);

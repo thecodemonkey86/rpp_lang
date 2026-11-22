@@ -13,7 +13,7 @@ public:
     constructor(string n) { this.name = n; }
     bool ok() { return true; }
     void run() { }
-    void touch() & { }
+    void touch() mut { }
 }
 
 class Box<T> {

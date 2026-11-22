@@ -5,9 +5,9 @@ export class StringBuilder {
 public:
     constructor() { }
     nodiscard i64 length() { fail("eingebaut"); }
-    void append(string s) & { fail("eingebaut"); }
-    void appendChar(char c) & { fail("eingebaut"); }
-    void appendLine(string s) & { fail("eingebaut"); }
-    void clear() & { fail("eingebaut"); }
+    void append(string s) mut { fail("eingebaut"); }
+    void appendChar(char c) mut { fail("eingebaut"); }
+    void appendLine(string s) mut { fail("eingebaut"); }
+    void clear() mut { fail("eingebaut"); }
     nodiscard string toString() { fail("eingebaut"); }
 }

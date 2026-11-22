@@ -18,14 +18,14 @@ public:
         return name;
     }
 
-    void setName(string n) & {
+    void setName(string n) mut {
         this.name = n;
     }
 }
 
 class Service {
 public:
-    void rename(Node& node, string name) {
+    void rename(mut Node node, string name) {
         node.setName(name);
     }
 
@@ -36,7 +36,7 @@ public:
     void run() {
         Foo payload = new Foo();
         Node node = new Node("a", payload, null);
-        rename(&node, "b");
+        rename(mut node, "b");
         print(node);
         shared Node s = new Node("c", new Foo(), null);
         weak Node w = s;

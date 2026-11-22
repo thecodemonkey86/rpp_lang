@@ -1,2 +1,0 @@
-// Name: lokale Variable mit &
-class T { void m() { Foo& f = x; } }

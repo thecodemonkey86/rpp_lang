@@ -16,27 +16,27 @@ zählt der Vergleich gesondert.
 
 Abbildung (Abschnitt 7):
     int / own C / shared C / weak C      i32 / C / shared C / weak C
-    Parameter ref C / mut C              C / C&
+    Parameter ref C / mut C              C / mut C
     copy p                               p (int, shared, weak); sonst copy(p) – eine
                                          Kopie gibt es nur mit copy-Konstruktor, den
                                          die Übersetzung nicht erzeugt (R-5.2 ↔ R-7.11)
     move x, share e, demote e            x, e, e (das Ziel bestimmt Move und Besitzform;
                                          move eines int-, weak- oder shared-Werts → copy)
-    replace(p.f, e)                      replace(&p.f, e)
-    p.m(&ro q, &mut r, e)                p.m(q, &r, e)
+    replace(p.f, e)                      replace(mut p.f, e)
+    p.m(&ro q, &mut r, e)                p.m(q, mut r, e)
     a < b                                (a < b ? 1 : 0)
     e;                                   discard e; bei Aufrufen, sonst T tmpN = e;
     if (p) …  while (p) …                if (p != 0) …  while (p != 0) …
     borrow x = &ro p { … }               { ref C x = p; … }
-    borrow x = &mut p { … }              { ref C& x = &p; … }
-    borrow x = p.m(…) { … }              { ref C x = p.m(…); … } bzw. ref C& x = &p.m(…)
+    borrow x = &mut p { … }              { ref mut C x = mut p; … }
+    borrow x = p.m(…) { … }              { ref C x = p.m(…); … } bzw. ref mut C x = mut p.m(…)
     (S₁ x₁, …, Sₙ xₙ) = move y;          (T₁ x₁, …, Tₙ xₙ) = y;  (R-5.25)
     upgrade x = p { … } else { … }       { shared C? x = p.lock(); if (x != null) { … } else { … } }
     demote (share e)                     FrHilfe::weak_C(e): shared-Variable, dann weak (V-6, V-13)
     new C(e₁, …, eₙ)                     new C(e₁, …, eₙ) mit einem Konstruktor, der alle
                                          Felder setzt (geerbte über base(…))
-    Methode mit Modus mut                Methode mit & nach der Parameterliste
-    brw(ro, C) m() / brw(mut, C) m()     ref C m() / ref C& m() &, return q; bzw. return &q;
+    Methode mit Modus mut                Methode mit mut nach der Parameterliste
+    brw(ro, C) m() / brw(mut, C) m()     ref C m() / ref mut C m() mut, return q; bzw. return mut q;
 """
 
 from . import ast as A
@@ -56,7 +56,7 @@ def rtype(t):
     if t.kind == "ref":
         return t.cls
     if t.kind == "mut":
-        return f"{t.cls}&"
+        return f"mut {t.cls}"
     raise Untranslatable(f"Typ {t}")
 
 
@@ -183,7 +183,7 @@ class Translator:
                 return f"FrHilfe::weak_{t.cls}({self.expr(env, e.expr.expr)})"
             return self.expr(env, e.expr)
         if isinstance(e, A.Replace):
-            return f"replace(&{self.place(e.place, env)}, {self.expr(env, e.expr)})"
+            return f"replace(mut {self.place(e.place, env)}, {self.expr(env, e.expr)})"
         if isinstance(e, A.Call):
             return f"{self.place(e.place, env)}.{e.method}({', '.join(self.arg(env, a) for a in e.args)})"
         if isinstance(e, A.BorrowArg):
@@ -192,7 +192,7 @@ class Translator:
 
     def arg(self, env, a):
         if isinstance(a, A.BorrowArg):
-            return ("&" if a.kind == "mut" else "") + self.place(a.place, env)
+            return ("mut " if a.kind == "mut" else "") + self.place(a.place, env)
         return self.expr(env, a)
 
     # ------------------------------------------------------- Anweisungen
@@ -246,7 +246,7 @@ class Translator:
             inner = dict(env)
             inner[s.var] = A.brw(s.kind, t.cls)
             head = (f"ref {t.cls} {s.var} = {self.place(s.place, env)};" if s.kind == "ro"
-                    else f"ref {t.cls}& {s.var} = &{self.place(s.place, env)};")
+                    else f"ref mut {t.cls} {s.var} = mut {self.place(s.place, env)};")
             return [f"{pad}{{", f"{pad}    {head}"] + self.block(inner, s.body, ind + 1) + [f"{pad}}}"]
         if isinstance(s, A.BorrowCall):
             t = self.expr_type(env, s.call)
@@ -255,7 +255,7 @@ class Translator:
             inner = dict(env)
             inner[s.var] = t
             call = self.expr(env, s.call)
-            head = f"ref {t.cls} {s.var} = {call};" if t.kind == "ref" else f"ref {t.cls}& {s.var} = &{call};"
+            head = f"ref {t.cls} {s.var} = {call};" if t.kind == "ref" else f"ref mut {t.cls} {s.var} = mut {call};"
             return [f"{pad}{{", f"{pad}    {head}"] + self.block(inner, s.body, ind + 1) + [f"{pad}}}"]
         if isinstance(s, A.Upgrade):
             t = self.place_type(env, s.place)
@@ -278,7 +278,7 @@ class Translator:
 
     def method_text(self, c, m):
         params = ", ".join(f"{param_type(t)} {x}" for t, x in m.params)
-        mut = " &" if m.mode == "mut" else ""
+        mut = " mut" if m.mode == "mut" else ""
         inherited = c.base is not None and self.method(c.base, m.name) is not None
         mod = "override " if inherited else ("virtual " if self.overridden(c.name, m.name) else "")
         env = {"this": A.brw(m.mode, c.name)}
@@ -293,8 +293,8 @@ class Translator:
             e = m.ret_expr
             if not isinstance(e, A.BorrowArg):
                 raise Untranslatable("Borrow-Methode ohne &-Rückgabe")
-            ret = f"ref {m.ret.cls}" + ("&" if m.ret.kind == "mut" else "")
-            body.append(f"        return {'&' if e.kind == 'mut' else ''}{self.place(e.place, env)};")
+            ret = ("ref mut " if m.ret.kind == "mut" else "ref ") + m.ret.cls
+            body.append(f"        return {'mut ' if e.kind == 'mut' else ''}{self.place(e.place, env)};")
         else:
             if isinstance(m.ret_expr, A.BorrowArg):
                 raise Untranslatable("Wert-Methode mit &-Rückgabe")

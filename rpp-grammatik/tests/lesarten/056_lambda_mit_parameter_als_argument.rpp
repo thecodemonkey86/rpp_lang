@@ -1,3 +1,0 @@
-// Name: Lambda mit &-Parameter als Argument
-// Lesart: exprStatement
-class T { void m() { list.forEach((Foo& f) => f.bump()); } }

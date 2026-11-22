@@ -10,7 +10,7 @@ public:
 
 class T {
 public:
-    void m(Foo& f) {
+    void m(mut Foo f) {
         f.destructor(); // FEHLER
     }
 }

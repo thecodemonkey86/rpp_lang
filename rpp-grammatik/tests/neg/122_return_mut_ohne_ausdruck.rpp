@@ -1,0 +1,2 @@
+// Name: return mut ohne Ausdruck
+class T { void m() { return mut; } }

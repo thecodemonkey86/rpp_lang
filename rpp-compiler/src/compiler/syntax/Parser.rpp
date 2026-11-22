@@ -72,13 +72,13 @@ private:
         return toks[idx(0)].kind == Kind::Eof;
     }
 
-    void bump() & {
+    void bump() mut {
         if (pos < toks.length - 1) {
             pos++;
         }
     }
 
-    bool eatP(string p) & {
+    bool eatP(string p) mut {
         if (isP(p)) {
             bump();
             return true;
@@ -86,7 +86,7 @@ private:
         return false;
     }
 
-    bool eatK(string k) & {
+    bool eatK(string k) mut {
         if (isK(k)) {
             bump();
             return true;
@@ -105,7 +105,7 @@ private:
     }
 
     // Fehlschlag festhalten und die Exception liefern, die der Aufrufer wirft.
-    ParseFail failure(string expected) & {
+    ParseFail failure(string expected) mut {
         string found = "gefunden " + shown();
         if (toks[idx(0)].kind == Kind::Error) {
             found = toks[idx(0)].text;
@@ -117,13 +117,13 @@ private:
         return new ParseFail();
     }
 
-    void expectP(string p) & {
+    void expectP(string p) mut {
         if (!eatP(p)) {
             throw failure("'" + p + "'");
         }
     }
 
-    void expectK(string k) & {
+    void expectK(string k) mut {
         if (!eatK(k)) {
             throw failure("'" + k + "'");
         }
@@ -143,7 +143,7 @@ private:
         return acc + " " + word;
     }
 
-    Node ident() & {
+    Node ident() mut {
         i64 i = idx(0);
         if (toks[i].kind == Kind::Ident) {
             Node n = new Node("id", toks[i].text, toks[i].line, toks[i].col);
@@ -153,7 +153,7 @@ private:
         throw failure("Name");
     }
 
-    Node qualifiedName() & {
+    Node qualifiedName() mut {
         Node q = node("qname", "");
         q.add(ident());
         while (isP(".") && isIdent(1)) {
@@ -165,7 +165,7 @@ private:
 
     // ------------------------------------------------------------ Dateien
 
-    Node mainDecl() & {
+    Node mainDecl() mut {
         Node m = new Node("main", "", line(), col());
         expectK("i32");
         if (!isIdent(0) || toks[idx(0)].text != "main") {
@@ -182,7 +182,7 @@ private:
         return m;
     }
 
-    Node typeDecl() & {
+    Node typeDecl() mut {
         bool exp = eatK("export");
         i32 l = line();
         i32 c = col();
@@ -239,7 +239,7 @@ private:
         throw failure("Typdeklaration");
     }
 
-    Node enumVariant() & {
+    Node enumVariant() mut {
         Node name = ident();
         if (eatP("(")) {
             Node ps = paramList();
@@ -269,7 +269,7 @@ private:
         return v;
     }
 
-    Node typeParamsOpt() & {
+    Node typeParamsOpt() mut {
         Node ps = node("tparams", "");
         if (eatP("<")) {
             while (true) {
@@ -301,7 +301,7 @@ private:
 
     // ------------------------------------------------------------ Member
 
-    Node classMember() & {
+    Node classMember() mut {
         i32 l = line();
         i32 c = col();
         if (isK("public") || isK("private") || isK("protected")) {
@@ -353,7 +353,7 @@ private:
         return methodDecl(false);
     }
 
-    Node mixinMember() & {
+    Node mixinMember() mut {
         if (eatK("import")) {
             Node n = node("import", "");
             n.add(typeName(false));
@@ -363,7 +363,7 @@ private:
         return methodDecl(true);
     }
 
-    Node fieldDecl() & {
+    Node fieldDecl() mut {
         bool isStatic = false;
         bool isConst = false;
         if (eatK("static")) {
@@ -384,7 +384,7 @@ private:
     }
 
     // methodDecl und abstractMethodDecl, im Mixin auch requirement
-    Node methodDecl(bool inMixin) & {
+    Node methodDecl(bool inMixin) mut {
         bool nd = eatK("nodiscard");
         string modifier = "";
         if (!inMixin && eatK("abstract")) {
@@ -400,7 +400,7 @@ private:
         Node name = ident();
         Node tps = typeParamsOpt();
         Node ps = params();
-        bool mutThis = eatP("&");
+        bool mutThis = eatK("mut");
         bool without = modifier == "abstract" || (inMixin && modifier.length == 0);
         Node m = node("method", flag(flag(flag("", nd, "nodiscard"), modifier.length > 0, modifier), mutThis, "mut"));
         m.add(ret);
@@ -417,7 +417,7 @@ private:
         return m;
     }
 
-    Node params() & {
+    Node params() mut {
         expectP("(");
         if (eatP(")")) {
             return node("params", "");
@@ -427,7 +427,7 @@ private:
         return ps;
     }
 
-    Node paramList() & {
+    Node paramList() mut {
         Node ps = node("params", "");
         ps.add(param());
         while (eatP(",")) {
@@ -436,9 +436,9 @@ private:
         return ps;
     }
 
-    Node param() & {
+    Node param() mut {
+        bool mutable = eatK("mut");
         Node t = ty(false);
-        bool mutable = eatP("&");
         Node p = node("param", flag("", mutable, "mut"));
         p.add(t);
         p.add(ident());
@@ -447,15 +447,15 @@ private:
 
     // ------------------------------------------------------------ Typen
 
-    Node returnType() & {
+    Node returnType() mut {
         if (eatK("void")) {
             return node("void", "");
         }
         if (eatK("ref")) {
+            bool mutable = eatK("mut");
             Node t = new Node("type", "", line(), col());
             t.add(baseType(false));
-            typeSuffixes(&t, false);
-            bool mutable = eatP("&");
+            typeSuffixes(mut t, false);
             Node r = node("refret", flag("", mutable, "mut"));
             r.add(t);
             return r;
@@ -463,7 +463,7 @@ private:
         return ty(false);
     }
 
-    Node ty(bool afterAs) & {
+    Node ty(bool afterAs) mut {
         Node t = new Node("type", "", line(), col());
         if (eatK("own")) {
             t.text = "own";
@@ -473,11 +473,11 @@ private:
             t.text = "weak";
         }
         t.add(baseType(afterAs));
-        typeSuffixes(&t, afterAs);
+        typeSuffixes(mut t, afterAs);
         return t;
     }
 
-    Node baseType(bool afterAs) & {
+    Node baseType(bool afterAs) mut {
         if (isPrim(0)) {
             Node p = node("prim", toks[idx(0)].text);
             bump();
@@ -500,7 +500,7 @@ private:
         throw failure("Typ");
     }
 
-    Node typeName(bool afterAs) & {
+    Node typeName(bool afterAs) mut {
         Node n = node("typename", "");
         n.add(qualifiedName());
         if (!isP("<")) {
@@ -519,15 +519,15 @@ private:
         return n;
     }
 
-    Node typeArgs() & {
+    Node typeArgs() mut {
         expectP("<");
         Node a = node("targs", "");
         while (true) {
             if (eatK("void")) {
                 a.add(node("void", ""));
             } else {
+                bool mutable = eatK("mut");
                 Node t = ty(false);
-                bool mutable = eatP("&");
                 Node x = node("targ", flag("", mutable, "mut"));
                 x.add(t);
                 a.add(x);
@@ -540,7 +540,7 @@ private:
         return a;
     }
 
-    void typeSuffixes(Node& t, bool afterAs) & {
+    void typeSuffixes(mut Node t, bool afterAs) mut {
         while (true) {
             if (isP("?")) {
                 // Nach as gehört ? zum Bedingungsausdruck, wenn danach ein Ausdruck beginnt.
@@ -565,7 +565,7 @@ private:
         }
     }
 
-    Node arraySize() & {
+    Node arraySize() mut {
         i64 i = idx(0);
         if (toks[i].kind == Kind::Int) {
             Node n = node("int", toks[i].text);
@@ -606,7 +606,7 @@ private:
 
     // ------------------------------------------------------------ Anweisungen
 
-    Node block() & {
+    Node block() mut {
         Node b = new Node("block", "", line(), col());
         expectP("{");
         while (!isP("}")) {
@@ -617,7 +617,7 @@ private:
         return b;
     }
 
-    Node statement() & {
+    Node statement() mut {
         i32 l = line();
         i32 c = col();
         if (isP("{")) {
@@ -657,7 +657,7 @@ private:
             if (eatP(";")) {
                 return n;
             }
-            if (eatP("&")) {
+            if (eatK("mut")) {
                 n.text = "mut";
             }
             n.add(expression());
@@ -717,14 +717,14 @@ private:
         return s;
     }
 
-    Node parenExpr() & {
+    Node parenExpr() mut {
         expectP("(");
         Node e = expression();
         expectP(")");
         return e;
     }
 
-    Node localVarDecl(i32 l, i32 c) & {
+    Node localVarDecl(i32 l, i32 c) mut {
         Node d = new Node("local", "", l, c);
         if (eatK("const")) {
             d.text = "const";
@@ -741,16 +741,16 @@ private:
         return d;
     }
 
-    Node refDecl(i32 l, i32 c) & {
+    Node refDecl(i32 l, i32 c) mut {
         expectK("ref");
+        bool mutable = eatK("mut");
         Node t = new Node("type", "", line(), col());
         t.add(baseType(false));
-        typeSuffixes(&t, false);
-        bool mutable = eatP("&");
+        typeSuffixes(mut t, false);
         Node name = ident();
         expectP("=");
         if (mutable) {
-            expectP("&");
+            expectK("mut");
         }
         Node r = new Node("ref", flag("", mutable, "mut"), l, c);
         r.add(t);
@@ -759,7 +759,7 @@ private:
         return r;
     }
 
-    Node tupleDecl(i32 l, i32 c) & {
+    Node tupleDecl(i32 l, i32 c) mut {
         expectP("(");
         Node vars = node("vars", "");
         while (true) {
@@ -794,7 +794,7 @@ private:
     }
 
     // exprStatement : unaryExpr assignOp expression | ('++'|'--') unaryExpr | postfixExpr
-    Node exprStatement() & {
+    Node exprStatement() mut {
         Node target = unary();
         string op = assignOp();
         if (op.length > 0) {
@@ -812,18 +812,18 @@ private:
         return e;
     }
 
-    // forEachStmt : FOR '(' (type | VAR) '&'? identifier ':' '&'? expression ')' statement
-    Node? forEachHead(i32 l, i32 c) & {
+    // forEachStmt : FOR '(' MUT? (type | VAR) identifier ':' MUT? expression ')' statement
+    Node? forEachHead(i32 l, i32 c) mut {
         i64 save = pos;
         try {
             Node f = new Node("foreach", "", l, c);
+            if (eatK("mut")) {
+                f.text = "mut";
+            }
             if (eatK("var")) {
                 f.add(node("var", ""));
             } else {
                 f.add(ty(false));
-            }
-            if (eatP("&")) {
-                f.text = "mut";
             }
             f.add(ident());
             expectP(":");
@@ -834,13 +834,13 @@ private:
         }
     }
 
-    Node forStmt(i32 l, i32 c) & {
+    Node forStmt(i32 l, i32 c) mut {
         expectK("for");
         expectP("(");
         Node? head = forEachHead(l, c);
         if (head != null) {
             bool mutable = head.text == "mut";
-            bool borrow = eatP("&");
+            bool borrow = eatK("mut");
             head.text = flag(flag("", mutable, "mut"), borrow, "borrow");
             head.add(expression());
             expectP(")");
@@ -870,7 +870,7 @@ private:
         return f;
     }
 
-    Node forInit() & {
+    Node forInit() mut {
         i64 save = pos;
         try {
             Node d = localVarDecl(0, 0);
@@ -893,7 +893,7 @@ private:
         return exprStatementList();
     }
 
-    Node exprStatementList() & {
+    Node exprStatementList() mut {
         Node list = node("exprs", "");
         list.add(exprStatement());
         while (eatP(",")) {
@@ -902,7 +902,7 @@ private:
         return list;
     }
 
-    Node switchStmt(i32 l, i32 c) & {
+    Node switchStmt(i32 l, i32 c) mut {
         expectK("switch");
         Node s = new Node("switch", "", l, c);
         s.add(parenExpr());
@@ -952,7 +952,7 @@ private:
         }
     }
 
-    Node pattern() & {
+    Node pattern() mut {
         bool negative = isP("-");
         i64 litAt = 0;
         if (negative) {
@@ -992,7 +992,7 @@ private:
         return p;
     }
 
-    Node tryStmt(i32 l, i32 c) & {
+    Node tryStmt(i32 l, i32 c) mut {
         expectK("try");
         Node t = new Node("try", "", l, c);
         t.add(block());
@@ -1020,7 +1020,7 @@ private:
     // ------------------------------------------------------------ Ausdrücke
 
     // expression : lambda | conditionalExpr
-    Node expression() & {
+    Node expression() mut {
         if (isK("own") || isP("(")) {
             Node? lambda = lambdaHead(line(), col());
             if (lambda != null) {
@@ -1036,7 +1036,7 @@ private:
     }
 
     // OWN? '(' paramList? ')' '=>'
-    Node? lambdaHead(i32 l, i32 c) & {
+    Node? lambdaHead(i32 l, i32 c) mut {
         i64 save = pos;
         try {
             bool isOwn = eatK("own");
@@ -1051,7 +1051,7 @@ private:
         }
     }
 
-    Node conditional() & {
+    Node conditional() mut {
         Node c = coalesce();
         if (isP("?")) {
             Node n = new Node("cond", "", c.line, c.col);
@@ -1065,7 +1065,7 @@ private:
         return c;
     }
 
-    Node coalesce() & {
+    Node coalesce() mut {
         Node left = binary(0);
         if (eatP("??")) {
             Node n = new Node("coalesce", "", left.line, left.col);
@@ -1117,7 +1117,7 @@ private:
         return (p, 1, prec);
     }
 
-    Node binary(i32 minPrec) & {
+    Node binary(i32 minPrec) mut {
         Node left = unary();
         while (true) {
             (string op, i64 width, i32 prec) = binaryOp();
@@ -1144,7 +1144,7 @@ private:
         return left;
     }
 
-    Node unary() & {
+    Node unary() mut {
         i32 l = line();
         i32 c = col();
         string op = "";
@@ -1159,7 +1159,7 @@ private:
         return n;
     }
 
-    Node postfix() & {
+    Node postfix() mut {
         Node e = primary();
         while (true) {
             i32 l = e.line;
@@ -1213,14 +1213,14 @@ private:
         }
     }
 
-    Node args() & {
+    Node args() mut {
         expectP("(");
         Node a = node("args", "");
         if (eatP(")")) {
             return a;
         }
         while (true) {
-            bool mutable = eatP("&");
+            bool mutable = eatK("mut");
             Node x = node("arg", flag("", mutable, "mut"));
             x.add(expression());
             a.add(x);
@@ -1233,7 +1233,7 @@ private:
     }
 
     // staticRef : (qualifiedName typeArgs? | primitiveType) '::' identifier
-    Node staticRef() & {
+    Node staticRef() mut {
         Node s = new Node("sref", "", line(), col());
         if (isPrim(0)) {
             s.add(node("prim", toks[idx(0)].text));
@@ -1259,7 +1259,7 @@ private:
         return s;
     }
 
-    Node primary() & {
+    Node primary() mut {
         i32 l = line();
         i32 c = col();
         Node? lit = literalAt(0);
@@ -1354,7 +1354,7 @@ public:
     }
 
     // compilationUnit; wirft ParseFail, die Meldung liefert errorText()
-    Node compilationUnit() & {
+    Node compilationUnit() mut {
         Node unit = node("unit", "");
         if (eatK("package")) {
             Node p = node("package", "");

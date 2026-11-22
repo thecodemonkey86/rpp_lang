@@ -78,7 +78,7 @@ public:
         }
     }
 
-    bool orExpr(Set<string> symbols) & {
+    bool orExpr(Set<string> symbols) mut {
         bool value = andExpr(symbols);
         while (at(2)) {
             pos++;
@@ -88,7 +88,7 @@ public:
         return value;
     }
 
-    bool andExpr(Set<string> symbols) & {
+    bool andExpr(Set<string> symbols) mut {
         bool value = unary(symbols);
         while (at(1)) {
             pos++;
@@ -98,7 +98,7 @@ public:
         return value;
     }
 
-    bool unary(Set<string> symbols) & {
+    bool unary(Set<string> symbols) mut {
         if (pos >= tokens.length) {
             pos++;
             throw new DirectiveError(line, "Symbol erwartet");

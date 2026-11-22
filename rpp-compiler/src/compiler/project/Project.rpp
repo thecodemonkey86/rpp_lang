@@ -119,6 +119,8 @@ public:
     Diag[] diags = [];
     // Releasemodus: Symbol release statt debug (R-11.24)
     bool release = false;
+    // Anzahl der nummerierten Knoten aller Dateien (Node.id)
+    i64 nodeCount = 0;
 
     // Lädt eine einzelne .rpp-Datei oder ein Verzeichnis mit rpp.yaml; die
     // Standardbibliothek kommt aus stdDir.
@@ -129,7 +131,7 @@ public:
         string path = Path::absolute(input);
         if (Dir::exists(path)) {
             Set<string> stack = new Set<string>();
-            discard ws.loadProject(path, &stack, false, "", "", 0);
+            discard ws.loadProject(path, mut stack, false, "", "", 0);
             return ws;
         }
         i64 idx = ws.projects.length;
@@ -152,7 +154,7 @@ public:
     }
 
 private:
-    void diag(string file, i32 line, string rule, string message) & {
+    void diag(string file, i32 line, string rule, string message) mut {
         diags.push(new Diag(file, line, 0, rule, message));
     }
 
@@ -176,7 +178,7 @@ private:
         return false;
     }
 
-    void loadStd(string stdDir) & {
+    void loadStd(string stdDir) mut {
         i64 idx = projects.length;
         Project p = new Project("rpp", ProjectKind::Library, Path::absolute(stdDir));
         p.isStd = true;
@@ -185,7 +187,7 @@ private:
         loadSources(Path::absolute(stdDir), idx, none);
     }
 
-    void parseFile(string path, i64 project, string? expected, string[] symbols) & {
+    void parseFile(string path, i64 project, string? expected, string[] symbols) mut {
         string source = "";
         try {
             File f = File::open(path);
@@ -206,6 +208,7 @@ private:
         }
         try {
             Node unit = Source::parse(source, syms);
+            nodeCount = Node::number(mut unit, nodeCount);
             files.push(new SourceFile(path, project, unit, expected));
         } catch (SyntaxError e) {
             diags.push(new Diag(path, e.line, e.col, "Syntax", e.message));
@@ -213,7 +216,7 @@ private:
     }
 
     // Alle .rpp-Dateien unter dir, sortiert; Unterordner mit eigener rpp.yaml gehören nicht dazu
-    static void collectRpp(string dir, string[]& out) {
+    static void collectRpp(string dir, mut string[] out) {
         string[] names = [];
         try {
             names = Dir::list(dir);
@@ -224,7 +227,7 @@ private:
             string p = Path::join(dir, n);
             if (Dir::exists(p)) {
                 if (!File::exists(Path::join(p, "rpp.yaml"))) {
-                    collectRpp(p, &out);
+                    collectRpp(p, mut out);
                 }
             } else if (Path::extension(n) == "rpp") {
                 out.push(p);
@@ -232,9 +235,9 @@ private:
         }
     }
 
-    void loadSources(string src, i64 project, string[] symbols) & {
+    void loadSources(string src, i64 project, string[] symbols) mut {
         string[] found = [];
-        collectRpp(src, &found);
+        collectRpp(src, mut found);
         for (string f : found) {
             string parent = Path::parent(f);
             string pkg = "";
@@ -249,7 +252,7 @@ private:
     // kann. stack enthält die Projekte, deren Abhängigkeiten gerade geladen werden (R-11.16).
     // Bei einer Abhängigkeit (expected) ist want der erwartete Name und wantFile:wantLine
     // die Stelle in der rpp.yaml, die sie einträgt.
-    i64 loadProject(string dirIn, Set<string>& stack, bool expected, string want, string wantFile, i32 wantLine) & {
+    i64 loadProject(string dirIn, mut Set<string> stack, bool expected, string want, string wantFile, i32 wantLine) mut {
         string dir = Path::absolute(dirIn);
         for (i64 i = 0; i < projects.length; i++) {
             if (!projects[i].isStd && projects[i].dir == dir) {
@@ -347,7 +350,7 @@ private:
                         diag(yamlPath, pl, "R-11.16", "Zyklus in den Abhängigkeiten über '" + depName + "'");
                         continue;
                     }
-                    i64 d = loadProject(target, &stack, true, depName, yamlPath, pl);
+                    i64 d = loadProject(target, mut stack, true, depName, yamlPath, pl);
                     if (d >= 0) {
                         if (projects[d].kind != ProjectKind::Library) {
                             diag(yamlPath, pl, "R-11.15", "'" + depName + "' ist keine Bibliothek");

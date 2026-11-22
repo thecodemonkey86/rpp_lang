@@ -6,12 +6,12 @@ class Calc {
 public:
     i32[] values = [1, 2, 3];
 
-    nodiscard i32 next(i32& counter) {
+    nodiscard i32 next(mut i32 counter) {
         counter++;
         return counter;
     }
 
-    void demo() & {
+    void demo() mut {
         i32 i = 0;
         i32 a = values[i++];            // a = 1, i = 1
         i32 b = ++i;                    // b = 2, i = 2
@@ -28,6 +28,6 @@ public:
         const i32 fixed = 7;
         string s = "abc";
         char c = s[1];
-        i32 n = next(&i);
+        i32 n = next(mut i);
     }
 }
