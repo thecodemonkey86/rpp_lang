@@ -22,6 +22,7 @@ Die meisten Regeln folgen aus den „R++ Designentscheidungen“ (Abschnitte 2, 
 | V-4.9 | Zwischen festen Arrays und Vektoren gibt es keine automatische Umwandlung; beide werden nur automatisch als `Slice<T>` geliehen. Die Größe eines festen Arrays ist ≥ 0. |
 | V-4.10 | `cast` von Ganzzahl zu Gleitkomma und von `f64` zu `f32` rundet zum nächsten darstellbaren Wert (bei Gleichstand zur geraden Mantisse) und wirft nie; zu große Werte werden ±∞. |
 | V-4.11 | `null` braucht einen nullbaren Kontext: `var x = null;` ist ein Fehler. `T??` und `void?` gibt es nicht. |
+| V-4.13 | (angenommen am 21.11.2026) Klarstellung zu R-4.12: Sind beide Operanden Ganzzahlen, kommen als gemeinsamer Typ nur Ganzzahltypen in Frage. Ohne diesen Satz hätte `i32`, `ui32` keinen gemeinsamen Typ, weil `i64` und `f64` beide passen und keiner in den anderen umgewandelt werden kann; die Tabelle in R-4.12 nennt aber `i64`. |
 | V-4.12 | (angenommen am 21.11.2026) Ein Enum-Wert entsteht ohne `new`: `Color::Red` für eine Variante ohne Daten, `Shape::Circle(2.0)` für eine mit Daten (R-4.25). |
 
 ## 1. Übersicht
@@ -96,7 +97,7 @@ Vor Klassen-, Array-, Tupel- und Funktionstypen kann eine Besitzform stehen (`ow
 
 ## 4. Operatoren auf primitiven Typen
 
-**R-4.12 (gemeinsamer Typ, V-4.0).** Für zweistellige arithmetische Operatoren und Vergleiche werden beide Operanden in ihren **gemeinsamen Typ** umgewandelt: den Typ `T`, in den beide automatisch umgewandelt werden können (R-4.6) und der selbst in jeden anderen solchen Typ umgewandelt werden kann. Gibt es keinen, ist der Ausdruck ein Fehler und verlangt einen `cast`. Beispiele:
+**R-4.12 (gemeinsamer Typ, V-4.0).** Für zweistellige arithmetische Operatoren und Vergleiche werden beide Operanden in ihren **gemeinsamen Typ** umgewandelt: den Typ `T`, in den beide automatisch umgewandelt werden können (R-4.6) und der selbst in jeden anderen solchen Typ umgewandelt werden kann; sind beide Operanden Ganzzahlen, kommen nur Ganzzahltypen in Frage (V-4.13). Gibt es keinen, ist der Ausdruck ein Fehler und verlangt einen `cast`. Beispiele:
 
 | Operanden | Gemeinsamer Typ |
 |---|---|
@@ -187,7 +188,7 @@ Ein Wert vom Typ `C` darf überall stehen, wo `D` verlangt wird; das gilt mit de
 
 **R-4.35 (Verwendung).** Tupel entstehen als Rückgabewert (`(i32, string) f()`) oder als Literal (`(1, "a")`). Ein Tupel-Literal übernimmt die Elementtypen aus dem Kontext (V-4.8). Ein Tupel wird nur zerlegt: `(i32 a, string b) = t;` oder `(a, b) = t;`. Einen Elementzugriff wie `t.0` gibt es in Version 1 nicht, ebenso kein `==`.
 
-**R-4.36 (Besitz).** Ein Tupel besitzt seine Elemente. Beim Zerlegen gehen sie an die neuen Variablen über.
+**R-4.36 (Besitz).** Ein Tupel besitzt seine Elemente. Beim Zerlegen gehen sie an die neuen Variablen über. Mit derselben Schreibweise lässt sich ein `own`-Objekt einer Klasse ohne Destruktor in seine Felder zerlegen (Kapitel 5, R-5.25).
 
 ## 10. Funktionstypen
 
@@ -201,7 +202,7 @@ Ein Wert vom Typ `C` darf überall stehen, wo `D` verlangt wird; das gilt mit de
 
 **R-4.40 (Umwandlung).** `T` wird automatisch in `T?` umgewandelt; die Umwandlung zurück geht nur über die Prüfungen aus Kapitel 6. Das Literal `null` braucht einen Kontext mit nullbarem Typ; `var x = null;` ist ein Fehler.
 
-**R-4.41 (weak).** `weak Foo` ist ein Verweis, der nie `null` ist, dessen Ziel aber freigegeben sein kann. `w.lock()` liefert deshalb immer `shared Foo?`.
+**R-4.41 (weak).** `weak Foo` ist ein Verweis, der nie `null` ist, dessen Ziel aber freigegeben sein kann. `w.lock()` liefert deshalb immer `shared Foo?`. Ein `weak`-Wert entsteht nur aus `shared` oder `weak` (Kapitel 5, V-6, V-13); `weak Foo w = new Foo();` ist ein Fehler.
 
 ## 12. Typ-Parameter
 
@@ -225,7 +226,7 @@ Ein Wert vom Typ `C` darf überall stehen, wo `D` verlangt wird; das gilt mit de
 
 ## 15. Konformitätstests
 
-Die Testprogramme liegen in `konformitaet/kap04_typen/`. Bis es einen Typprüfer für R++ gibt, ist an ihnen nur die Syntax prüfbar (Testlauf in `rpp-grammatik/tools/run_tests.py`).
+Die Testprogramme liegen in `konformitaet/kap04_typen/`. Die Syntax prüft `rpp-grammatik/tools/run_tests.py`, die Semantik `rppc test` (erste Implementierung).
 
 | Regeln | Akzeptiert | Abgelehnt |
 |---|---|---|

@@ -1,0 +1,32 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.17, R-13.7, R-13.8
+// Erwartet: Ausgabe "2000\n1999\n3\n-1\n1999"; Exit-Code 0
+using rpp.collections.Map;
+
+class Key {
+    import Hashable;
+    import Equatable<Key>;
+public:
+    i32 a;
+    i32 b;
+    constructor(i32 a, i32 b) {
+        this.a = a;
+        this.b = b;
+    }
+    i64 hash() { return a * 31 + b; }
+    bool equals(Key other) { return a == other.a && b == other.b; }
+}
+
+i32 main(string[] args) {
+    Map<Key, i32> m = new Map<Key, i32>();
+    for (i32 i = 0; i < 2000; i++) {
+        m.put(new Key(i, i % 7), i);
+    }
+    print(m.length().toString());
+    print((m.get(new Key(1999, 1999 % 7)) ?? -1).toString());
+    i32? weg = m.remove(new Key(3, 3));
+    print((weg ?? -1).toString());
+    print((m.get(new Key(3, 3)) ?? -1).toString());
+    print(m.length().toString());
+    return 0;
+}

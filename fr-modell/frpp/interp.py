@@ -329,6 +329,24 @@ class Interp:
                 raise Stuck(f"{s.var} doppelt im Rahmen")
             frame[s.var] = v
             declared.append(s.var)
+        elif isinstance(s, A.Unpack):                 # R-5.25: ohne Destruktor
+            v = self.var(frame, s.var)
+            if v is BOT or v[0] != "own":
+                raise Stuck(f"zerlegen von {s.var} ohne own-Wert")
+            o = self.live(v[1])
+            chain, c = [], o.cls
+            while c is not None:
+                chain.append(c)
+                c = self.prog.classes[c].base
+            names = [f for k in reversed(chain) for _, f in self.prog.classes[k].fields]
+            vals = [o.fields[f] for f in names]
+            self.heap[v[1]] = DEAD
+            frame[s.var] = BOT
+            for (_, x), val in zip(s.vars, vals):
+                if x in frame:
+                    raise Stuck(f"{x} doppelt im Rahmen")
+                frame[x] = val
+                declared.append(x)
         elif isinstance(s, A.AssignVar):
             v = self.eval(frame, s.expr)
             old = self.var(frame, s.var)

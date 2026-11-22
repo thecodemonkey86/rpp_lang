@@ -7,3 +7,5 @@ license.workspace = true
 
 [dependencies]
 rpp-syntax = { path = "../rpp-syntax" }
+rpp-sema = { path = "../rpp-sema" }
+rpp-interp = { path = "../rpp-interp" }

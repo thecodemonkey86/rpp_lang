@@ -1,0 +1,18 @@
+// Regeln: R-5.25
+// erwartet: Ausgabe 1 2 7 2 1
+class A {
+    int v;
+    int get() ro { return copy this.v; }
+    destructor() { print(copy this.v); }
+}
+class P {
+    own A x;
+    own A y;
+}
+main {
+    own P p = new P(new A(1), new A(2));
+    (own A a, own A b) = move p;    // P hat keinen Destruktor; die Felder gehen an a und b
+    print(a.get());
+    print(b.get());
+    print(7);
+}

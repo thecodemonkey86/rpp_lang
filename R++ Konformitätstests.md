@@ -1,14 +1,16 @@
 # R++ Konformitätstests (Kapitel 14)
 
-Stand: 21.11.2026, Entwurf 0.2. Dieses Dokument füllt Kapitel 14 des „R++ Spezifikationsgerüsts“. Es legt fest, wie die Konformitäts-Testsuite aufgebaut ist, wie ein Testprogramm sein erwartetes Ergebnis angibt, wann eine Implementierung konform ist und wie die Abdeckung der Regeln geprüft wird.
+Stand: 22.11.2026, Entwurf 0.4. Dieses Dokument füllt Kapitel 14 des „R++ Spezifikationsgerüsts“. Es legt fest, wie die Konformitäts-Testsuite aufgebaut ist, wie ein Testprogramm sein erwartetes Ergebnis angibt, wann eine Implementierung konform ist und wie die Abdeckung der Regeln geprüft wird.
 
-Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschnitte 25 und 26). Jede normative Regel trägt eine Nummer `R-14.n`.
+Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschnitte 25 und 26), einschließlich der Klarstellungen V-14.2 und V-14.3. Jede normative Regel trägt eine Nummer `R-14.n`.
 
 ## 0. Ergänzung beim Schließen der Regelabdeckung (angenommen am 21.11.2026)
 
 | Nr. | Vorschlag |
 |---|---|
 | V-14.1 | Laufzeittests können Kommandozeilenargumente (`// Argumente: …`) und die Standardeingabe (`// Eingabe: "…"`) festlegen (R-14.5). |
+| V-14.3 | (angenommen am 22.11.2026, aus Meilenstein M5) Jeder Laufzeittest läuft je Modus in einem frischen, leeren Arbeitsverzeichnis. Er darf dort Dateien und Verzeichnisse anlegen, lesen und löschen; relative Pfade beziehen sich darauf. Danach wird das Verzeichnis gelöscht. Außerhalb davon schreibt ein Test nichts. Damit lassen sich `rpp.io` (R-13.19, R-13.20) ohne vorbereitete Dateien prüfen, und Tests stören sich nicht gegenseitig. |
+| V-14.2 | (angenommen am 21.11.2026, aus Meilenstein M3) Eine Fehlermeldung darf mehrere Regeln nennen: die verletzte Regel und die Regeln, die begründen, warum sie verletzt ist. Beispiel: `x.run()` nach `x = null;` verletzt R-6.2, begründet durch R-6.11; die Meldung nennt `[R-6.2, R-6.11]`. Ein abgelehnter Test ist erfüllt, wenn eine der genannten Regeln die erwartete ist (R-14.7). Ohne diese Klarstellung müsste die Hauptregel je nach Ursache wechseln, obwohl der Verstoß derselbe ist. |
 
 ## 1. Aufbau
 
@@ -42,6 +44,8 @@ Genau eine Zeile trägt am Ende `// FEHLER`, in YAML-Dateien eines Projekttests 
 // Erwartet (release): …
 ```
 
+Ein Laufzeittest startet je Modus in einem frischen, leeren Arbeitsverzeichnis, das er beschreiben darf und das danach gelöscht wird (V-14.3).
+
 Optional legen zwei weitere Kopfzeilen fest, womit das Programm gestartet wird (V-14.1):
 
 ```
@@ -59,39 +63,41 @@ Ohne Modus gilt die Erwartung für beide Modi. `Ausgabe` ist der vollständige T
 
 **R-14.7 (Konforme Implementierung).** Eine Implementierung ist konform, wenn sie für jeden Test der Suite in jedem Modus, in dem sie arbeitet, das Erwartete tut:
 - akzeptierte Programme übersetzt sie, mit genau den markierten Warnungen und keinen weiteren;
-- abgelehnte Programme lehnt sie mit einem Fehler der genannten Regel in der markierten Zeile ab;
+- abgelehnte Programme lehnt sie mit einem Fehler der genannten Regel in der markierten Zeile ab (die Regel darf als Begründung neben der verletzten Regel stehen, V-14.2);
 - Laufzeittests führt sie im Debug- und im Releasemodus aus und liefert Ausgabe, Exit-Code und Fehlerausgabe wie erwartet.
 
 Eine Implementierung, die nur einen Modus anbietet, ist für diesen Modus konform. Die Regelnummer eines Fehlers gibt die Implementierung in ihrer Meldung an; der Wortlaut ist frei.
 
 ## 4. Werkzeuge und Stand
 
-**R-14.8 (Testläufe).** Bis es eine Implementierung gibt, prüfen zwei Werkzeuge, was ohne sie prüfbar ist:
+**R-14.8 (Testläufe).** Diese Werkzeuge prüfen die Testsuite:
 
 | Werkzeug | Prüft |
 |---|---|
 | `rpp-grammatik/tools/run_tests.py` | dass alle Testprogramme syntaktisch gültig sind, einschließlich aller Dateien eines Projekttests; dass ein erwarteter Syntaxfehler in der markierten Zeile liegt; die Markierungen `FEHLER` und die Kopfzeilen der Laufzeittests; die Regelabdeckung (R-14.6) |
 | `fr-modell/run_tests.py`, `fr-modell/fuzz.py` | die Regeln von Kapitel 5 an der Kernsprache FR++, einschließlich Ausführung und Zufallstests |
+| `fr-modell/vergleich.py` | dass `rppc` FR++-Programme, übersetzt nach Abschnitt 7 von Kapitel 5, genauso annimmt oder ablehnt wie das Modell (handgeschriebene und Zufallsprogramme) |
+| `rppc test` (erste Implementierung, ab Meilenstein M2) | übersetzen oder ablehnen nach R-14.7: akzeptierte und Laufzeittests ohne Fehler und mit Warnungen genau in den `WARNUNG`-Zeilen; abgelehnte nur mit Fehlern in der markierten Zeile, darunter einer der erwarteten Regel (V-14.2). Laufzeittests führt der Interpreter in beiden Modi aus und vergleicht Ausgabe, Exit-Code und Fehlerausgabe (ab M4). |
 
-Die Semantik der übrigen Kapitel ist erst mit einer Implementierung prüfbar.
+Die Semantik aller Kapitel prüft `rppc test`; Stand 22.11.2026: alle 258 Tests bestehen (übersetzen bzw. ablehnen, Laufzeittests in beiden Modi ausgeführt).
 
 **Stand vom 21.11.2026:**
 
 | Kapitel | akzeptiert | abgelehnt | Laufzeit | Regeln mit Test |
 |---|---|---|---|---|
 | 4 Typen | 8 | 27 | 2 | 47 von 47 |
-| 5 Ownership (R++ und FR++) | 6 + 10 | 20 + 24 | – | 24 von 24 |
+| 5 Ownership (R++ und FR++) | 7 + 11 | 26 + 25 | 3 | 25 von 25 |
 | 6 Null-Sicherheit | 5 | 17 | 2 | 23 von 23 |
-| 7 Klassen und Generics | 6 | 30 | 3 | 28 von 28 |
+| 7 Klassen und Generics | 6 | 30 | 4 | 28 von 28 |
 | 8 Anweisungen | 5 | 22 | 4 | 26 von 28 (+ 2 ohne Test) |
 | 9 Exceptions | 4 | 10 | 6 | 19 von 19 |
 | 10 Lambdas | 4 | 16 | 1 | 18 von 18 |
 | 11 Pakete und Projekte | 4 | 13 | 1 | 21 von 25 (+ 4 ohne Test) |
 | 12 Ausführungsmodell | – | – | 10 | 8 von 12 (+ 4 ohne Test) |
-| 13 Standardbibliothek | 5 | 7 | 4 | 19 von 20 (+ 1 ohne Test) |
-| **gesamt** | | | | **233 von 244**, dazu 11 begründet ohne Test |
+| 13 Standardbibliothek | 5 | 7 | 9 | 19 von 20 (+ 1 ohne Test) |
+| **gesamt** | | | | **234 von 245**, dazu 11 begründet ohne Test |
 
-Projekttests zählen als ein Test. Jede Regel der Kapitel 4 bis 13 ist in mindestens einem Testkopf genannt oder in Abschnitt 5 begründet. Geprüft sind die Tests bisher nur auf Syntax; ob ihre Erwartungen stimmen, zeigt erst eine Implementierung.
+Projekttests zählen als ein Test. Jede Regel der Kapitel 4 bis 13 ist in mindestens einem Testkopf genannt oder in Abschnitt 5 begründet. Alle Tests sind auf Syntax geprüft und mit der ersten Implementierung auch semantisch (übersetzen oder ablehnen); die Ausgaben der Laufzeittests prüft sie ab Meilenstein M4.
 
 ## 5. Regeln ohne eigenen Test
 

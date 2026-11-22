@@ -1,0 +1,45 @@
+// Knoten des Syntaxbaums. Der Baum ist einheitlich aufgebaut: Art, Text, Position,
+// Kinder. Seine Textform (dump) ist dieselbe wie die von rppc/crates/rpp-syntax/src/dump.rs.
+package compiler.syntax;
+
+using rpp.text.StringBuilder;
+
+export class Node {
+public:
+    string kind;
+    string text;
+    // 0: ohne Position
+    i32 line;
+    i32 col;
+    Node[] kids = [];
+
+    constructor(string kind, string text, i32 line, i32 col) {
+        this.kind = kind;
+        this.text = text;
+        this.line = line;
+        this.col = col;
+    }
+
+    void add(own Node n) & {
+        kids.push(n);
+    }
+
+    // Eine Zeile je Knoten: Einrückung, Art, Text, @zeile:spalte
+    void dump(StringBuilder& out, i32 depth) {
+        for (i32 i = 0; i < depth; i++) {
+            out.append("  ");
+        }
+        out.append(kind);
+        if (text.length > 0) {
+            out.append(" ");
+            out.append(text);
+        }
+        if (line > 0) {
+            out.append(" @" + line.toString() + ":" + col.toString());
+        }
+        out.appendChar('\n');
+        for (Node k : kids) {
+            k.dump(&out, depth + 1);
+        }
+    }
+}

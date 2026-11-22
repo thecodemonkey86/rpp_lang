@@ -1,0 +1,11 @@
+// Standardbibliothek: rpp.fmt (Kapitel 13, R-13.15)
+package rpp.fmt;
+
+export class Fmt {
+public:
+    static string padLeft(string s, i64 width) { fail("eingebaut"); }
+    static string padRight(string s, i64 width) { fail("eingebaut"); }
+    static string hex(i64 n) { fail("eingebaut"); }
+    static string hex(ui64 n) { fail("eingebaut"); }
+    static string fixed(f64 x, i32 digits) { fail("eingebaut"); }
+}

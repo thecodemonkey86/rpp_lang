@@ -1,0 +1,19 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.15, R-13.22, R-13.17
+// Erwartet: Ausgabe "   ab\nab   |\nff\n3.14\n2.67\n-"; Exit-Code 2; Fehlerausgabe enthält "IndexError"
+using rpp.fmt.Fmt;
+using rpp.env.Env;
+using rpp.collections.Map;
+
+i32 main(string[] args) {
+    print(Fmt::padLeft("ab", 5));
+    print(Fmt::padRight("ab", 5) + "|");
+    i64 n = 255;
+    print(Fmt::hex(n));
+    print(Fmt::fixed(3.14159, 2));
+    print(Fmt::fixed(2.675, 2));
+    print(Env::get("RPP_KONFORMITAET_NICHT_GESETZT") ?? "-");
+    Map<string, i32> m = new Map<string, i32>();
+    ref i32& x = &m.at("fehlt");
+    return 0;
+}

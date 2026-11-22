@@ -1,0 +1,43 @@
+// Konformitätstest Kapitel 5 – Laufzeit.
+// Regel: R-5.3, R-4.25, R-4.36
+// Erwartet: Ausgabe "privat 1\nprivat 2\nprivat 3\n3 x"; Exit-Code 0
+enum Access {
+    Public,
+    Private,
+}
+
+class Part {
+public:
+    i32 n = 0;
+}
+
+class Info {
+public:
+    Part part;
+    Access access;
+    constructor(own Part part, Access access) {
+        this.part = part;
+        this.access = access;
+    }
+}
+
+i32 main(string[] args) {
+    // Ein Enum ohne Daten und ein Tupel aus Grundwerten werden kopiert, nicht
+    // verschoben (Kapitel 5, Abschnitt 7): access bleibt in jeder Runde verfügbar.
+    Access access = Access::Private;
+    (i32, string) pair = (3, "x");
+    for (i32 i = 1; i <= 3; i++) {
+        Part p = new Part();
+        Access acc = access;
+        Info info = new Info(p, acc);
+        string name = "öffentlich";
+        if (info.access == Access::Private) {
+            name = "privat";
+        }
+        print(name + " " + i.toString());
+        (i32, string) copy2 = pair;
+    }
+    (i32 n, string s) = pair;
+    print(n.toString() + " " + s);
+    return 0;
+}

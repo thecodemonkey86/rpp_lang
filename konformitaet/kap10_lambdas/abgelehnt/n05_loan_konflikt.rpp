@@ -36,7 +36,7 @@ class T {
 public:
     void m(Items& items) {
         items.update((Foo& f) => { // FEHLER
-            f.x = items.list.length;
+            if (items.list.length > 0) { f.bump(); }
         });
     }
 }

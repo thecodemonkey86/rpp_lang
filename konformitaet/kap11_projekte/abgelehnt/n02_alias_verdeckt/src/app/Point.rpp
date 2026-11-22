@@ -1,0 +1,8 @@
+package app;
+
+using Point = acme.geo.Point; // FEHLER
+
+class Point {
+public:
+    i32 x = 0;
+}

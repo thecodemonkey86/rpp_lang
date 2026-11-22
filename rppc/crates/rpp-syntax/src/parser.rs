@@ -34,6 +34,7 @@ pub(crate) struct Parser {
     toks: Vec<Token>,
     pos: usize,
     furthest: Option<(usize, String)>,
+    next_id: u32,
 }
 
 /// Zusammenhang, in dem ein Typ steht.
@@ -47,7 +48,12 @@ enum TypeCtx {
 
 impl Parser {
     pub(crate) fn new(toks: Vec<Token>) -> Parser {
-        Parser { toks, pos: 0, furthest: None }
+        Parser { toks, pos: 0, furthest: None, next_id: 0 }
+    }
+
+    fn expr_id(&mut self) -> u32 {
+        self.next_id += 1;
+        self.next_id
     }
 
     pub(crate) fn error(&self) -> SyntaxError {
@@ -927,7 +933,7 @@ impl Parser {
                 } else {
                     LambdaBody::Expr(Box::new(self.expression()?))
                 };
-                return Ok(Expr { kind: ExprKind::Lambda { own, params, body }, span });
+                return Ok(Expr { kind: ExprKind::Lambda { own, params, body }, span, id: self.expr_id() });
             }
         }
         self.conditional()
@@ -952,6 +958,7 @@ impl Parser {
             return Ok(Expr {
                 kind: ExprKind::Conditional { cond: Box::new(cond), then: Box::new(then), otherwise: Box::new(otherwise) },
                 span,
+                id: self.expr_id(),
             });
         }
         Ok(cond)
@@ -962,7 +969,7 @@ impl Parser {
         if self.eat_p(P::QuestionQuestion) {
             let right = self.coalesce()?;
             let span = left.span;
-            return Ok(Expr { kind: ExprKind::Coalesce { left: Box::new(left), right: Box::new(right) }, span });
+            return Ok(Expr { kind: ExprKind::Coalesce { left: Box::new(left), right: Box::new(right) }, span, id: self.expr_id() });
         }
         Ok(left)
     }
@@ -1008,11 +1015,11 @@ impl Parser {
             left = match op {
                 None => {
                     let ty = self.ty(TypeCtx::AfterAs)?;
-                    Expr { kind: ExprKind::As { expr: Box::new(left), ty }, span }
+                    Expr { kind: ExprKind::As { expr: Box::new(left), ty }, span, id: self.expr_id() }
                 }
                 Some(op) => {
                     let right = self.binary(prec + 1)?;
-                    Expr { kind: ExprKind::Binary { op, left: Box::new(left), right: Box::new(right) }, span }
+                    Expr { kind: ExprKind::Binary { op, left: Box::new(left), right: Box::new(right) }, span, id: self.expr_id() }
                 }
             };
         }
@@ -1031,7 +1038,7 @@ impl Parser {
         };
         self.bump();
         let expr = Box::new(self.unary()?);
-        Ok(Expr { kind: ExprKind::Unary { op, expr }, span })
+        Ok(Expr { kind: ExprKind::Unary { op, expr }, span, id: self.expr_id() })
     }
 
     fn postfix(&mut self) -> PResult<Expr> {
@@ -1042,25 +1049,25 @@ impl Parser {
                 let safe = self.is_p(P::QuestionDot);
                 self.bump();
                 let name = self.ident()?;
-                e = Expr { kind: ExprKind::Member { object: Box::new(e), name, safe }, span };
+                e = Expr { kind: ExprKind::Member { object: Box::new(e), name, safe }, span, id: self.expr_id() };
             } else if self.is_p(P::LParen) {
                 let args = self.args()?;
-                e = Expr { kind: ExprKind::Call { callee: Box::new(e), args }, span };
+                e = Expr { kind: ExprKind::Call { callee: Box::new(e), args }, span, id: self.expr_id() };
             } else if self.eat_p(P::LBracket) {
                 let from = if self.is_p(P::DotDot) { None } else { Some(Box::new(self.expression()?)) };
                 if self.eat_p(P::DotDot) {
                     let to = if self.is_p(P::RBracket) { None } else { Some(Box::new(self.expression()?)) };
                     self.expect_p(P::RBracket)?;
-                    e = Expr { kind: ExprKind::Slice { object: Box::new(e), from, to }, span };
+                    e = Expr { kind: ExprKind::Slice { object: Box::new(e), from, to }, span, id: self.expr_id() };
                 } else {
                     self.expect_p(P::RBracket)?;
                     let index = from.expect("Index ohne Bereich hat einen Ausdruck");
-                    e = Expr { kind: ExprKind::Index { object: Box::new(e), index }, span };
+                    e = Expr { kind: ExprKind::Index { object: Box::new(e), index }, span, id: self.expr_id() };
                 }
             } else if self.eat_p(P::PlusPlus) {
-                e = Expr { kind: ExprKind::PostInc(Box::new(e)), span };
+                e = Expr { kind: ExprKind::PostInc(Box::new(e)), span, id: self.expr_id() };
             } else if self.eat_p(P::MinusMinus) {
-                e = Expr { kind: ExprKind::PostDec(Box::new(e)), span };
+                e = Expr { kind: ExprKind::PostDec(Box::new(e)), span, id: self.expr_id() };
             } else {
                 return Ok(e);
             }
@@ -1118,7 +1125,7 @@ impl Parser {
         let span = self.span();
         if let Some(lit) = self.literal_at(0) {
             self.bump();
-            return Ok(Expr { kind: ExprKind::Literal(lit), span });
+            return Ok(Expr { kind: ExprKind::Literal(lit), span, id: self.expr_id() });
         }
         let kind = match self.kind(0).clone() {
             T::Keyword(K::This) => {
@@ -1181,6 +1188,6 @@ impl Parser {
             _ if self.primitive().is_some() => ExprKind::Static(self.static_ref()?),
             _ => return self.fail("Ausdruck"),
         };
-        Ok(Expr { kind, span })
+        Ok(Expr { kind, span, id: self.expr_id() })
     }
 }

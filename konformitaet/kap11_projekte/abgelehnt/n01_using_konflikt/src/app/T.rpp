@@ -1,0 +1,9 @@
+package app;
+
+using acme.graph.Node;
+using acme.tree.Node;
+
+class T {
+public:
+    void m(Node n) { } // FEHLER
+}

@@ -1,0 +1,491 @@
+// Semantische Typen, gleichwertig zu rppc/crates/rpp-sema/src/ty.rs. Ein Typ ist nach
+// seinem Aufbau unveränderlich und wird als shared Ty geteilt.
+package compiler.sema;
+
+export enum TK {
+    // nach einem gemeldeten Fehler; passt zu allem, damit keine Folgefehler entstehen
+    Error,
+    Void,
+    // Typ des Literals null
+    Null,
+    Prim,
+    // Klasse, Mixin oder Enum mit Typargumenten
+    Named,
+    Param,
+    Vector,
+    Array,
+    Slice,
+    Tuple,
+    Func,
+    Nullable,
+    Shared,
+    Weak,
+}
+
+// Markierung eines Parameters (R-10.1)
+export enum Mode {
+    Read,
+    Mut,
+    Own,
+}
+
+export class Ty {
+public:
+    TK kind;
+    // bei Prim: Name des Grundtyps
+    string prim = "";
+    // bei Named: Typ-Nummer; bei Param: Nummer des Typ-Parameters
+    i64 id = -1;
+    // bei Array: Länge oder -1
+    i64 size = -1;
+    // Named: Typargumente; Tuple: Elemente; Func: Parametertypen und zuletzt der
+    // Rückgabetyp; Vector, Array, Slice, Nullable, Shared, Weak: der innere Typ
+    shared Ty[] args = [];
+    // Func: Markierungen der Parameter
+    Mode[] modes = [];
+
+    constructor(TK kind) {
+        this.kind = kind;
+    }
+
+    static shared Ty simple(TK kind) {
+        shared Ty t = new Ty(kind);
+        return t;
+    }
+
+    static shared Ty error() {
+        return simple(TK::Error);
+    }
+
+    static shared Ty ofPrim(string p) {
+        Ty t = new Ty(TK::Prim);
+        t.prim = p;
+        shared Ty s = t;
+        return s;
+    }
+
+    static shared Ty param(i64 id) {
+        Ty t = new Ty(TK::Param);
+        t.id = id;
+        shared Ty s = t;
+        return s;
+    }
+
+    static shared Ty named(i64 id, shared Ty[] args) {
+        Ty t = new Ty(TK::Named);
+        t.id = id;
+        for (shared Ty a : args) {
+            t.args.push(a);
+        }
+        shared Ty s = t;
+        return s;
+    }
+
+    static shared Ty list(TK kind, shared Ty[] items) {
+        Ty t = new Ty(kind);
+        for (shared Ty a : items) {
+            t.args.push(a);
+        }
+        shared Ty s = t;
+        return s;
+    }
+
+    // Vector, Slice, Shared, Weak, Nullable (ohne Prüfung): ein innerer Typ
+    static shared Ty wrap(TK kind, shared Ty inner) {
+        Ty t = new Ty(kind);
+        t.args.push(inner);
+        shared Ty s = t;
+        return s;
+    }
+
+    static shared Ty array(shared Ty inner, i64 size) {
+        Ty t = new Ty(TK::Array);
+        t.args.push(inner);
+        t.size = size;
+        shared Ty s = t;
+        return s;
+    }
+
+    static shared Ty func(shared Ty[] params, Mode[] modes, shared Ty ret) {
+        Ty t = new Ty(TK::Func);
+        for (shared Ty a : params) {
+            t.args.push(a);
+        }
+        for (Mode m : modes) {
+            t.modes.push(m);
+        }
+        t.args.push(ret);
+        shared Ty s = t;
+        return s;
+    }
+
+    // T? (bleibt bei T?, Fehler, null und void unverändert)
+    static shared Ty nullable(shared Ty t) {
+        if (t.kind == TK::Nullable || t.kind == TK::Error || t.kind == TK::Null || t.kind == TK::Void) {
+            return t;
+        }
+        return wrap(TK::Nullable, t);
+    }
+
+    // ohne Besitzform (aber mit ?)
+    static shared Ty unformed(shared Ty t) {
+        shared Ty cur = t;
+        while (cur.kind == TK::Shared || cur.kind == TK::Weak) {
+            cur = cur.args[0];
+        }
+        return cur;
+    }
+
+    bool isError() {
+        return kind == TK::Error;
+    }
+
+    // strukturelle Gleichheit
+    bool same(Ty o) {
+        if (kind != o.kind || prim != o.prim || id != o.id || size != o.size) {
+            return false;
+        }
+        if (args.length != o.args.length || modes.length != o.modes.length) {
+            return false;
+        }
+        for (i64 i = 0; i < args.length; i++) {
+            if (!args[i].same(o.args[i])) {
+                return false;
+            }
+        }
+        for (i64 i = 0; i < modes.length; i++) {
+            if (modes[i] != o.modes[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool mentionsParam() {
+        if (kind == TK::Param) {
+            return true;
+        }
+        for (shared Ty a : args) {
+            if (a.mentionsParam()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Setzt Typargumente ein
+    static shared Ty subst(shared Ty t, Subst m) {
+        if (m.keys.length == 0) {
+            return t;
+        }
+        if (t.kind == TK::Param) {
+            for (i64 i = 0; i < m.keys.length; i++) {
+                if (m.keys[i] == t.id) {
+                    return m.vals[i];
+                }
+            }
+            return t;
+        }
+        if (t.args.length == 0) {
+            return t;
+        }
+        if (t.kind == TK::Nullable) {
+            return nullable(subst(t.args[0], m));
+        }
+        Ty c = new Ty(t.kind);
+        c.prim = t.prim;
+        c.id = t.id;
+        c.size = t.size;
+        for (shared Ty a : t.args) {
+            c.args.push(subst(a, m));
+        }
+        for (Mode md : t.modes) {
+            c.modes.push(md);
+        }
+        shared Ty s = c;
+        return s;
+    }
+}
+
+// Zuordnung Typ-Parameter → Typ
+export class Subst {
+public:
+    i64[] keys = [];
+    shared Ty[] vals = [];
+}
+
+// Hilfen über Typen für die Prüfung der Rümpfe (wie die Methoden von Ty in ty.rs und die
+// statischen Hilfen in body.rs)
+export class Tys {
+public:
+    // ohne ? und ohne Besitzform
+    static shared Ty core(shared Ty t) {
+        shared Ty cur = t;
+        while (cur.kind == TK::Nullable || cur.kind == TK::Shared || cur.kind == TK::Weak) {
+            cur = cur.args[0];
+        }
+        return cur;
+    }
+
+    // Grundtyp ohne Besitzform; "" , wenn keiner
+    static string prim(Ty t) {
+        if (t.kind == TK::Shared || t.kind == TK::Weak) {
+            return prim(t.args[0]);
+        }
+        if (t.kind == TK::Prim) {
+            return t.prim;
+        }
+        return "";
+    }
+
+    static bool isBool(Ty t) {
+        return prim(t) == "bool";
+    }
+
+    static bool isNumeric(Ty t) {
+        return Num::isNumeric(prim(t));
+    }
+
+    static bool isInteger(Ty t) {
+        return Num::isInteger(prim(t));
+    }
+
+    static bool isString(Ty t) {
+        return prim(t) == "string";
+    }
+
+    // nullbar, auch hinter einer Besitzform
+    static bool nullable(Ty t) {
+        if (t.kind == TK::Nullable || t.kind == TK::Null) {
+            return true;
+        }
+        if (t.kind == TK::Shared || t.kind == TK::Weak) {
+            return nullable(t.args[0]);
+        }
+        return false;
+    }
+
+    // der verengte Typ (R-6.5): ohne ?, mit derselben Besitzform
+    static shared Ty stripNull(shared Ty t) {
+        if (t.kind == TK::Nullable) {
+            return t.args[0];
+        }
+        if (t.kind == TK::Shared || t.kind == TK::Weak) {
+            return Ty::wrap(t.kind, stripNull(t.args[0]));
+        }
+        return t;
+    }
+
+    static bool isShared(Ty t) {
+        if (t.kind == TK::Shared) {
+            return true;
+        }
+        if (t.kind == TK::Nullable) {
+            return isShared(t.args[0]);
+        }
+        return false;
+    }
+
+    // Ziel eines weak-Verweises (auch hinter ?)
+    static shared Ty? weakInner(shared Ty t) {
+        if (t.kind == TK::Weak) {
+            return t.args[0];
+        }
+        if (t.kind == TK::Nullable) {
+            return weakInner(t.args[0]);
+        }
+        return null;
+    }
+
+    static bool isVoid(Ty t) {
+        return t.kind == TK::Void;
+    }
+}
+
+// Zahlregeln aus Kapitel 4 (R-4.6, R-4.7, R-4.12), gleichwertig zu ty.rs
+export class Num {
+public:
+    static bool isInteger(string p) {
+        return p == "i8" || p == "i16" || p == "i32" || p == "i64" || p == "ui8" || p == "ui16" || p == "ui32" || p == "ui64";
+    }
+
+    static bool isFloat(string p) {
+        return p == "f32" || p == "f64";
+    }
+
+    static bool isNumeric(string p) {
+        return isInteger(p) || isFloat(p);
+    }
+
+    static bool isUnsigned(string p) {
+        return p == "ui8" || p == "ui16" || p == "ui32" || p == "ui64";
+    }
+
+    // automatische Umwandlung zwischen Zahltypen (Tabelle in R-4.6), ohne die Identität
+    static bool autoConverts(string from, string to) {
+        string[] targets = [];
+        if (from == "i8") {
+            targets = ["i16", "i32", "i64", "f32", "f64"];
+        } else if (from == "i16") {
+            targets = ["i32", "i64", "f32", "f64"];
+        } else if (from == "i32") {
+            targets = ["i64", "f64"];
+        } else if (from == "ui8") {
+            targets = ["ui16", "ui32", "ui64", "i16", "i32", "i64", "f32", "f64"];
+        } else if (from == "ui16") {
+            targets = ["ui32", "ui64", "i32", "i64", "f32", "f64"];
+        } else if (from == "ui32") {
+            targets = ["ui64", "i64", "f64"];
+        } else if (from == "f32") {
+            targets = ["f64"];
+        }
+        for (string t : targets) {
+            if (t == to) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool convertsOrSame(string from, string to) {
+        return from == to || autoConverts(from, to);
+    }
+
+    // gemeinsamer Typ zweier Zahltypen (R-4.12); "" , wenn keiner
+    static string common(string a, string b) {
+        bool bothInt = isInteger(a) && isInteger(b);
+        string[] all = ["i8", "i16", "i32", "i64", "ui8", "ui16", "ui32", "ui64", "f32", "f64"];
+        string[] cands = [];
+        for (string t : all) {
+            if (convertsOrSame(a, t) && convertsOrSame(b, t) && (!bothInt || isInteger(t))) {
+                cands.push(t);
+            }
+        }
+        for (string t : cands) {
+            bool ok = true;
+            for (string o : cands) {
+                if (!convertsOrSame(t, o)) {
+                    ok = false;
+                }
+            }
+            if (ok) {
+                return t;
+            }
+        }
+        return "";
+    }
+
+    // Wert eines Ganzzahlliterals ohne Vorzeichen (ohne Trenner, auch hexadezimal)
+    static (bool, ui64) value(string text) {
+        string clean = text.replace("_", "");
+        ui64 radix = 10;
+        i64 start = 0;
+        if (clean.startsWith("0x")) {
+            radix = 16;
+            start = 2;
+        }
+        if (start >= clean.length) {
+            return (false, 0);
+        }
+        ui64 v = 0;
+        for (i64 i = start; i < clean.length; i++) {
+            char c = clean[i];
+            ui64 d = 99;
+            if (c >= '0' && c <= '9') {
+                d = cast<ui64>(cast<i64>(c) - cast<i64>('0'));
+            } else if (radix == 16 && c >= 'a' && c <= 'f') {
+                d = cast<ui64>(cast<i64>(c) - cast<i64>('a') + 10);
+            } else if (radix == 16 && c >= 'A' && c <= 'F') {
+                d = cast<ui64>(cast<i64>(c) - cast<i64>('A') + 10);
+            }
+            if (d >= radix || v > (ui64::MAX - d) / radix) {
+                return (false, 0);
+            }
+            v = v * radix + d;
+        }
+        return (true, v);
+    }
+
+    // Passt der Wert (Vorzeichen, Betrag) in den Zahltyp p (R-4.7)?
+    static bool fits(bool neg, ui64 mag, string p) {
+        if (isFloat(p)) {
+            return true;
+        }
+        if (!isInteger(p)) {
+            return false;
+        }
+        if (neg && mag > 0) {
+            if (isUnsigned(p)) {
+                return false;
+            }
+            if (p == "i8") {
+                return mag <= 128;
+            }
+            if (p == "i16") {
+                return mag <= 32768;
+            }
+            if (p == "i32") {
+                return mag <= 2147483648;
+            }
+            return mag <= 9223372036854775808;
+        }
+        if (p == "i8") {
+            return mag <= 127;
+        }
+        if (p == "i16") {
+            return mag <= 32767;
+        }
+        if (p == "i32") {
+            return mag <= 2147483647;
+        }
+        if (p == "i64") {
+            return mag <= 9223372036854775807;
+        }
+        if (p == "ui8") {
+            return mag <= 255;
+        }
+        if (p == "ui16") {
+            return mag <= 65535;
+        }
+        if (p == "ui32") {
+            return mag <= 4294967295;
+        }
+        return true;
+    }
+
+    // Typ eines Ganzzahlliterals ohne Zusammenhang (R-4.7)
+    static string defaultInt(bool neg, ui64 mag) {
+        if (fits(neg, mag, "i32")) {
+            return "i32";
+        }
+        return "i64";
+    }
+
+    static string show(bool neg, ui64 mag) {
+        if (neg && mag > 0) {
+            return "-" + mag.toString();
+        }
+        return mag.toString();
+    }
+
+    // Ist ein Gleitkommaliteral im Typ p endlich darstellbar (R-4.7)?
+    static bool floatFits(string text, string p) {
+        string clean = text.replace("_", "");
+        f64 v = 0.0;
+        try {
+            v = f64::parse(clean);
+        } catch (Exception e) {
+            return false;
+        }
+        if (!(v - v == 0.0)) {
+            return false;
+        }
+        if (p == "f64") {
+            return true;
+        }
+        if (p == "f32") {
+            return v.abs() < 340282356779733661637539395458142568448.0;
+        }
+        return false;
+    }
+}

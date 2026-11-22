@@ -1,8 +1,8 @@
 # R++ Null-Sicherheit (Kapitel 6)
 
-Stand: 20.11.2026, Entwurf 0.1. Dieses Dokument füllt Kapitel 6 des „R++ Spezifikationsgerüsts“. Es legt fest, wann ein nullbarer Wert benutzt werden darf, wie der Compiler das prüft (Typverengung) und was die Kurzformen `?.` und `??` bedeuten. Welche Typen nullbar sind, regelt Kapitel 4 (Abschnitt 11); wie Verengung mit Besitz und Borrows zusammenspielt, Kapitel 5.
+Stand: 21.11.2026, Entwurf 0.2. Dieses Dokument füllt Kapitel 6 des „R++ Spezifikationsgerüsts“. Es legt fest, wann ein nullbarer Wert benutzt werden darf, wie der Compiler das prüft (Typverengung) und was die Kurzformen `?.` und `??` bedeuten. Welche Typen nullbar sind, regelt Kapitel 4 (Abschnitt 11); wie Verengung mit Besitz und Borrows zusammenspielt, Kapitel 5.
 
-Alle Festlegungen dieses Kapitels sind entschieden (siehe „R++ Designentscheidungen“, Abschnitte 4 und 19). Jede normative Regel trägt eine Nummer `R-6.n`. Die Konformitätstests liegen in `konformitaet/kap06_null/`.
+Alle Festlegungen dieses Kapitels sind entschieden (siehe „R++ Designentscheidungen“, Abschnitte 4 und 19), einschließlich der Klarstellung V-6.1 aus der ersten Implementierung (Abschnitt 9). Jede normative Regel trägt eine Nummer `R-6.n`. Die Konformitätstests liegen in `konformitaet/kap06_null/`.
 
 ## 1. Ziel
 
@@ -125,7 +125,7 @@ string describe(Node? n, Shape s) {
 
 ## 8. Konformitätstests
 
-Die Testprogramme liegen in `konformitaet/kap06_null/`; geprüft wird bisher nur die Syntax.
+Die Testprogramme liegen in `konformitaet/kap06_null/`; geprüft werden sie mit `rppc test` (erste Implementierung, Meilenstein M3).
 
 | Regeln | Akzeptiert | Abgelehnt |
 |---|---|---|
@@ -139,3 +139,9 @@ Die Testprogramme liegen in `konformitaet/kap06_null/`; geprüft wird bisher nur
 | R-6.15 Holen | `a03_felder.rpp` | `n13_feld_herausbewegen.rpp` |
 | R-6.16 – R-6.18 `?.`, `??` | `a02_kurzformen.rpp` | `n07_sicherer_zugriff_nicht_nullbar.rpp`, `n08_ersatz_nicht_nullbar.rpp`, `n09_void_als_wert.rpp` |
 | R-6.13, R-6.20 Lambdas, Generics | `a04_lambdas_generics.rpp` | – |
+
+## 9. Klarstellung aus der ersten Implementierung
+
+| Nr. | Vorschlag |
+|---|---|
+| V-6.1 | (angenommen am 21.11.2026) Ob ein Ausdruck „einen nullbaren Typ hat“ (R-6.3, R-6.16, R-6.18), richtet sich bei einer Variablen nach ihrem deklarierten Typ, nicht nach dem verengten. Nach `Node? v = new Node();` ist `v` verengt (R-6.11), aber `v?.run()`, `v ?? w` und `v == null` bleiben erlaubt. Für Felder, Elemente und Aufrufe zählt ihr Typ. Begründung: Sonst würde jede Verengung benachbarten, bisher korrekten Code ungültig machen; der Laufzeittest `l02_sicherer_zugriff.rpp` verwendet genau diese Form. |

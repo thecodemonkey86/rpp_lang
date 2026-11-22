@@ -1,0 +1,45 @@
+// Standardbibliothek: rpp.collections (Kapitel 13, R-13.17, R-13.18)
+// Die Rümpfe sind Platzhalter; die Implementierung folgt mit dem Interpreter (M4, M5).
+package rpp.collections;
+
+export class Entry<K, V> {
+public:
+    K key;
+    V value;
+    constructor(own K key, own V value) {
+        this.key = key;
+        this.value = value;
+    }
+}
+
+export class Map<K : Hashable & Equatable<K>, V> {
+    import Iterable<Entry<K, V>, i64>;
+public:
+    constructor() { }
+    nodiscard i64 length() { fail("eingebaut"); }
+    nodiscard bool contains(K key) { fail("eingebaut"); }
+    ref V? get(K key) { fail("eingebaut"); }
+    ref V& at(K key) & { fail("eingebaut"); }
+    void put(own K key, own V value) & { fail("eingebaut"); }
+    V? remove(K key) & { fail("eingebaut"); }
+    void clear() & { fail("eingebaut"); }
+    nodiscard i64 begin() { fail("eingebaut"); }
+    nodiscard bool done(i64 cursor) { fail("eingebaut"); }
+    nodiscard i64 next(i64 cursor) { fail("eingebaut"); }
+    ref Entry<K, V> at(i64 cursor) { fail("eingebaut"); }
+}
+
+export class Set<T : Hashable & Equatable<T>> {
+    import Iterable<T, i64>;
+public:
+    constructor() { }
+    void add(own T x) & { fail("eingebaut"); }
+    nodiscard bool contains(T x) { fail("eingebaut"); }
+    void remove(T x) & { fail("eingebaut"); }
+    void clear() & { fail("eingebaut"); }
+    nodiscard i64 length() { fail("eingebaut"); }
+    nodiscard i64 begin() { fail("eingebaut"); }
+    nodiscard bool done(i64 cursor) { fail("eingebaut"); }
+    nodiscard i64 next(i64 cursor) { fail("eingebaut"); }
+    ref T at(i64 cursor) { fail("eingebaut"); }
+}

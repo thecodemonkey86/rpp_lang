@@ -1,5 +1,5 @@
 // Konformitätstest Kapitel 13 – muss abgelehnt werden.
-// Regel: R-13.18, R-13.8
+// Regel: R-7.26, R-13.18, R-13.8
 // Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Point ist nicht Hashable).
 package konformitaet.kap13;
 

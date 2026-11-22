@@ -1,0 +1,14 @@
+// Regeln: R-5.25
+// erwartet: Fehler R-5.25 in der mit FEHLER markierten Zeile
+class A {
+    int v;
+    destructor() { print(copy this.v); }
+}
+class B {
+    own A x;
+    destructor() { print(0); }
+}
+main {
+    own B b = new B(new A(1));
+    (own A a) = move b;    // FEHLER
+}

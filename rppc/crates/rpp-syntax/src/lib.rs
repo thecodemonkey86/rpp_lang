@@ -6,6 +6,7 @@
 //! (erlaubte Formen von Ausdrucksanweisungen, Kapitel 8, R-8.12).
 
 pub mod ast;
+pub mod dump;
 pub mod lexer;
 pub mod parser;
 pub mod preprocess;

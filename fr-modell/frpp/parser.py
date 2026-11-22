@@ -155,6 +155,11 @@ class Parser:
                 return A.Type(k, self.ident())
         raise ParseError(f"Typ erwartet, gefunden {self.peek()[1]!r}", self.line())
 
+    def is_type_at(self, k):
+        if self.at("int", k):
+            return True
+        return any(self.at(w, k) for w in ("own", "shared", "weak")) and self.peek(k + 1)[0] == "id" and self.peek(k + 2)[0] == "id"
+
     def is_type_start(self):
         if self.at("int"):
             return True
@@ -190,6 +195,24 @@ class Parser:
             e = self.expr()
             self.take(";")
             return A.Decl(t, x, e, line)
+        if self.at("(") and self.is_type_at(1):           # (S x, S y) = move z;  (R-5.25)
+            self.i += 1
+            vars_ = []
+            while True:
+                t = self.type()
+                if t.kind not in A.STORABLE:
+                    raise ParseError("Zerlegen bindet an Variablen mit Speichertyp", line)
+                vars_.append((t, self.ident()))
+                if self.at(","):
+                    self.i += 1
+                    continue
+                break
+            self.take(")")
+            self.take("=")
+            self.take("move")
+            y = self.ident()
+            self.take(";")
+            return A.Unpack(vars_, y, line)
         if self.at("if"):
             self.i += 1
             self.take("(")

@@ -1,0 +1,38 @@
+// Standardbibliothek: rpp.io (Kapitel 13, R-13.19 bis R-13.21)
+package rpp.io;
+
+export class File {
+public:
+    static own File open(string path) { fail("eingebaut"); }
+    nodiscard string readAllText() { fail("eingebaut"); }
+    nodiscard byte[] readAllBytes() { fail("eingebaut"); }
+    static void writeText(string path, string text) { fail("eingebaut"); }
+    static void writeBytes(string path, Slice<byte> data) { fail("eingebaut"); }
+    // V-13.8: gibt es eine gewöhnliche Datei unter path?
+    static bool exists(string path) { fail("eingebaut"); }
+    destructor() { }
+}
+
+export class Dir {
+public:
+    static string[] list(string path) { fail("eingebaut"); }
+    static bool exists(string path) { fail("eingebaut"); }
+    static void create(string path) { fail("eingebaut"); }
+}
+
+export class Path {
+public:
+    static string join(string a, string b) { fail("eingebaut"); }
+    static string fileName(string p) { fail("eingebaut"); }
+    static string extension(string p) { fail("eingebaut"); }
+    static string parent(string p) { fail("eingebaut"); }
+    // V-13.8: absoluter Pfad mit / als Trenner, . und .. textuell aufgelöst
+    static string absolute(string p) { fail("eingebaut"); }
+}
+
+export class Console {
+public:
+    static void write(string text) { fail("eingebaut"); }
+    static void error(string text) { fail("eingebaut"); }
+    static string? readLine() { fail("eingebaut"); }
+}

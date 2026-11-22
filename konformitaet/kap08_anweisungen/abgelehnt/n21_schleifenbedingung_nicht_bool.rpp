@@ -1,5 +1,5 @@
 // Konformitätstest Kapitel 8 – muss abgelehnt werden.
-// Regel: R-8.22, R-4.3
+// Regel: R-4.3, R-8.22
 // Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (die Bedingung hat den Typ i32).
 package konformitaet.kap08;
 

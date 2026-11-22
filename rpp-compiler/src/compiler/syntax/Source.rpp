@@ -1,0 +1,49 @@
+// Eine Quelldatei lesen wie rpp_syntax::parse in rppc: Direktiven auflösen, zerlegen,
+// parsen, Ausdrucksanweisungen prüfen (R-8.12). Der erste Fehler wird als SyntaxError geworfen.
+package compiler.syntax;
+
+using rpp.collections.Set;
+using compiler.lexer.Lexer;
+using compiler.lexer.Token;
+using compiler.pre.Preprocessor;
+using compiler.pre.DirectiveError;
+
+export class SyntaxError : Exception {
+public:
+    i32 line;
+    i32 col;
+    constructor(i32 line, i32 col, string message) : base(message) {
+        this.line = line;
+        this.col = col;
+    }
+}
+
+export class Source {
+public:
+    static Node parse(string source, Set<string> symbols) {
+        string text = "";
+        try {
+            text = Preprocessor::run(source, symbols);
+        } catch (DirectiveError e) {
+            throw new SyntaxError(e.line, 0, "Direktive: " + e.message);
+        }
+        Lexer lx = new Lexer(text);
+        Token[] tokens = lx.lex();
+        Parser p = new Parser(tokens);
+        Node? unit = null;
+        try {
+            unit = p.compilationUnit();
+        } catch (ParseFail e) {
+            (i32 l, i32 c, string msg) = p.error();
+            throw new SyntaxError(l, c, msg);
+        }
+        if (unit == null) {
+            throw new SyntaxError(0, 0, "Syntaxfehler");
+        }
+        (i32 bl, i32 bc) = Parser::firstBad(unit, 0, 0);
+        if (bl > 0) {
+            throw new SyntaxError(bl, bc, Parser::badStatement());
+        }
+        return unit;
+    }
+}

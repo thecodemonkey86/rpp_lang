@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 5 – Laufzeit.
+// Regel: R-5.25, V-7
+// Erwartet: Ausgabe "zerlegt\nfrei 2\nfrei 1"; Exit-Code 0
+class Part {
+public:
+    i32 n;
+    constructor(i32 n) { this.n = n; }
+    destructor() { print("frei " + n.toString()); }
+}
+
+class Box {
+public:
+    Part a;
+    Part b;
+    constructor(own Part a, own Part b) {
+        this.a = a;
+        this.b = b;
+    }
+}
+
+i32 main(string[] args) {
+    Box x = new Box(new Part(1), new Part(2));
+    // Die Teile gehen an a und b über; Box wird ohne Destruktor freigegeben.
+    (Part a, Part b) = x;
+    print("zerlegt");
+    return 0;
+}

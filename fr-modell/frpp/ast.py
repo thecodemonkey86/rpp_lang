@@ -172,6 +172,13 @@ class Upgrade:
 
 
 @dataclass
+class Unpack:                 # (S₁ x₁, …, Sₙ xₙ) = move y;  (R-5.25)
+    vars: list                # [(Type, Name)]
+    var: str
+    line: int = 0
+
+
+@dataclass
 class Print:                  # Erweiterung für Testprogramme
     expr: object
     line: int = 0
@@ -246,6 +253,9 @@ def stmts_str(stmts, ind):
             out.append(f"{pad}{expr_str(s.expr)};")
         elif isinstance(s, Print):
             out.append(f"{pad}print({expr_str(s.expr)});")
+        elif isinstance(s, Unpack):
+            vs = ", ".join(f"{t} {x}" for t, x in s.vars)
+            out.append(f"{pad}({vs}) = move {s.var};")
         elif isinstance(s, If):
             out.append(f"{pad}if ({place_str(s.cond)}) {{")
             out += stmts_str(s.then, ind + 1)

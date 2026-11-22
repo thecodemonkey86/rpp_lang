@@ -1,0 +1,53 @@
+// Tokens des Lexers (Kapitel 2 des Spezifikationsgerüsts, Lexer-Regeln in RPP.g4).
+package compiler.lexer;
+
+export enum Kind {
+    Keyword,
+    Ident,
+    Int,
+    Float,
+    Str,
+    Char,
+    Punct,
+    Error,
+    Eof,
+}
+
+export class Token {
+public:
+    Kind kind;
+    // Text des Tokens; bei Strings und Zeichen der Inhalt ohne Anführungszeichen, bei Fehlern die Meldung
+    string text;
+    i32 line;
+    i32 col;
+
+    constructor(Kind kind, string text, i32 line, i32 col) {
+        this.kind = kind;
+        this.text = text;
+        this.line = line;
+        this.col = col;
+    }
+
+    string kindName() {
+        switch (kind) {
+            case Keyword: return "kw";
+            case Ident: return "id";
+            case Int: return "int";
+            case Float: return "float";
+            case Str: return "str";
+            case Char: return "char";
+            case Punct: return "punct";
+            case Error: return "error";
+            case Eof: return "eof";
+        }
+    }
+
+    // Eine Zeile wie "3:4 id Foo"; dieselbe Form gibt `rppc tokens` aus.
+    string describe() {
+        string pos = line.toString() + ":" + col.toString();
+        if (kind == Kind::Eof) {
+            return pos + " eof";
+        }
+        return pos + " " + kindName() + " " + text;
+    }
+}

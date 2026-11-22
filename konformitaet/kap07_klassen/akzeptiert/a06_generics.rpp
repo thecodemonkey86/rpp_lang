@@ -2,10 +2,6 @@
 // Regel: R-7.23, R-7.24, R-7.25, R-7.26, R-7.27, R-7.28, R-4.42, R-4.44
 package konformitaet.kap07;
 
-mixin Equatable<T> {
-    bool equals(T other);
-}
-
 class Item {
     import Equatable<Item>;
 public:
@@ -35,7 +31,7 @@ public:
 
 class Util {
 public:
-    static T first<T>(T[] xs) { return xs[0]; }
+    static i64 count<T>(T[] xs) { return xs.length; }
 }
 
 class Use {
@@ -44,6 +40,6 @@ public:
         Pool<Item> pool = new Pool<Item>();
         i32 cap = Pool<Item>::capacity();
         Item fresh = pool.make();
-        i32 n = Util::first(numbers);
+        i64 n = Util::count(numbers);
     }
 }

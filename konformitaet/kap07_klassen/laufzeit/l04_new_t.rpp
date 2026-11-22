@@ -1,0 +1,38 @@
+// Konformitätstest Kapitel 7 – Laufzeit.
+// Regel: R-7.24, R-7.25, R-7.26
+// Erwartet: Ausgabe "Item\nOther\nItem"; Exit-Code 0
+class Item {
+public:
+    string name() { return "Item"; }
+}
+
+class Other {
+public:
+    string name() { return "Other"; }
+}
+
+class Pool<T : new()> {
+public:
+    T make() { return new T(); }
+}
+
+// T der Basisklasse ist hier U (R-7.26: die Typargumente bleiben zur Laufzeit erhalten)
+class Wrapper<U : new()> : Pool<U> {
+public:
+    U twice() {
+        U first = make();
+        return make();
+    }
+}
+
+i32 main(string[] args) {
+    Pool<Item> a = new Pool<Item>();
+    Item i = a.make();
+    print(i.name());
+    Wrapper<Other> w = new Wrapper<Other>();
+    Other o = w.twice();
+    print(o.name());
+    Wrapper<Item> v = new Wrapper<Item>();
+    print(v.twice().name());
+    return 0;
+}

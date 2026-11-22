@@ -1,6 +1,6 @@
 # R++ Ownership-Kernkalkül (Kapitel 5)
 
-Stand: 21.11.2026, Entwurf 0.5. Dieses Dokument füllt Kapitel 5 des „R++ Spezifikationsgerüsts“. Es beschreibt Ownership und Borrowing als kleine Kernsprache **FR++** mit Typregeln, Auswertungsregeln und einem Sicherheitssatz, nach dem Vorbild von Featherweight Java.
+Stand: 22.11.2026, Entwurf 0.9. Dieses Dokument füllt Kapitel 5 des „R++ Spezifikationsgerüsts“. Es beschreibt Ownership und Borrowing als kleine Kernsprache **FR++** mit Typregeln, Auswertungsregeln und einem Sicherheitssatz, nach dem Vorbild von Featherweight Java.
 
 Die Oberflächensprache wird in Abschnitt 7 auf FR++ abgebildet. Die Regeln dort sind normativ für den Compiler; FR++ selbst ist ein Hilfsmittel für Spezifikation und Beweis, keine Sprache, die jemand schreibt.
 
@@ -14,7 +14,7 @@ Abschnitt 2 enthält Festlegungen, die beim Ausarbeiten über die bisherigen Des
 
 ## 2. Neue Festlegungen
 
-Alle elf Punkte sind entschieden; V-3 ist gegenüber dem ersten Vorschlag um `take` erweitert.
+V-1 bis V-11 sind entschieden; V-3 ist gegenüber dem ersten Vorschlag um `take` erweitert. V-12 ist beim Umsetzen in der ersten Implementierung entstanden und am 21.11.2026 angenommen worden; V-13 ist beim Vergleich mit dem Modell aufgefallen und am 21.11.2026 angenommen worden; V-14 ist mit dem Interpreter (Meilenstein M4) entstanden und am 22.11.2026 angenommen worden. V-15 ist in Meilenstein M5 entstanden und am 22.11.2026 angenommen worden.
 
 | Nr. | Festlegung | Begründung |
 |---|---|---|
@@ -29,6 +29,10 @@ Alle elf Punkte sind entschieden; V-3 ist gegenüber dem ersten Vorschlag um `ta
 | V-9 | Werte vom Typ `shared T` werden bei Zuweisung und Übergabe implizit kopiert (Zähler + 1). Aus `own` wird `shared` nur, wenn das Ziel ausdrücklich den Typ `shared` hat (Variable, Feld oder Parameter): `shared Foo s = f;` verschiebt `f`. Umgekehrt wird aus `shared` nie `own`; dafür gibt es `copy(s)`. | Präzisiert „shared wird nie implizit abgeleitet“. |
 | V-10 | Im Konstruktor müssen alle Felder ohne Standardwert gesetzt sein, bevor `this` anders als zum Setzen von Feldern verwendet wird. | Sonst gäbe es halb initialisierte Objekte. |
 | V-11 | Eine Exception, die einen Destruktor verlässt, beendet das Programm. | Wie C++; vermeidet doppelte Ausnahmen beim Unwinding. |
+| V-12 | (angenommen am 21.11.2026) Klarstellung zu R-5.15 und R-5.16 für die Oberfläche: Ein Zweig, der nicht normal endet (Kapitel 6, Abschnitt 3.3: `return`, `throw`, `break`, `continue`, `fail`), trägt zum Zustand nach dem `if` nichts bei; ebenso bei `switch`, Schleifen und `try`. Nach `if (fehler) { verbrauche(a); return; } a.run();` ist `a` verfügbar. Ein `break` bringt seinen Zustand an das Ende der Schleife, ein `continue` an den Schleifenkopf. | FR++ hat kein `return` und kein `throw`, deshalb sagt R-5.15 dazu nichts. Die Regel ist dieselbe wie für die Verengung (R-6.8) und wie in Rust; zur Laufzeit gibt es auf dem fortgesetzten Weg keinen Move, also auch kein Drop-Flag-Problem. Ohne sie wäre jeder Move vor einem frühen Ausstieg ein Fehler. |
+| V-13 | (angenommen am 21.11.2026) Ein `own`-Wert an einem `weak`-Ziel (Variable, Feld, Parameter), etwa `weak Foo w = new Foo();` oder `n.w = a;`, ist ein Fehler (R-4.41): `weak` entsteht nur aus `shared` oder `weak` (V-6). Man schreibt `shared Foo s = a; weak Foo w = s;`. FR++ `demote share e` entspricht an der Oberfläche diesem Umweg über eine `shared`-Variable. | Das Objekt wäre sonst sofort freigegeben und der `weak`-Verweis tot; so etwas ist fast immer ein Versehen. Beim Vergleich mit dem FR++-Modell aufgefallen. |
+| V-14 | (angenommen am 22.11.2026) Klarstellung zu V-7 bei Vererbung: Zuerst laufen alle Destruktoren, von der Klasse des Objekts bis zur obersten Basisklasse; danach werden alle Felder in umgekehrter Deklarationsreihenfolge freigegeben, die Felder der Unterklasse zuerst, die der Basisklasse zuletzt. Wirft ein Konstruktor (R-9.13), laufen die Destruktoren des fertigen Basisanteils, danach werden alle schon gesetzten Felder ebenso freigegeben. Während der Destruktoren ist das Objekt vollständig; virtuelle Aufrufe gehen an die Klasse des Objekts. | So verlangen es die Laufzeittests `l02_destruktoren.rpp` (Kapitel 7) und `l03_konstruktor_wirft.rpp` (Kapitel 9); die andere Lesart (Destruktor und Felder je Klasse abwechselnd) widerspricht dem zweiten. |
+| V-15 | (angenommen am 22.11.2026) Ein `own`-Objekt einer Klasse ohne Destruktor lässt sich in seine Felder zerlegen: `(K k, V v) = e;` (R-5.25). Das Objekt wird dabei verschoben und ohne Destruktor freigegeben; seine Felder gehen an die neuen Variablen über. V-3 bleibt: Aus einem Feld wird weiter nie einzeln verschoben. Damit lässt sich etwa `V? Map.remove(K key)` in R++ schreiben. | Moves aus einzelnen Feldern (wie Rust) hätten halb verschobene Objekte, Drop-Flags je Feld und erweiterte Invarianten verlangt; das Zerlegen braucht nur eine neue Anweisung, `Γ` und die Invarianten bleiben unverändert. Ein Destruktor sähe ein Objekt ohne Felder, deshalb gilt die Regel nur für Klassen ohne Destruktor. |
 
 ## 3. Die Kernsprache FR++
 
@@ -64,6 +68,7 @@ Anweisung    s ::= S x = e;              Deklaration
                |  borrow x = &κ p { s̄ }              Borrow mit Block
                |  upgrade x = p { s̄ } else { s̄ }     weak → shared, falls lebendig
                |  borrow x = p.m(b̄) { s̄ }            Borrow-Rückgabe binden (R-5.24)
+               |  (S₁ x₁, …, Sₙ xₙ) = move y;          own-Objekt zerlegen (R-5.25)
 ```
 
 Entsprechung zur Oberfläche: `ref C` ist ein Parameter `Foo`, `mut C` ein Parameter `Foo&`, `own C` eine lokale Variable `Foo` oder ein Parameter `own Foo`; `μ = mut` ist eine Methode mit `&` hinter der Parameterliste. Felder haben nur Speichertypen; dass Borrows nicht in Feldern stehen, ist damit schon syntaktisch erzwungen.
@@ -270,6 +275,12 @@ R-5.23 (T-Borrow-Methode)
     ─────────────────────────────────────────────────────────────────────────
     brw(κ, C') m(T₁ x₁, …, Tₙ xₙ) μ { s̄ return &κ q; }  ok in C
 
+R-5.25 (T-Zerlegen)
+    Γ(y) = (own C, ●)    erlaubt_L(mut, y)    keine Klasse in C und ihren Basisklassen hat einen Destruktor
+    felder(C) = S'₁ f₁ … S'ₙ fₙ    S'ᵢ <: Sᵢ    x₁ … xₙ ∉ dom(Γ), paarweise verschieden
+    ──────────────────────────────────────────────────────────────────────────────────────
+    Γ; L ⊢ (S₁ x₁, …, Sₙ xₙ) = move y; ⊣ Γ[y ↦ (own C, ○)], x₁ ↦ (S₁, ●), …, xₙ ↦ (Sₙ, ●)
+
 R-5.24 (T-Borrow-Aufruf)
     p.m(b̄) erfüllt die Voraussetzungen von R-5.10 mit Ergebnis brw(κ, C') ⊣ Γ'
     x ∉ dom(Γ')    Γ', x ↦ (brw(κ, C'), ●);  L ∪ {(μ, p)} ⊢ s̄ ⊣ Γ''
@@ -343,6 +354,7 @@ Big-Step-Urteile `H, E ⊢ e ⇓ v ⊣ H', E'` und `H, E ⊢ s̄ ⇓ H', E'`; je
 | E-Zuw-Var | `x = e;` | `e ⇓ v`; `v_alt = E(x)`; `E(x) := v`; `drop(v_alt)` |
 | E-Zuw-Feld | `p.f = e;` | `replace(p.f, e) ⇓ v_alt`; `drop(v_alt)` |
 | E-Ausdr | `e;` | `e ⇓ v`; `drop(v)` |
+| E-Zerlegen | `(S̄ x̄) = move y;` | `E(y) = own ℓ`, `H(ℓ) = ⟨C, f̄ ↦ v̄, –⟩`; `E(xᵢ) := vᵢ`; `E(y) := ⊥`; `H(ℓ) := †` ohne Destruktor (es gibt keinen) |
 | E-If, E-While | | wie üblich; Bedingung `≠ 0` |
 | E-Borrow | `borrow x = &κ p { s̄ }` | `sperre(p, κ)`; `E(x) := ref ziel(p)`; Block ausführen; `freigabe(p, κ)` |
 | E-Borrow-Aufruf | `borrow x = p.m(b̄) { s̄ }` | wie E-Aufruf, aber die Sperre `sperre(p, μ)` des Empfängers bleibt bis zum Ende des Blocks bestehen; der Rumpf endet mit `return &κ q`, das zu `ref ziel(q)` ausgewertet wird; `E(x) := ref ℓ'`; Block ausführen; dann `freigabe(p, μ)` |
@@ -389,6 +401,8 @@ Begründung nach Art der Wurzel von `p`:
 
 Destruktoren sind dabei gewöhnliche Aufrufe: Ein Destruktor erhält nur `this` und erreicht sein eigenes Objekt auf keinem anderen Weg, weil der Besitzer es schon aufgegeben hat (I-1) bzw. `rc = 0` ist und `upgrade` fehlschlägt.
 
+Für R-5.25 bleibt I-1 erhalten: Die Werte der Felder gehen aus dem freigegebenen Objekt in den Rahmen über, jeder Besitzwert steht danach wieder genau einmal; `y` ist `⊥` (I-3), und weil die Klasse keinen Destruktor hat, sieht kein Code das leere Objekt. Ein Borrow auf `y` oder einen Ort darunter kann nicht bestehen, weil `erlaubt_L(mut, y)` verlangt ist (I-4).
+
 Aus Lemma 5.4, I-2 und I-4 folgt, dass `ziel(p)` für jeden geprüften Ort definiert ist. Aus I-3 folgt, dass nie `⊥` gelesen wird. Weil `drop(own ℓ)` nur aufgerufen wird, wenn der einzige Wert `own ℓ` gerade aus Rahmen oder Feld entfernt wurde (I-1), wird nichts doppelt freigegeben. Das ergibt Satz 5.1; Satz 5.2 ist Lemma 5.4 für den Loan der Iteration bzw. des Slices.
 
 ## 7. Abbildung der Oberflächensprache
@@ -410,6 +424,7 @@ Aus Lemma 5.4, I-2 und I-4 folgt, dass `ziel(p)` für jeden geprüften Ort defin
 | `Foo alt = replace(&this.payload, neu);` | `own C alt = replace(this.payload, …);` | R-5.7, V-3 |
 | `Foo? alt = take(&this.cache);` (nur bei nullbarem Feld) | wie `replace(this.cache, null)` | R-5.7, V-3 |
 | `copy(a)` | Aufruf der Kopiermethode mit `&ro a`; Ergebnis `own C` | R-5.10 |
+| `(K k, V v) = e;` mit `e` vom Typ einer Klasse | `(own K k, own V v) = move y;` mit `y` der lokalen Variablen bzw. einer Hilfsvariablen für einen temporären Wert; Felder in Deklarationsreihenfolge, geerbte zuerst; jedes Feld muss an der Stelle sichtbar sein (R-7.2) | R-5.25 |
 | `new Foo(args)` mit Konstruktor | Konstruktor als Methode, die mit `new C(…)` endet; Felder vorher vollständig gesetzt | V-10 |
 | `for (Foo f : list) { … }` | `borrow l = &ro list { … borrow f = &ro l[i] { … } … }` | R-5.17 |
 | `for (Foo& f : &list) { … }` | wie oben mit `&mut` | R-5.17 |
@@ -443,7 +458,7 @@ Aus Lemma 5.4, I-2 und I-4 folgt, dass `ziel(p)` für jeden geprüften Ort defin
 
 ## 9. Konformitätstests
 
-Die Testprogramme liegen in `konformitaet/kap05_ownership/`. Programme in `akzeptiert/` müssen übersetzt werden, Programme in `abgelehnt/` müssen mit genau dem im Kopfkommentar genannten Fehler abgelehnt werden. Bis es einen Prüfschritt für Ownership gibt, ist an ihnen nur die Syntax prüfbar.
+Die Testprogramme liegen in `konformitaet/kap05_ownership/`. Programme in `akzeptiert/` müssen übersetzt werden, Programme in `abgelehnt/` müssen mit genau dem im Kopfkommentar genannten Fehler abgelehnt werden. Geprüft werden sie mit `rppc test` (erste Implementierung, Meilenstein M3).
 
 | Regel | Akzeptiert | Abgelehnt |
 |---|---|---|
@@ -457,6 +472,8 @@ Die Testprogramme liegen in `konformitaet/kap05_ownership/`. Programme in `akzep
 | Überlappung bei shared-Wurzeln | `a04_shared_weak.rpp` | `n13_shared_wurzel_doppelt.rpp` |
 | R-5.5 / R-5.6 / R-5.18 shared, weak | `a04_shared_weak.rpp` | `n14_shared_als_own.rpp` |
 | Lambdas | `a05_lambdas.rpp` | `n15_move_aus_normalem_lambda.rpp` |
+| V-13 `own` an `weak` | `a04_shared_weak.rpp` | `n21_own_an_weak.rpp` |
+| R-5.25 Zerlegen | `a07_zerlegen.rpp`, Laufzeit `l01_zerlegen.rpp` | `n22_zerlegen_mit_destruktor.rpp`, `n23_zerlegen_falsche_feldzahl.rpp`, `n24_zerlegen_geliehen.rpp`, `n25_zerlegen_privat.rpp`, `n26_nach_zerlegen_benutzt.rpp` |
 | `ref`-Deklaration (R-5.17) | `a06_ref.rpp` | `n17_ref_lebt_bis_blockende.rpp`, `n18_ref_auf_temporaeren_wert.rpp`, `n19_ref_lesend_veraendern.rpp`, `n20_ref_mut_und_direkter_zugriff.rpp` |
 
 ## 10. Ausführbares Modell
@@ -509,3 +526,13 @@ Dass Borrows nur von `this` ausgehen dürfen (R-5.23), lässt sich mit dem Zufal
 - Lücke der Tests: Für Vereinigung und Schleifenregel hängt der Beleg an je einem handgeschriebenen Programm; der Zufallsgenerator erzeugt die nötigen Muster zu selten.
 - Die Oberflächenregel V-13.6 (Borrow-Rückgabe über `ref`-Variablen und Schleifenelemente, die von `this` ausgehen) ist im Modell nicht abgebildet, weil FR++ `return` nur am Ende eines Methodenrumpfs kennt.
 - Zufallstests finden Fehler, beweisen aber keine Korrektheit. Der Beweis von Satz 5.1 bleibt offen.
+
+### 10.5 Vergleich mit der ersten Implementierung
+
+`fr-modell/vergleich.py` übersetzt FR++-Programme nach der Tabelle in Abschnitt 7 rückwärts in R++ (`frpp/to_rpp.py`) und prüft, ob `rppc` sie genauso annimmt oder ablehnt wie das Modell. `move x` für eine int-, weak- oder shared-Variable ist an der Oberfläche eine Kopie (V-9); verglichen wird dann die Normalform mit `copy x`. Ohne Entsprechung an der Oberfläche bleiben Pfade durch `shared`-Felder (V-2, dort erlaubt), Zuweisungen an Parameter ohne `own` (R-8.19) und ungebundene Borrow-Rückgaben als Anweisung; diese Programme zählen gesondert.
+
+Stand 21.11.2026 (`fr-modell/vergleichsbericht.txt`): Alle 32 übersetzbaren handgeschriebenen Programme und 4466 von 5000 Zufallsprogrammen (1564 angenommen, 2902 abgelehnt) werden gleich beurteilt; es gibt keine Abweichung. Zur Gegenprobe wird je eine Regel im Modell abgeschaltet (wie in 10.3); für jede der sieben Abschwächungen findet der Vergleich Abweichungen.
+
+Der Vergleich hat in `rppc` sechs Lücken gefunden, die behoben sind: das fehlende `&` am Argument für `Foo&` (R-5.9), das Ersetzen des Objekts hinter einem `Foo&`-Parameter (R-8.19, Abschnitt 4.4), der fehlende Move eines `own`-Werts an einen `shared`- oder `weak`-Parameter (V-9), die Borrow-Rückgabe auf ein `shared`-Feld (R-5.23, V-2), der Move einer Borrow-Rückgabe (R-5.24) und die Reihenfolge in `x.f = g(x)` (R-5.7). Nach V-13 übersetzt der Vergleich `demote share e` über eine Hilfsmethode, die den Wert erst in eine `shared`-Variable legt.
+
+Mit `--ausfuehren` laufen Programme, die beide annehmen, auch im Modell und im Interpreter von `rppc` (Meilenstein M4, mit Prüfmodus für I-1, I-2, I-4 und I-5). Stand 22.11.2026: alle 10 handgeschriebenen und 466 von 467 ausgeführten Zufallsprogrammen liefern dieselbe Ausgabe einschließlich der Destruktoren bzw. dasselbe Ende mit `BorrowError`; keine Invariante ist verletzt. Der eine Unterschied ist erklärt: Das Modell räumt nach einem Programmfehler nicht auf, R-9.14 verlangt es.

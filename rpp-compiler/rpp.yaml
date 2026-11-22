@@ -1,0 +1,7 @@
+# Der R++-Compiler in R++ (Meilenstein M6). Erster Teil: der Lexer.
+name: rppcc
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src

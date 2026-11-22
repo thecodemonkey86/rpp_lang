@@ -1,5 +1,5 @@
 // Konformitätstest Kapitel 13 – muss abgelehnt werden.
-// Regel: R-13.8, R-8.15
+// Regel: R-8.15, R-13.8
 // Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (hash ist nodiscard).
 package konformitaet.kap13;
 

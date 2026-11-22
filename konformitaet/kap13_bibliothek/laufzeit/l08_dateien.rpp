@@ -1,0 +1,28 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.19, R-13.20, R-14.5
+// Erwartet: Ausgabe "false\ntrue\nHallo\n5\na.txt,b.txt\nb.txt\ntxt\nsub\nIOException"; Exit-Code 0
+using rpp.io.File;
+using rpp.io.Dir;
+using rpp.io.Path;
+
+// Läuft in einem frischen, leeren Arbeitsverzeichnis (V-14.3).
+i32 main(string[] args) {
+    print(Dir::exists("sub").toString());
+    Dir::create("sub");
+    print(Dir::exists("sub").toString());
+    File::writeText(Path::join("sub", "b.txt"), "x");
+    File::writeText("sub/a.txt", "Hallo");
+    File f = File::open("sub/a.txt");
+    print(f.readAllText());
+    print(f.readAllBytes().length.toString());
+    print(string::join(",", Dir::list("sub")));
+    print(Path::fileName("sub/b.txt"));
+    print(Path::extension("sub/b.txt"));
+    print(Path::parent("sub/b.txt"));
+    try {
+        File g = File::open("fehlt.txt");
+    } catch (IOException e) {
+        print("IOException");
+    }
+    return 0;
+}

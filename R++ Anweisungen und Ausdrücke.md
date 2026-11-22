@@ -10,6 +10,7 @@ Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschn
 |---|---|
 | V-8.1 | Eine lokale Variable darf keine andere sichtbare lokale Variable oder einen Parameter verdecken (wie in C#). Felder dürfen verdeckt werden; man erreicht sie dann mit `this.name`. |
 | V-8.2 | `nodiscard` gehört zur Signatur: Eine überschreibende Methode oder eine Mixin-Methode, die eine Anforderung erfüllt, muss `nodiscard` übernehmen, wenn die überschriebene Methode bzw. die Anforderung es trägt. `nodiscard` an einer `void`-Methode ist ein Fehler. |
+| V-8.3 | (angenommen am 21.11.2026) Eine Klassenmethode, die eine `nodiscard`-Anforderung eines Mixins erfüllt (`i64 hash()` für `Hashable`), muss `nodiscard` nicht wiederholen; ihr Ergebnis ist trotzdem `nodiscard`. Für überschreibende Methoden bleibt V-8.2: Dort muss `nodiscard` dastehen. |
 
 ## 1. Diagnosen
 
@@ -98,7 +99,7 @@ Gibt es keinen solchen Typ, ist der Ausdruck ein Fehler; eine gemeinsame Basiskl
 
 ## 5. Konformitätstests
 
-Die Testprogramme liegen in `konformitaet/kap08_anweisungen/`; geprüft wird bisher nur die Syntax. Programme mit `// WARNUNG` müssen übersetzt werden und an dieser Stelle eine Warnung erzeugen.
+Die Testprogramme liegen in `konformitaet/kap08_anweisungen/`; geprüft werden sie mit `rppc test` (erste Implementierung, Meilenstein M3). Programme mit `// WARNUNG` müssen übersetzt werden und an dieser Stelle eine Warnung erzeugen.
 
 | Regeln | Akzeptiert | Abgelehnt |
 |---|---|---|

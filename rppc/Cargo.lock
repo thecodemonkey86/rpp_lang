@@ -3,6 +3,21 @@
 version = 4
 
 [[package]]
+name = "rpp-interp"
+version = "0.1.0"
+dependencies = [
+ "rpp-sema",
+ "rpp-syntax",
+]
+
+[[package]]
+name = "rpp-sema"
+version = "0.1.0"
+dependencies = [
+ "rpp-syntax",
+]
+
+[[package]]
 name = "rpp-syntax"
 version = "0.1.0"
 
@@ -10,5 +25,7 @@ version = "0.1.0"
 name = "rppc"
 version = "0.1.0"
 dependencies = [
+ "rpp-interp",
+ "rpp-sema",
  "rpp-syntax",
 ]

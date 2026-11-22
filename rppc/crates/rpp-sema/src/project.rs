@@ -1,7 +1,7 @@
 //! Projekte und Quelldateien laden (Kapitel 11): `rpp.yaml`, Quellordner,
 //! Abhängigkeiten, die Standardbibliothek. Prüft R-11.2, R-11.13, R-11.15 bis R-11.18.
 
-use crate::yaml::{self, Node};
+use crate::yaml::{self, Node, Value};
 use crate::Diag;
 use rpp_syntax::ast::CompilationUnit;
 use rpp_syntax::Span;
@@ -49,6 +49,8 @@ pub struct Workspace {
     pub projects: Vec<Project>,
     pub files: Vec<SourceFile>,
     pub diags: Vec<Diag>,
+    /// Releasemodus: Symbol `release` statt `debug` (R-11.24)
+    pub release: bool,
 }
 
 const KEYS: &[&str] = &["name", "version", "type", "main", "sources", "dependencies", "registry", "symbols"];
@@ -69,7 +71,32 @@ fn is_keyword(s: &str) -> bool {
 }
 
 fn canonical(p: &Path) -> PathBuf {
-    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+    std::fs::canonicalize(p).unwrap_or_else(|_| normalize(p))
+}
+
+/// Absoluter Pfad ohne `.` und `..`, rein textuell (ohne Verweise aufzulösen).
+pub fn normalize(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let abs = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    let mut out = PathBuf::new();
+    for c in abs.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Pfad in der Form der Ausgaben: `/` als Trenner, ohne das Windows-Präfix `\\?\`.
+pub fn slash_path(p: &Path) -> String {
+    let s = p.display().to_string();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).replace('\\', "/")
 }
 
 impl Workspace {
@@ -80,7 +107,12 @@ impl Workspace {
     /// Lädt einen Test oder ein Programm: eine einzelne `.rpp`-Datei oder ein
     /// Verzeichnis mit `rpp.yaml`. Die Standardbibliothek kommt aus `std_dir`.
     pub fn load(input: &Path, std_dir: &Path) -> Workspace {
-        let mut ws = Workspace::default();
+        Workspace::load_mode(input, std_dir, false)
+    }
+
+    /// Wie `load`, im Debug- oder Releasemodus (bedingte Kompilierung, R-11.24).
+    pub fn load_mode(input: &Path, std_dir: &Path, release: bool) -> Workspace {
+        let mut ws = Workspace { release, ..Workspace::default() };
         ws.load_std(std_dir);
         if input.is_dir() {
             let mut stack = Vec::new();
@@ -114,14 +146,14 @@ impl Workspace {
         self.projects.push(Project {
             name: "rpp".into(),
             kind: ProjectKind::Library,
-            dir: std_dir.to_path_buf(),
+            dir: canonical(std_dir),
             deps: Vec::new(),
             is_std: true,
             single_file: false,
             main_file: None,
             yaml: None,
         });
-        self.load_sources(std_dir, idx, &[]);
+        self.load_sources(&canonical(std_dir), idx, &[]);
     }
 
     fn parse_file(&mut self, path: &Path, project: usize, expected: Option<String>, symbols: &[String]) {
@@ -132,7 +164,8 @@ impl Workspace {
                 return;
             }
         };
-        let mut syms: HashSet<String> = ["debug", host_os()].iter().map(|s| s.to_string()).collect();
+        let mode = if self.release { "release" } else { "debug" };
+        let mut syms: HashSet<String> = [mode, host_os()].iter().map(|s| s.to_string()).collect();
         syms.extend(symbols.iter().cloned());
         match rpp_syntax::parse(&source, &syms) {
             Ok(unit) => self.files.push(SourceFile { path: path.to_path_buf(), project, unit, expected_package: expected }),
@@ -162,7 +195,7 @@ impl Workspace {
             Ok(t) => t,
             Err(_) => {
                 if let Some((_, file, line)) = expected_name {
-                    self.diag(file, line, "R-11.15", format!("{} enthält keine rpp.yaml", dir.display()));
+                    self.diag(file, line, "R-11.15", format!("{} enthält keine rpp.yaml", slash_path(&dir)));
                 }
                 return None;
             }
@@ -194,16 +227,15 @@ impl Workspace {
         }
         if let Some((want, file, line)) = expected_name {
             if want != name {
-                self.diag(file, line, "R-11.15", format!("das Projekt in {} heißt '{name}', nicht '{want}'", dir.display()));
+                self.diag(file, line, "R-11.15", format!("das Projekt in {} heißt '{name}', nicht '{want}'", slash_path(&dir)));
             }
         }
         let kind = match doc.get("type").and_then(Node::as_str) {
             Some("executable") => ProjectKind::Executable,
             Some("library") => ProjectKind::Library,
-            other => {
-                let line = doc.get("type").map_or(1, |n| n.line);
-                if other.is_some() {
-                    self.diag(&yaml_path, line, "R-11.13", "type ist executable oder library");
+            _ => {
+                if let Some(t) = doc.get("type") {
+                    self.diag(&yaml_path, t.line, "R-11.13", "type ist executable oder library");
                 }
                 ProjectKind::Library
             }
@@ -227,10 +259,17 @@ impl Workspace {
         stack.push(dir.clone());
         let mut deps = Vec::new();
         if let Some(list) = doc.get("dependencies") {
+            if !is_list(list) {
+                self.diag(&yaml_path, list.line, "R-11.13", "dependencies ist eine Liste");
+            }
             for dep in list.as_list() {
                 let dep_name = dep.get("name").and_then(Node::as_str).unwrap_or("").to_string();
                 if let Some(path) = dep.get("path") {
-                    let target = canonical(&dir.join(path.as_str().unwrap_or("")));
+                    let Some(rel) = path.as_str() else {
+                        self.diag(&yaml_path, path.line, "R-11.15", "path ist ein Pfad");
+                        continue;
+                    };
+                    let target = canonical(&dir.join(rel));
                     if stack.contains(&target) {
                         self.diag(&yaml_path, path.line, "R-11.16", format!("Zyklus in den Abhängigkeiten über '{dep_name}'"));
                         continue;
@@ -252,16 +291,34 @@ impl Workspace {
         stack.pop();
         self.projects[idx].deps = deps;
 
-        let symbols: Vec<String> = doc
-            .get("symbols")
-            .and_then(|s| s.get("debug"))
-            .map(|l| l.as_list().iter().filter_map(Node::as_str).map(str::to_string).collect())
-            .unwrap_or_default();
+        let mode = if self.release { "release" } else { "debug" };
+        let mut symbols: Vec<String> = Vec::new();
+        if let Some(syms) = doc.get("symbols") {
+            if !matches!(syms.value, Value::Map(_)) {
+                self.diag(&yaml_path, syms.line, "R-11.13", "symbols ordnet den Modi debug und release Listen zu");
+            }
+            for (key, list) in syms.entries() {
+                if key != "debug" && key != "release" {
+                    self.diag(&yaml_path, list.line, "R-11.13", format!("unbekannter Modus '{key}'"));
+                } else if !is_list(list) || list.as_list().iter().any(|s| s.as_str().is_none()) {
+                    self.diag(&yaml_path, list.line, "R-11.13", format!("{key} ist eine Liste von Symbolen"));
+                } else if key == mode {
+                    symbols = list.as_list().iter().filter_map(Node::as_str).map(str::to_string).collect();
+                }
+            }
+        }
         if let Some(sources) = doc.get("sources") {
+            if !is_list(sources) {
+                self.diag(&yaml_path, sources.line, "R-11.13", "sources ist eine Liste von Quellordnern");
+            }
             for s in sources.as_list() {
-                let src = dir.join(s.as_str().unwrap_or(""));
+                let Some(rel) = s.as_str() else {
+                    self.diag(&yaml_path, s.line, "R-11.13", "ein Quellordner ist ein Pfad");
+                    continue;
+                };
+                let src = dir.join(rel);
                 if !src.is_dir() {
-                    self.diag(&yaml_path, s.line, "R-11.13", format!("Quellordner {} fehlt", src.display()));
+                    self.diag(&yaml_path, s.line, "R-11.13", format!("Quellordner {} fehlt", slash_path(&src)));
                     continue;
                 }
                 self.load_sources(&canonical(&src), idx, &symbols);
@@ -269,6 +326,10 @@ impl Workspace {
         }
         Some(idx)
     }
+}
+
+fn is_list(n: &Node) -> bool {
+    matches!(n.value, Value::List(_))
 }
 
 fn collect_rpp(dir: &Path, out: &mut Vec<PathBuf>) {

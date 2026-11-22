@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rpp-syntax", "crates/rppc"]
+members = ["crates/rpp-syntax", "crates/rpp-sema", "crates/rpp-interp", "crates/rppc"]
 
 [workspace.package]
 version = "0.1.0"

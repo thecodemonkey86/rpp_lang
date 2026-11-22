@@ -113,7 +113,7 @@ Beispiele:
 
 ## 8. Konformitätstests
 
-Die Testprogramme liegen in `konformitaet/kap07_klassen/`; geprüft wird bisher nur die Syntax.
+Die Testprogramme liegen in `konformitaet/kap07_klassen/`; geprüft werden sie mit `rppc test` (erste Implementierung, Meilenstein M3).
 
 | Regeln | Akzeptiert | Abgelehnt |
 |---|---|---|

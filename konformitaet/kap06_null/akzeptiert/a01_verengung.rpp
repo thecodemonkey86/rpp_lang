@@ -9,7 +9,7 @@ public:
     shared Node? next;
     weak Node? parent;
     i32? count;
-    Node?[] slots;
+    Node?[] slots = [];
     constructor(string n) { this.name = n; }
     bool ok() { return true; }
     void run() { }
@@ -38,7 +38,7 @@ public:
         }
         x.run();
         if (y == null) {
-            throw new Error("y fehlt");
+            throw new Exception("y fehlt");
         }
         y.run();
     }

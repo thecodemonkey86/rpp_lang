@@ -8,6 +8,9 @@ Voraussetzung: Python 3.10 oder neuer, keine weiteren Pakete. Alle Befehle laufe
 py -X utf8 run_tests.py                          # handgeschriebene Testprogramme
 py -X utf8 fuzz.py 2000                          # Zufallstest mit 2000 Programmen
 py -X utf8 fuzz.py 600 --abschwaechen loans      # Gegenprobe mit abgeschalteter Regel
+py -X utf8 vergleich.py 5000                     # Vergleich mit rppc (vorher in ../rppc cargo build)
+py -X utf8 vergleich.py 300 --abschwaechen loans # Gegenprobe: dann muss es Abweichungen geben
+py -X utf8 vergleich.py 2000 --ausfuehren        # zusätzlich Ausführung mit rppc run --pruefen vergleichen
 ```
 
 ## Inhalt
@@ -24,6 +27,9 @@ py -X utf8 fuzz.py 600 --abschwaechen loans      # Gegenprobe mit abgeschalteter
 | `tests/akzeptiert/*.fr` | Programme, die angenommen werden und ein bestimmtes Ergebnis liefern müssen |
 | `tests/abgelehnt/*.fr` | Programme, die mit einer bestimmten Regel in einer bestimmten Zeile abgelehnt werden müssen |
 | `testbericht.txt` | Ausgabe des letzten Laufs von `run_tests.py` und `fuzz.py` |
+| `frpp/to_rpp.py` | Übersetzung von FR++ in R++ (Kapitel 5, Abschnitt 7, rückwärts) |
+| `vergleich.py` | Vergleich mit der ersten Implementierung `rppc`: gleiches Urteil für übersetzte Programme |
+| `vergleichsbericht.txt` | Ausgabe des letzten Vergleichs |
 
 ## Textform
 

@@ -9,7 +9,7 @@ public:
     shared Node? next;
     weak Node? parent;
     i32? count;
-    Node?[] slots;
+    Node?[] slots = [];
     constructor(string n) { this.name = n; }
     bool ok() { return true; }
     void run() { }
@@ -19,7 +19,7 @@ public:
 class Box<T> {
 public:
     T? value;
-    T? get() { return value; }
+    ref T? get() { return value; }
 }
 
 class T {
@@ -31,6 +31,6 @@ public:
             return;
         }
         each(xs, (i32 i) => { x.run(); });
-        Node? inner = b.get();
+        ref Node? inner = b.get();
     }
 }

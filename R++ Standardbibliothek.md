@@ -17,6 +17,7 @@ Grundsätze, die beim Schreiben zusätzlich festgelegt werden mussten, stehen in
 | V-13.5 | Lesender Zugriff auf einen fehlenden Schlüssel liefert `null` (`ref V? get(K key)`); veränderbarer Zugriff mit `at` verlangt einen vorhandenen Schlüssel und löst sonst einen Programmfehler aus (wie ein Index außerhalb der Grenzen). |
 | V-13.6 | Eine Borrow-Methode darf auch einen Borrow zurückgeben, der über eine `ref`-Variable, ein Schleifenelement oder einen weiteren Borrow-Aufruf von `this` ausgeht (z. B. aus einer Schleife über `this.entries`). Das erweitert R-5.23 in der Oberflächensprache; die Sicherheitsbegründung ist dieselbe. |
 | V-13.7 | Für Typen mit `Comparable` sind `<`, `<=`, `>`, `>=` erlaubt und rufen `compareTo` auf (Erweiterung von Kapitel 4, R-4.17, analog zu `==` und `Equatable`). |
+| V-13.8 | `File::exists(path)` sagt, ob unter `path` eine gewöhnliche Datei liegt; `Path::absolute(p)` liefert den absoluten Pfad mit `/` als Trenner, `.` und `..` rein textuell aufgelöst (Verweise im Dateisystem werden nicht verfolgt). Beides braucht ein Compiler, der Projekte lädt. |
 
 ## 1. Grundsätze
 
@@ -227,11 +228,12 @@ public:
     nodiscard byte[] readAllBytes();
     static void writeText(string path, string text);
     static void writeBytes(string path, Slice<byte> data);
+    static bool exists(string path);           // gewöhnliche Datei vorhanden? (V-13.8)
     destructor();                              // schließt die Datei
 }
 ```
 
-**R-13.20 (Verzeichnisse und Pfade).** `Dir::list(string path)` liefert die Namen der Einträge sortiert (V-13.2); `Dir::exists`, `Dir::create`. `Path::join(a, b)`, `Path::fileName(p)`, `Path::extension(p)`, `Path::parent(p)`. Pfade verwenden `/` als Trenner; die Bibliothek wandelt auf Windows um.
+**R-13.20 (Verzeichnisse und Pfade).** `Dir::list(string path)` liefert die Namen der Einträge sortiert (V-13.2); `Dir::exists`, `Dir::create`. `Path::join(a, b)`, `Path::fileName(p)`, `Path::extension(p)`, `Path::parent(p)`, `Path::absolute(p)` (V-13.8). Pfade verwenden `/` als Trenner; die Bibliothek wandelt auf Windows um.
 
 **R-13.21 (Konsole).** `print(text)` schreibt `text` mit Zeilenumbruch auf die Standardausgabe (V-13.4). `Console::write(text)` ohne Zeilenumbruch, `Console::error(text)` auf die Fehlerausgabe, `Console::readLine()` liefert `string?` (`null` am Ende der Eingabe).
 

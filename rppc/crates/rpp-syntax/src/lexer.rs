@@ -3,7 +3,7 @@
 use std::fmt;
 
 /// Position im Quelltext: Zeile ab 1, Spalte ab 0 (wie ANTLR).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
 pub struct Span {
     pub line: u32,
     pub col: u32,

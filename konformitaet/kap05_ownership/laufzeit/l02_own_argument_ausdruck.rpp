@@ -1,0 +1,30 @@
+// Konformitätstest Kapitel 5 – Laufzeit.
+// Regel: R-5.3, R-6.18, R-8.9
+// Erwartet: Ausgabe "behalten 1\nbehalten 4\nfrei 1\nende\nfrei 4"; Exit-Code 0
+class Part {
+public:
+    i32 n;
+    constructor(i32 n) { this.n = n; }
+    destructor() { print("frei " + n.toString()); }
+}
+
+class Keeper {
+public:
+    Part? last = null;
+    void keep(own Part p) & {
+        print("behalten " + p.n.toString());
+        // der vorige Teil wird freigegeben
+        this.last = p;
+    }
+}
+
+i32 main(string[] args) {
+    Keeper k = new Keeper();
+    Part? a = new Part(1);
+    // Der Wert geht auch über ?? und ?: an den own-Parameter über (Kapitel 5, Abschnitt 7).
+    k.keep(a ?? new Part(2));
+    bool flag = false;
+    k.keep(flag ? new Part(3) : new Part(4));
+    print("ende");
+    return 0;
+}

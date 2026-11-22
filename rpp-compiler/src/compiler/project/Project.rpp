@@ -1,0 +1,420 @@
+// Projekte und Quelldateien laden (Kapitel 11): rpp.yaml, Quellordner, Abhängigkeiten,
+// die Standardbibliothek. Prüft R-11.13, R-11.15 bis R-11.17. Gleichwertig zu
+// rppc/crates/rpp-sema/src/project.rs. Pfade sind absolut und verwenden / (V-13.8).
+package compiler.project;
+
+using rpp.io.File;
+using rpp.io.Dir;
+using rpp.io.Path;
+using rpp.env.Env;
+using rpp.env.Os;
+using rpp.collections.Set;
+using compiler.lexer.Lexer;
+using compiler.syntax.Node;
+using compiler.syntax.Source;
+using compiler.syntax.SyntaxError;
+
+export enum ProjectKind {
+    Executable,
+    Library,
+}
+
+export class Project {
+public:
+    string name;
+    ProjectKind kind;
+    string dir;
+    // direkte Abhängigkeiten (Indizes in Workspace.projects); die Standardbibliothek zählt nicht
+    i64[] deps = [];
+    bool isStd = false;
+    // Einzeldatei-Test ohne rpp.yaml
+    bool singleFile = false;
+    // Datei mit main laut rpp.yaml
+    string? mainFile = null;
+    string? yaml = null;
+
+    constructor(string name, ProjectKind kind, string dir) {
+        this.name = name;
+        this.kind = kind;
+        this.dir = dir;
+    }
+}
+
+export class SourceFile {
+public:
+    string path;
+    i64 project;
+    Node unit;
+    // Paket laut Verzeichnis (R-11.2); null bei Einzeldateien
+    string? expected;
+
+    constructor(string path, i64 project, own Node unit, string? expected) {
+        this.path = path;
+        this.project = project;
+        this.unit = unit;
+        this.expected = expected;
+    }
+
+    // Paket laut Deklaration; "" ohne package
+    string packageName() {
+        if (unit.kids.length == 0 || unit.kids[0].kind != "package") {
+            return "";
+        }
+        string[] parts = [];
+        for (Node id : unit.kids[0].kids[0].kids) {
+            parts.push(id.text);
+        }
+        return string::join(".", parts);
+    }
+
+    // Namen der Klassen, Mixins und Enums, mit Komma getrennt; "-" ohne
+    string typeNames() {
+        string[] names = [];
+        for (Node d : unit.kids) {
+            if (d.kind == "class" || d.kind == "mixin" || d.kind == "enum") {
+                names.push(d.kids[0].text);
+            }
+        }
+        if (names.length == 0) {
+            return "-";
+        }
+        return string::join(",", names);
+    }
+
+    bool hasMain() {
+        for (Node d : unit.kids) {
+            if (d.kind == "main") {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+// Eine Meldung: Fehler oder Warnung mit Regelnummer (wie Diag in rppc)
+export class Diag {
+public:
+    string file;
+    i32 line;
+    i32 col;
+    string rule;
+    string message;
+    bool warning = false;
+    // weitere Regeln, die den Fehler genauer begründen
+    string[] also = [];
+
+    constructor(string file, i32 line, i32 col, string rule, string message) {
+        this.file = file;
+        this.line = line;
+        this.col = col;
+        this.rule = rule;
+        this.message = message;
+    }
+}
+
+export class Workspace {
+public:
+    Project[] projects = [];
+    SourceFile[] files = [];
+    Diag[] diags = [];
+    // Releasemodus: Symbol release statt debug (R-11.24)
+    bool release = false;
+
+    // Lädt eine einzelne .rpp-Datei oder ein Verzeichnis mit rpp.yaml; die
+    // Standardbibliothek kommt aus stdDir.
+    static Workspace load(string input, string stdDir, bool release) {
+        Workspace ws = new Workspace();
+        ws.release = release;
+        ws.loadStd(stdDir);
+        string path = Path::absolute(input);
+        if (Dir::exists(path)) {
+            Set<string> stack = new Set<string>();
+            discard ws.loadProject(path, &stack, false, "", "", 0);
+            return ws;
+        }
+        i64 idx = ws.projects.length;
+        string name = Path::fileName(path);
+        string ext = Path::extension(path);
+        if (ext.length > 0) {
+            name = name.substring(0, name.length - ext.length - 1);
+        }
+        Project p = new Project(name, ProjectKind::Library, Path::parent(path));
+        p.singleFile = true;
+        ws.projects.push(p);
+        string[] none = [];
+        ws.parseFile(path, idx, null, none);
+        i64 n = ws.files.length;
+        if (n > 0 && ws.files[n - 1].project == idx && ws.files[n - 1].hasMain()) {
+            ws.projects[idx].kind = ProjectKind::Executable;
+            ws.projects[idx].mainFile = path;
+        }
+        return ws;
+    }
+
+private:
+    void diag(string file, i32 line, string rule, string message) & {
+        diags.push(new Diag(file, line, 0, rule, message));
+    }
+
+    static string hostOs() {
+        Os os = Env::os();
+        if (os == Os::Windows) {
+            return "windows";
+        }
+        if (os == Os::MacOS) {
+            return "macos";
+        }
+        return "linux";
+    }
+
+    static bool contains(string[] list, string s) {
+        for (string x : list) {
+            if (x == s) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void loadStd(string stdDir) & {
+        i64 idx = projects.length;
+        Project p = new Project("rpp", ProjectKind::Library, Path::absolute(stdDir));
+        p.isStd = true;
+        projects.push(p);
+        string[] none = [];
+        loadSources(Path::absolute(stdDir), idx, none);
+    }
+
+    void parseFile(string path, i64 project, string? expected, string[] symbols) & {
+        string source = "";
+        try {
+            File f = File::open(path);
+            source = f.readAllText();
+        } catch (Exception e) {
+            diag(path, 1, "R-11.1", "Datei nicht lesbar: " + e.message);
+            return;
+        }
+        Set<string> syms = new Set<string>();
+        if (release) {
+            syms.add("release");
+        } else {
+            syms.add("debug");
+        }
+        syms.add(hostOs());
+        for (string s : symbols) {
+            syms.add(s);
+        }
+        try {
+            Node unit = Source::parse(source, syms);
+            files.push(new SourceFile(path, project, unit, expected));
+        } catch (SyntaxError e) {
+            diags.push(new Diag(path, e.line, e.col, "Syntax", e.message));
+        }
+    }
+
+    // Alle .rpp-Dateien unter dir, sortiert; Unterordner mit eigener rpp.yaml gehören nicht dazu
+    static void collectRpp(string dir, string[]& out) {
+        string[] names = [];
+        try {
+            names = Dir::list(dir);
+        } catch (Exception e) {
+            return;
+        }
+        for (string n : names) {
+            string p = Path::join(dir, n);
+            if (Dir::exists(p)) {
+                if (!File::exists(Path::join(p, "rpp.yaml"))) {
+                    collectRpp(p, &out);
+                }
+            } else if (Path::extension(n) == "rpp") {
+                out.push(p);
+            }
+        }
+    }
+
+    void loadSources(string src, i64 project, string[] symbols) & {
+        string[] found = [];
+        collectRpp(src, &found);
+        for (string f : found) {
+            string parent = Path::parent(f);
+            string pkg = "";
+            if (parent.startsWith(src + "/")) {
+                pkg = parent.substring(src.length + 1, parent.length).replace("/", ".");
+            }
+            parseFile(f, project, pkg, symbols);
+        }
+    }
+
+    // Lädt ein Projekt mit seinen lokalen Abhängigkeiten; -1, wenn es nicht geladen werden
+    // kann. stack enthält die Projekte, deren Abhängigkeiten gerade geladen werden (R-11.16).
+    // Bei einer Abhängigkeit (expected) ist want der erwartete Name und wantFile:wantLine
+    // die Stelle in der rpp.yaml, die sie einträgt.
+    i64 loadProject(string dirIn, Set<string>& stack, bool expected, string want, string wantFile, i32 wantLine) & {
+        string dir = Path::absolute(dirIn);
+        for (i64 i = 0; i < projects.length; i++) {
+            if (!projects[i].isStd && projects[i].dir == dir) {
+                return i;
+            }
+        }
+        string yamlPath = Path::join(dir, "rpp.yaml");
+        string text = "";
+        try {
+            File f = File::open(yamlPath);
+            text = f.readAllText();
+        } catch (Exception e) {
+            if (expected) {
+                diag(wantFile, wantLine, "R-11.15", dir + " enthält keine rpp.yaml");
+            }
+            return -1;
+        }
+        YNode doc = new YNode(YKind::Map, "", 1);
+        try {
+            doc = Yaml::parse(text);
+        } catch (YamlError e) {
+            diag(yamlPath, e.line, "R-11.13", e.message);
+            return -1;
+        }
+        string[] known = ["name", "version", "type", "main", "sources", "dependencies", "registry", "symbols"];
+        for (i64 i = 0; i < doc.keys.length; i++) {
+            if (!contains(known, doc.keys[i])) {
+                diag(yamlPath, doc.items[i].line, "R-11.13", "unbekannter Eintrag '" + doc.keys[i] + "'");
+            }
+        }
+        string[] required = ["name", "version", "type", "sources"];
+        for (string key : required) {
+            if (!doc.has(key)) {
+                diag(yamlPath, 1, "R-11.13", "Eintrag '" + key + "' fehlt");
+            }
+        }
+        string name = doc.strOf("name");
+        i32 nameLine = doc.lineOf("name");
+        if (name == "rpp" || name.startsWith("rpp.")) {
+            diag(yamlPath, nameLine, "R-11.17", "der Besitzer rpp ist für die Standardbibliothek reserviert");
+        } else {
+            Lexer words = new Lexer("");
+            bool bad = false;
+            for (string part : name.split(".")) {
+                if (part.length == 0 || words.isKeyword(part)) {
+                    bad = true;
+                }
+            }
+            if (bad) {
+                diag(yamlPath, nameLine, "R-11.17", "ungültiger Name '" + name + "'");
+            }
+        }
+        if (expected && want != name) {
+            diag(wantFile, wantLine, "R-11.15", "das Projekt in " + dir + " heißt '" + name + "', nicht '" + want + "'");
+        }
+        ProjectKind kind = ProjectKind::Library;
+        if (doc.has("type")) {
+            string t = doc.strOf("type");
+            if (doc.isStrAt("type") && t == "executable") {
+                kind = ProjectKind::Executable;
+            } else if (!doc.isStrAt("type") || t != "library") {
+                diag(yamlPath, doc.lineOf("type"), "R-11.13", "type ist executable oder library");
+            }
+        }
+        string? mainFile = null;
+        if (doc.isStrAt("main")) {
+            mainFile = Path::absolute(Path::join(dir, doc.strOf("main")));
+        }
+        if (kind == ProjectKind::Executable && mainFile == null) {
+            diag(yamlPath, 1, "R-11.13", "ein Programm braucht den Eintrag main");
+        }
+        i64 idx = projects.length;
+        Project p = new Project(name, kind, dir);
+        p.mainFile = mainFile;
+        p.yaml = yamlPath;
+        projects.push(p);
+
+        stack.add(dir);
+        i64[] deps = [];
+        i64 di = doc.indexOf("dependencies");
+        if (di >= 0 && doc.items[di].kind != YKind::List) {
+            diag(yamlPath, doc.items[di].line, "R-11.13", "dependencies ist eine Liste");
+        }
+        if (di >= 0 && doc.items[di].kind == YKind::List) {
+            for (YNode dep : doc.items[di].items) {
+                string depName = dep.strOf("name");
+                if (dep.has("path")) {
+                    i32 pl = dep.lineOf("path");
+                    if (!dep.isStrAt("path")) {
+                        diag(yamlPath, pl, "R-11.15", "path ist ein Pfad");
+                        continue;
+                    }
+                    string target = Path::absolute(Path::join(dir, dep.strOf("path")));
+                    if (stack.contains(target)) {
+                        diag(yamlPath, pl, "R-11.16", "Zyklus in den Abhängigkeiten über '" + depName + "'");
+                        continue;
+                    }
+                    i64 d = loadProject(target, &stack, true, depName, yamlPath, pl);
+                    if (d >= 0) {
+                        if (projects[d].kind != ProjectKind::Library) {
+                            diag(yamlPath, pl, "R-11.15", "'" + depName + "' ist keine Bibliothek");
+                        }
+                        deps.push(d);
+                    }
+                } else if (dep.has("version")) {
+                    diag(yamlPath, dep.line, "R-11.15", "'" + depName
+                        + "': Bibliotheken aus dem Verzeichnis werden von dieser Implementierung noch nicht geladen");
+                } else {
+                    diag(yamlPath, dep.line, "R-11.15", "eine Abhängigkeit braucht path oder version");
+                }
+            }
+        }
+        stack.remove(dir);
+        projects[idx].deps = deps;
+
+        string[] symbols = [];
+        string mode = "debug";
+        if (release) {
+            mode = "release";
+        }
+        i64 si = doc.indexOf("symbols");
+        if (si >= 0) {
+            ref YNode syms = doc.items[si];
+            if (syms.kind != YKind::Map) {
+                diag(yamlPath, syms.line, "R-11.13", "symbols ordnet den Modi debug und release Listen zu");
+            }
+            for (i64 k = 0; k < syms.keys.length; k++) {
+                string key = syms.keys[k];
+                ref YNode list = syms.items[k];
+                bool allStr = list.kind == YKind::List;
+                for (YNode s : list.items) {
+                    if (s.kind != YKind::Str) {
+                        allStr = false;
+                    }
+                }
+                if (key != "debug" && key != "release") {
+                    diag(yamlPath, list.line, "R-11.13", "unbekannter Modus '" + key + "'");
+                } else if (!allStr) {
+                    diag(yamlPath, list.line, "R-11.13", key + " ist eine Liste von Symbolen");
+                } else if (key == mode) {
+                    symbols = [];
+                    for (YNode s : list.items) {
+                        symbols.push(s.text);
+                    }
+                }
+            }
+        }
+        i64 sx = doc.indexOf("sources");
+        if (sx >= 0 && doc.items[sx].kind != YKind::List) {
+            diag(yamlPath, doc.items[sx].line, "R-11.13", "sources ist eine Liste von Quellordnern");
+        }
+        if (sx >= 0 && doc.items[sx].kind == YKind::List) {
+            for (YNode s : doc.items[sx].items) {
+                if (s.kind != YKind::Str) {
+                    diag(yamlPath, s.line, "R-11.13", "ein Quellordner ist ein Pfad");
+                    continue;
+                }
+                string src = Path::join(dir, s.text);
+                if (!Dir::exists(src)) {
+                    diag(yamlPath, s.line, "R-11.13", "Quellordner " + src + " fehlt");
+                    continue;
+                }
+                loadSources(Path::absolute(src), idx, symbols);
+            }
+        }
+        return idx;
+    }
+}

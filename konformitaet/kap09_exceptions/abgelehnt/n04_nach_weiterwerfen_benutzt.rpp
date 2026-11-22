@@ -1,6 +1,6 @@
 // Konformitätstest Kapitel 9 – muss abgelehnt werden.
 // Regel: R-9.8, Kapitel 5 R-5.3
-// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (e ist durch throw verschoben).
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (e besitzt die Exception und ist an kept übergegangen).
 package konformitaet.kap09;
 using rpp.core.Exception;
 
@@ -23,9 +23,7 @@ public:
         try {
             print("x");
         } catch (Exception e) {
-            if (flag) {
-                throw e;
-            }
+            Exception kept = e;
             print(e.message); // FEHLER
         }
     }

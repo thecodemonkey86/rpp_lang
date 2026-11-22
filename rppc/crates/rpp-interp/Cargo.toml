@@ -1,0 +1,10 @@
+[package]
+name = "rpp-interp"
+description = "R++: Debug-Interpreter (Referenzimplementierung, R-12.3)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpp-syntax = { path = "../rpp-syntax" }
+rpp-sema = { path = "../rpp-sema" }

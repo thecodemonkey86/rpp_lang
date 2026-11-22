@@ -17,7 +17,7 @@ public:
         if (flag) {
             return 1;
         }
-        throw new Error("kein Wert");
+        throw new Exception("kein Wert");
     }
 
     void early(i32 x) {

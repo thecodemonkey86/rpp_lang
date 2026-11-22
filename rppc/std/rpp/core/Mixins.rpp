@@ -1,0 +1,28 @@
+// Standardbibliothek: rpp.core, Mixins der Sprache (Kapitel 13, R-13.6 bis R-13.9)
+package rpp.core;
+
+export mixin Equatable<T> {
+    nodiscard bool equals(T other);
+}
+
+export mixin Comparable<T> {
+    import Equatable<T>;
+    nodiscard i32 compareTo(T other);
+    bool less(T other) { return compareTo(other) < 0; }
+}
+
+export mixin Hashable {
+    nodiscard i64 hash();
+}
+
+export mixin Iterable<T, C> {
+    nodiscard C begin();
+    nodiscard bool done(C cursor);
+    nodiscard C next(C cursor);
+    ref T at(C cursor);
+}
+
+export mixin MutIterable<T, C> {
+    import Iterable<T, C>;
+    ref T& atMut(C cursor) &;
+}

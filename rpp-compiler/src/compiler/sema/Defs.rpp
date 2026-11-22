@@ -1,0 +1,226 @@
+// Deklarationstabellen, gleichwertig zu den Datentypen in rppc/crates/rpp-sema/src/defs.rs.
+// Positionen stehen als Zeile und Spalte da.
+package compiler.sema;
+
+export enum DefKind {
+    Class,
+    Mixin,
+    Enum,
+}
+
+export enum Access {
+    Public,
+    Private,
+    Protected,
+}
+
+export class TParam {
+public:
+    string name;
+    shared Ty[] constraints = [];
+    bool needsNew = false;
+    constructor(string name) {
+        this.name = name;
+    }
+}
+
+export class PInfo {
+public:
+    string name;
+    shared Ty ty;
+    Mode mode;
+    constructor(string name, shared Ty ty, Mode mode) {
+        this.name = name;
+        this.ty = ty;
+        this.mode = mode;
+    }
+}
+
+export enum RetKind {
+    Void,
+    Val,
+    // zurückgegebener Borrow ref T bzw. ref T&
+    Ref,
+}
+
+export class Ret {
+public:
+    RetKind kind;
+    // bei Void der Typ void
+    shared Ty ty;
+    bool mutable = false;
+    constructor(RetKind kind, shared Ty ty, bool mutable) {
+        this.kind = kind;
+        this.ty = ty;
+        this.mutable = mutable;
+    }
+    bool same(Ret o) {
+        if (kind != o.kind || mutable != o.mutable) {
+            return false;
+        }
+        return kind == RetKind::Void || ty.same(o.ty);
+    }
+}
+
+export class FieldInfo {
+public:
+    string name;
+    shared Ty ty;
+    bool isStatic = false;
+    bool isConst = false;
+    Access access;
+    bool hasInit = false;
+    i32 line;
+    i32 col;
+    // Typ, der das Feld deklariert
+    i64 owner = -1;
+    constructor(string name, shared Ty ty, Access access, i32 line, i32 col) {
+        this.name = name;
+        this.ty = ty;
+        this.access = access;
+        this.line = line;
+        this.col = col;
+    }
+}
+
+export class MethodInfo {
+public:
+    string name;
+    i64 owner;
+    PInfo[] params = [];
+    Ret ret;
+    i64[] tparams = [];
+    bool isStatic = false;
+    // "", "static", "virtual", "override" oder "abstract"
+    string modifier = "";
+    bool isNodiscard = false;
+    bool mutThis = false;
+    Access access;
+    bool hasBody = false;
+    i32 line;
+    i32 col;
+    // Nummer des Members in der Deklaration
+    i64 member;
+
+    constructor(string name, i64 owner, own Ret ret, Access access, i32 line, i32 col, i64 member) {
+        this.name = name;
+        this.owner = owner;
+        this.ret = ret;
+        this.access = access;
+        this.line = line;
+        this.col = col;
+        this.member = member;
+    }
+
+    bool overridable() {
+        return modifier == "virtual" || modifier == "abstract" || modifier == "override" || (!hasBody && !isStatic);
+    }
+
+    // Kopie mit eingesetzten Typargumenten
+    MethodInfo substituted(Subst m) {
+        Ret r = new Ret(ret.kind, Ty::subst(ret.ty, m), ret.mutable);
+        MethodInfo c = new MethodInfo(name, owner, r, access, line, col, member);
+        for (PInfo p : params) {
+            c.params.push(new PInfo(p.name, Ty::subst(p.ty, m), p.mode));
+        }
+        for (i64 t : tparams) {
+            c.tparams.push(t);
+        }
+        c.isStatic = isStatic;
+        c.modifier = modifier;
+        c.isNodiscard = isNodiscard;
+        c.mutThis = mutThis;
+        c.hasBody = hasBody;
+        return c;
+    }
+}
+
+export class CtorInfo {
+public:
+    PInfo[] params = [];
+    Access access;
+    i32 line;
+    i32 col;
+    bool callsBase = false;
+    i64 member;
+    constructor(Access access, i32 line, i32 col, i64 member) {
+        this.access = access;
+        this.line = line;
+        this.col = col;
+        this.member = member;
+    }
+}
+
+export class VariantInfo {
+public:
+    string name;
+    PInfo[] fields = [];
+    bool hasValue = false;
+    i64 value = 0;
+    constructor(string name) {
+        this.name = name;
+    }
+}
+
+export class TypeDef {
+public:
+    DefKind kind;
+    string name;
+    string pkg;
+    i64 project;
+    i64 file;
+    // Nummer der Deklaration unter den Kindern der Datei
+    i64 decl;
+    bool exported = false;
+    bool isAbstract = false;
+    i64[] tparams = [];
+    shared Ty? baseType = null;
+    // direkte Mixin-Importe mit Position
+    shared Ty[] imports = [];
+    i32[] importLines = [];
+    i32[] importCols = [];
+    FieldInfo[] fields = [];
+    MethodInfo[] methods = [];
+    CtorInfo[] ctors = [];
+    VariantInfo[] variants = [];
+    bool hasCopy = false;
+    i32 copyLine = 0;
+    i32 copyCol = 0;
+    bool hasDtor = false;
+    i32 line;
+    i32 col;
+
+    constructor(DefKind kind, string name, string pkg, i64 project, i64 file, i64 decl, i32 line, i32 col) {
+        this.kind = kind;
+        this.name = name;
+        this.pkg = pkg;
+        this.project = project;
+        this.file = file;
+        this.decl = decl;
+        this.line = line;
+        this.col = col;
+    }
+
+    string fullName() {
+        if (pkg.length == 0) {
+            return name;
+        }
+        return pkg + "." + name;
+    }
+}
+
+// Eine noch zu prüfende Verwendung eines generischen Typs (R-7.25, R-7.26)
+export class Pending {
+public:
+    i64 file;
+    i32 line;
+    i32 col;
+    i64 def;
+    shared Ty[] args = [];
+    constructor(i64 file, i32 line, i32 col, i64 def) {
+        this.file = file;
+        this.line = line;
+        this.col = col;
+        this.def = def;
+    }
+}

@@ -1,0 +1,35 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.17, R-13.18, R-13.10
+// Erwartet: Ausgabe "2\n1\n10\n-\na=10\nb=2\nc=3\n2\n10\n3\n1\n3"; Exit-Code 0
+using rpp.collections.Map;
+using rpp.collections.Entry;
+using rpp.collections.Set;
+
+i32 main(string[] args) {
+    Map<string, i32> m = new Map<string, i32>();
+    m.put("a", 1);
+    m.put("b", 2);
+    print(m.length().toString());
+    print((m.get("a") ?? 0).toString());
+    m.put("a", 10);
+    print((m.get("a") ?? 0).toString());
+    print(m.contains("x") ? "x" : "-");
+    m.put("c", 3);
+    for (Entry<string, i32> e : m) {
+        print(e.key + "=" + e.value.toString());
+    }
+    i32? weg = m.remove("a");
+    print(m.length().toString());
+    print((weg ?? 0).toString());
+    Set<i64> s = new Set<i64>();
+    s.add(3);
+    s.add(1);
+    s.add(3);
+    s.add(2);
+    s.remove(2);
+    for (i64 x : s) {
+        print(x.toString());
+    }
+    print((s.length() + 1).toString());
+    return 0;
+}

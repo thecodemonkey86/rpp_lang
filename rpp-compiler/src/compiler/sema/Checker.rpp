@@ -1,0 +1,4791 @@
+// Prüfung von Rümpfen: Anweisungen (Kapitel 8, 9) und Ausdrücke (Kapitel 4, 7, 10, 13) mit
+// der Flussanalyse: Typverengung (Kapitel 6), sichere Initialisierung (R-4.46), Moves und
+// Borrows (Kapitel 5) und Warnungen (R-8.27). Gleichwertig zu rppc/crates/rpp-sema/src/body.rs,
+// ohne die Angaben für die Ausführung (rt). Der Prüfer besitzt das Programm; die
+// Syntaxbäume werden geliehen übergeben.
+package compiler.sema;
+
+using compiler.syntax.Node;
+using compiler.project.Workspace;
+using compiler.project.Diag;
+
+export enum LK {
+    Var,
+    Const,
+    Param,
+    // ref T x bzw. ref T& x
+    Ref,
+    // Schleifen- und case-Variablen
+    Bound,
+    // catch-Variable: besitzt die Exception (R-9.8)
+    Catch,
+}
+
+class Local {
+public:
+    string name;
+    shared Ty ty;
+    LK kind;
+    // bei Param: die Markierung
+    Mode mode = Mode::Read;
+    // bei Ref und Bound: veränderbar
+    bool mutFlag = false;
+    i64 id;
+    // Anzahl der Rahmen bei der Deklaration; innere Rahmen erfassen die Variable
+    i64 frame;
+    // warum der Wert nullbar ist (für Meldungen)
+    string[] origin = [];
+
+    constructor(string name, shared Ty ty, LK kind, i64 id, i64 frame) {
+        this.name = name;
+        this.ty = ty;
+        this.kind = kind;
+        this.id = id;
+        this.frame = frame;
+    }
+
+    // Hält die Variable nur einen Borrow (Kapitel 5, Abschnitt 7)?
+    bool isBorrow() {
+        return (kind == LK::Param && mode != Mode::Own) || kind == LK::Ref || kind == LK::Bound;
+    }
+}
+
+// Ziel von break und continue: die Stände an den Sprüngen
+class Jump {
+public:
+    bool isLoop;
+    Flow[] breaks = [];
+    Flow[] continues = [];
+    constructor(bool isLoop) {
+        this.isLoop = isLoop;
+    }
+}
+
+// Ein Methodenrumpf oder ein Lambda-Rumpf
+class Frame {
+public:
+    Ret? ret = null;
+    shared Ty[] inferred = [];
+    i64 loops = 0;
+    i64 switches = 0;
+    bool ownLambda;
+    i64 inFinally = 0;
+    Jump[] jumps = [];
+    // Vereinigung aller Stände in umgebenden try-Blöcken (R-6.12, R-9.17)
+    Flow[] tries = [];
+    // von diesem Rahmen erfasste Variablen äußerer Rahmen
+    i64[] captures = [];
+    // Zugriffe auf erfasste Orte (Wurzel, veränderbar)
+    i64[] capIds = [];
+    bool[] capMut = [];
+
+    constructor(own Ret? ret, bool ownLambda) {
+        this.ret = ret;
+        this.ownLambda = ownLambda;
+    }
+}
+
+class IdList {
+public:
+    i64[] ids = [];
+}
+
+// Gesicherter Zustand einer Probeprüfung
+class ProbeState {
+public:
+    bool hasLastCall;
+    i32 lastFacts;
+    Flow flow;
+    Loan[] loans = [];
+    Place? pending = null;
+    constructor(bool hasLastCall, i32 lastFacts, own Flow flow) {
+        this.hasLastCall = hasLastCall;
+        this.lastFacts = lastFacts;
+        this.flow = flow;
+    }
+}
+
+// Form eines Arguments ohne Zusammenhang (für die Auflösung von Überladungen)
+class ArgShape {
+public:
+    // 0: Typ, 1: Ganzzahlliteral, 2: Gleitkommaliteral, 3: null, 4: Lambda
+    i32 kind;
+    shared Ty ty;
+    bool neg = false;
+    ui64 mag = 0;
+    PInfo[] lparams = [];
+    constructor(i32 kind, shared Ty ty) {
+        this.kind = kind;
+        this.ty = ty;
+    }
+}
+
+export class Checker {
+public:
+    Program p;
+
+private:
+    // ---- Zusammenhang (Ctx)
+    i64 file = 0;
+    // Klasse oder Mixin des Rumpfs; -1: main
+    i64 cls = -1;
+    bool isStatic = false;
+    i64[] ctxTparams = [];
+    // ---- Namen
+    Local[] locals = [];
+    // Beginn jedes Gültigkeitsbereichs in locals; der erste ist der äußerste
+    i64[] scopeMarks = [0];
+    Frame[] frames = [];
+    // Ergebnis des zuletzt geprüften äußersten Aufrufs: 1 nodiscard, 2 Funktionswert, 4 kehrt nie zurück
+    bool hasLastCall = false;
+    i32 lastFacts = 0;
+    // Steht der gerade geprüfte Ausdruck direkt als Argument eines Aufrufs?
+    bool asArgument = false;
+    i64 quiet = 0;
+    // Aufrufe, deren Methode einen Borrow zurückgibt (R-5.24), als Position zeile * 1000000 + spalte
+    i64[] refCalls = [];
+    // ---- Flussanalyse
+    Flow flow = new Flow();
+    i64 nextId = 0;
+    Loan[] loans = [];
+    i64 stmtDepth = 0;
+    i64 callSeq = 0;
+    // Variablen, die in den Argumenten der gerade geprüften Aufrufe verschoben wurden
+    IdList[] callMoved = [];
+    // > 0: Der Ausdruck ist Teil eines größeren Orts, dessen Zugriff schon geprüft ist.
+    i64 placeQuiet = 0;
+    // Ort des Empfängers für den nächsten invoke
+    Place? pendingRecv = null;
+    // Darf this verändert werden?
+    bool thisMut = false;
+
+public:
+    constructor(own Program p) {
+        this.p = p;
+    }
+
+    // Prüft alle Rümpfe außerhalb der Standardbibliothek (wie check_bodies in lib.rs)
+    void run(Workspace ws) & {
+        for (i64 def = 0; def < p.defs.length; def++) {
+            if (p.projStd[p.defs[def].project]) {
+                continue;
+            }
+            checkDef(ws, def);
+        }
+        for (i64 f = 0; f < ws.files.length; f++) {
+            if (p.projStd[ws.files[f].project]) {
+                continue;
+            }
+            for (Node d : ws.files[f].unit.kids) {
+                if (d.kind == "main") {
+                    i64[] none = [];
+                    reset(f, -1, true, none);
+                    mainBody(d);
+                }
+            }
+        }
+    }
+
+private:
+    void checkDef(Workspace ws, i64 def) & {
+        i64 f = p.defs[def].file;
+        ref Node decl = ws.files[f].unit.kids[p.defs[def].decl];
+        if (decl.kind != "class" && decl.kind != "mixin") {
+            return;
+        }
+        ref Node members = decl.kids[Program::kidIndex(decl, "members")];
+        i64[] classTps = [];
+        for (i64 t : p.defs[def].tparams) {
+            classTps.push(t);
+        }
+        Subst none = new Subst();
+        for (i64 k = 0; k < p.defs[def].methods.length; k++) {
+            MethodInfo m = p.defs[def].methods[k].substituted(none);
+            ref Node md = members.kids[m.member];
+            if (md.kids.length > 4) {
+                i64[] tps = [];
+                for (i64 t : classTps) {
+                    tps.push(t);
+                }
+                for (i64 t : m.tparams) {
+                    tps.push(t);
+                }
+                reset(f, def, m.isStatic, tps);
+                method(m, md.kids[4]);
+            }
+        }
+        for (i64 k = 0; k < p.defs[def].ctors.length; k++) {
+            PInfo[] ps = dupParams(p.defs[def].ctors[k].params);
+            ref Node cd = members.kids[p.defs[def].ctors[k].member];
+            i64 bi = Program::kidIndex(cd, "baseargs");
+            reset(f, def, false, classTps);
+            if (bi >= 0) {
+                ctorLike(ps, true, cd.kids[bi].kids[0], cd.kids[cd.kids.length - 1], true, cd.line, cd.col);
+            } else {
+                ctorLike(ps, false, cd, cd.kids[cd.kids.length - 1], true, cd.line, cd.col);
+            }
+        }
+        for (Node m : members.kids) {
+            if (m.kind == "dtor") {
+                PInfo[] none2 = [];
+                reset(f, def, false, classTps);
+                ctorLike(none2, false, m, m.kids[0], false, m.line, m.col);
+            } else if (m.kind == "copy") {
+                ref Node param = m.kids[0];
+                shared Ty ty = p.resolveType(f, classTps, param.kids[0]);
+                PInfo[] ps = [];
+                ps.push(new PInfo(param.kids[1].text, ty, Mode::Read));
+                reset(f, def, false, classTps);
+                ctorLike(ps, false, m, m.kids[1], false, m.line, m.col);
+            } else if (m.kind == "field" && m.kids.length > 2) {
+                shared Ty fty = Ty::error();
+                for (FieldInfo x : p.defs[def].fields) {
+                    if (x.name == m.kids[1].text) {
+                        fty = x.ty;
+                        break;
+                    }
+                }
+                reset(f, def, Program::flag(m, "static"), classTps);
+                fieldInit(fty, m.kids[2]);
+            }
+        }
+    }
+
+    static PInfo[] dupParams(PInfo[] ps) {
+        PInfo[] out = [];
+        for (PInfo x : ps) {
+            out.push(new PInfo(x.name, x.ty, x.mode));
+        }
+        return out;
+    }
+
+    static Ret dupRet(Ret r) {
+        return new Ret(r.kind, r.ty, r.mutable);
+    }
+
+    void reset(i64 f, i64 c, bool st, i64[] tps) & {
+        file = f;
+        cls = c;
+        isStatic = st;
+        ctxTparams = [];
+        for (i64 t : tps) {
+            ctxTparams.push(t);
+        }
+        locals = [];
+        scopeMarks = [0];
+        frames = [];
+        hasLastCall = false;
+        lastFacts = 0;
+        asArgument = false;
+        quiet = 0;
+        refCalls = [];
+        flow = new Flow();
+        nextId = 0;
+        loans = [];
+        stmtDepth = 0;
+        callSeq = 0;
+        callMoved = [];
+        placeQuiet = 0;
+        pendingRecv = null;
+        thisMut = false;
+    }
+
+    // ------------------------------------------------------------ Meldungen
+
+    void err(i32 line, i32 col, string rule, string msg) & {
+        if (quiet == 0) {
+            string[] none = [];
+            i64 f = file;
+            p.report(f, line, col, rule, none, msg, false);
+        }
+    }
+
+    void errAlso(i32 line, i32 col, string rule, string[] also, string msg) & {
+        if (quiet == 0) {
+            i64 f = file;
+            p.report(f, line, col, rule, also, msg, false);
+        }
+    }
+
+    void warn(i32 line, i32 col, string rule, string msg) & {
+        if (quiet == 0) {
+            string[] none = [];
+            i64 f = file;
+            p.report(f, line, col, rule, none, msg, true);
+        }
+    }
+
+    // Probeprüfung: ohne Meldungen; Flusszustand, Loans und Empfänger bleiben unverändert.
+    ProbeState beginProbe() & {
+        quiet++;
+        ProbeState s = new ProbeState(hasLastCall, lastFacts, flow.dup());
+        for (Loan l : loans) {
+            s.loans.push(l.dup());
+        }
+        s.pending = take(&pendingRecv);
+        return s;
+    }
+
+    void endProbe(ProbeState& s) & {
+        hasLastCall = s.hasLastCall;
+        lastFacts = s.lastFacts;
+        flow = s.flow.dup();
+        loans = [];
+        for (Loan l : s.loans) {
+            loans.push(l.dup());
+        }
+        pendingRecv = take(&s.pending);
+        quiet--;
+    }
+
+    shared Ty probeExpr(Node e) & {
+        ProbeState s = beginProbe();
+        shared Ty t = expr(e, null);
+        endProbe(&s);
+        return t;
+    }
+
+    string show(Ty t) {
+        return p.show(t);
+    }
+
+    shared Ty resolve(Node t) & {
+        i64[] scope = [];
+        for (i64 x : ctxTparams) {
+            scope.push(x);
+        }
+        i64 f = file;
+        if (quiet > 0) {
+            i64 n = p.diags.length;
+            shared Ty r = p.resolveType(f, scope, t);
+            p.truncateDiags(n);
+            p.dropPending();
+            return r;
+        }
+        shared Ty r = p.resolveType(f, scope, t);
+        p.checkPending();
+        return r;
+    }
+
+    shared Ty resolveTN(Node tn, i32 line, i32 col) & {
+        i64[] scope = [];
+        for (i64 x : ctxTparams) {
+            scope.push(x);
+        }
+        i64 f = file;
+        if (quiet > 0) {
+            i64 n = p.diags.length;
+            shared Ty r = p.resolveTypeName(f, scope, tn, line, col);
+            p.truncateDiags(n);
+            p.dropPending();
+            return r;
+        }
+        shared Ty r = p.resolveTypeName(f, scope, tn, line, col);
+        p.checkPending();
+        return r;
+    }
+
+    shared Ty? selfTy() {
+        if (cls < 0) {
+            return null;
+        }
+        shared Ty[] args = [];
+        for (i64 t : p.defs[cls].tparams) {
+            args.push(Ty::param(t));
+        }
+        return Ty::named(cls, args);
+    }
+
+    bool inMixin() {
+        return cls >= 0 && p.defs[cls].kind == DefKind::Mixin;
+    }
+
+    bool anyOwnLambda() {
+        for (Frame f : frames) {
+            if (f.ownLambda) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static (i32, i32) blockEnd(Node b) {
+        // Text "end=zeile:spalte"
+        string s = b.text.substring(4, b.text.length);
+        string[] parts = s.split(":");
+        return (i32::parse(parts[0]), i32::parse(parts[1]));
+    }
+
+    static i64 posKey(i32 line, i32 col) {
+        return cast<i64>(line) * 1000000 + cast<i64>(col);
+    }
+
+    // ------------------------------------------------------------ Einstiege
+
+    void method(MethodInfo m, Node body) & {
+        frames.push(new Frame(dupRet(m.ret), false));
+        thisMut = m.mutThis;
+        for (PInfo x : m.params) {
+            discard newLocal(x.name, x.ty, LK::Param, x.mode, false);
+        }
+        bool completes = block(body);
+        if (completes && m.ret.kind != RetKind::Void) {
+            // R-9.19: assert endet normal und ersetzt kein return
+            string[] also = [];
+            i64 n = body.kids.length;
+            if (n > 0 && isAssertCall(body.kids[n - 1])) {
+                also.push("R-9.19");
+            }
+            (i32 el, i32 ec) = blockEnd(body);
+            errAlso(el, ec, "R-8.26", also, m.name + " endet ohne return");
+        }
+        discard frames.pop();
+    }
+
+    static bool isAssertCall(Node s) {
+        if (s.kind != "exprstmt" || s.kids[0].kind != "eval") {
+            return false;
+        }
+        ref Node e = s.kids[0].kids[0];
+        return e.kind == "call" && e.kids[0].kind == "name" && e.kids[0].text == "assert";
+    }
+
+    void mainBody(Node m) & {
+        frames.push(new Frame(new Ret(RetKind::Val, Ty::ofPrim("i32"), false), false));
+        discard newLocal(m.kids[0].text, Ty::wrap(TK::Vector, Ty::ofPrim("string")), LK::Param, Mode::Read, false);
+        ref Node body = m.kids[1];
+        if (block(body)) {
+            (i32 el, i32 ec) = blockEnd(body);
+            err(el, ec, "R-8.26", "main endet ohne return");
+        }
+        discard frames.pop();
+    }
+
+    // Konstruktor (R-7.6, R-7.7), Destruktor oder copy: Rumpf ohne Rückgabewert
+    void ctorLike(PInfo[] params, bool hasBase, Node baseArgs, Node body, bool checkFields, i32 line, i32 col) & {
+        frames.push(new Frame(new Ret(RetKind::Void, Ty::simple(TK::Void), false), false));
+        thisMut = true;
+        for (PInfo x : params) {
+            discard newLocal(x.name, x.ty, LK::Param, x.mode, false);
+        }
+        if (hasBase) {
+            shared Ty? baseFlow = null;
+            if (cls >= 0) {
+                baseFlow = p.defs[cls].baseType;
+            }
+            if (baseFlow != null && baseFlow.kind == TK::Named) {
+                discard newObject(baseFlow, baseArgs, line, col);
+            } else {
+                err(line, col, "R-7.6", "die Klasse hat keine Basisklasse");
+            }
+        }
+        discard block(body);
+        if (checkFields) {
+            checkFieldsSet(body);
+        }
+        discard frames.pop();
+    }
+
+    void fieldInit(shared Ty ty, Node e) & {
+        frames.push(new Frame(null, false));
+        shared Ty t = expr(e, ty);
+        discard requireE(t, ty, e);
+        string[] none = [];
+        consume(e, t, ty, "R-5.3", none);
+        discard frames.pop();
+    }
+
+    // R-7.7: jedes nicht nullbare Feld ohne Initialisierer wird im Konstruktor gesetzt
+    void checkFieldsSet(Node body) & {
+        if (cls < 0) {
+            return;
+        }
+        string[] needed = [];
+        for (FieldInfo f : p.defs[cls].fields) {
+            if (!f.isStatic && !f.hasInit && f.ty.kind != TK::Nullable) {
+                needed.push(f.name);
+            }
+        }
+        if (needed.length == 0) {
+            return;
+        }
+        string[] set = assignedFields(body, 0);
+        for (string n : needed) {
+            if (!Program::hasString(set, n) && !Program::hasString(set, "*")) {
+                (i32 el, i32 ec) = blockEnd(body);
+                err(el, ec, "R-7.7", "Feld " + n + " wird im Konstruktor nicht auf jedem Weg gesetzt");
+                return;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ Namen
+
+    void pushScope() & {
+        scopeMarks.push(locals.length);
+    }
+
+    void popScope() & {
+        i64 depth = scopeMarks.length;
+        Loan[] keep = [];
+        for (Loan l : loans) {
+            if (!(l.until == UntilKind::Block && l.depth >= depth)) {
+                keep.push(l.dup());
+            }
+        }
+        loans = keep;
+        i64 mark = scopeMarks.pop();
+        while (locals.length > mark) {
+            discard locals.pop();
+        }
+    }
+
+    i64 findLocal(string name) {
+        for (i64 i = locals.length - 1; i >= 0; i--) {
+            if (locals[i].name == name) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    i64 localById(i64 id) {
+        for (i64 i = 0; i < locals.length; i++) {
+            if (locals[i].id == id) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    i64 newLocal(string name, shared Ty ty, LK kind, Mode mode, bool mutFlag) & {
+        i64 id = nextId;
+        nextId++;
+        Local l = new Local(name, ty, kind, id, frames.length);
+        l.mode = mode;
+        l.mutFlag = mutFlag;
+        locals.push(l);
+        return id;
+    }
+
+    i64 declare(Node name, shared Ty ty, LK kind, Mode mode, bool mutFlag) & {
+        if (findLocal(name.text) >= 0) {
+            err(name.line, name.col, "R-8.17", name.text + " verdeckt eine sichtbare Variable");
+        }
+        return newLocal(name.text, ty, kind, mode, mutFlag);
+    }
+
+    i64 top() {
+        return frames.length - 1;
+    }
+
+    // ------------------------------------------------------------ Flussanalyse
+
+    // Typ einer lokalen Variablen an dieser Stelle (verengt, falls ein Fakt gilt)
+    shared Ty localType(i64 idx) {
+        if (flow.dead || flow.nonnull.has(locals[idx].id)) {
+            return Tys::stripNull(locals[idx].ty);
+        }
+        return locals[idx].ty;
+    }
+
+    // Wird ein Wert dieses Typs verschoben statt kopiert (Kapitel 5, Abschnitt 7)?
+    bool movable(Ty t) {
+        if (t.kind == TK::Named) {
+            if (p.defs[t.id].kind == DefKind::Enum) {
+                for (VariantInfo v : p.defs[t.id].variants) {
+                    if (v.fields.length > 0) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            return true;
+        }
+        if (t.kind == TK::Param || t.kind == TK::Vector || t.kind == TK::Array || t.kind == TK::Func) {
+            return true;
+        }
+        if (t.kind == TK::Tuple) {
+            for (shared Ty x : t.args) {
+                if (movable(x)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (t.kind == TK::Nullable) {
+            return movable(t.args[0]);
+        }
+        return false;
+    }
+
+    // Variable, an der null geprüft wird: x in x == null
+    i64 localIdOf(Node e) {
+        if (e.kind == "paren") {
+            return localIdOf(e.kids[0]);
+        }
+        if (e.kind == "name") {
+            i64 i = findLocal(e.text);
+            if (i >= 0) {
+                return locals[i].id;
+            }
+        }
+        return -1;
+    }
+
+    // W(c) und F(c) (R-6.6)
+    (IdSet, IdSet) facts(Node e) {
+        if (e.kind == "paren") {
+            return facts(e.kids[0]);
+        }
+        if (e.kind == "unary" && e.text == "!") {
+            (IdSet w, IdSet f) = facts(e.kids[0]);
+            return (f, w);
+        }
+        if (e.kind == "binary" && e.text == "&&") {
+            (IdSet wa, IdSet fa) = facts(e.kids[0]);
+            (IdSet wb, IdSet fb) = facts(e.kids[1]);
+            return (IdSet::unite(wa, wb), IdSet::inter(fa, fb));
+        }
+        if (e.kind == "binary" && e.text == "||") {
+            (IdSet wa, IdSet fa) = facts(e.kids[0]);
+            (IdSet wb, IdSet fb) = facts(e.kids[1]);
+            return (IdSet::inter(wa, wb), IdSet::unite(fa, fb));
+        }
+        if (e.kind == "binary" && (e.text == "==" || e.text == "!=")) {
+            i64 v = -1;
+            if (e.kids[1].kind == "null") {
+                v = localIdOf(e.kids[0]);
+            } else if (e.kids[0].kind == "null") {
+                v = localIdOf(e.kids[1]);
+            }
+            if (v >= 0) {
+                IdSet one = new IdSet();
+                one.add(v);
+                if (e.text == "!=") {
+                    return (one, new IdSet());
+                }
+                return (new IdSet(), one);
+            }
+        }
+        return (new IdSet(), new IdSet());
+    }
+
+    // Warum der Wert von e nullbar ist (für Meldungen)
+    string[] nullReason(Node e) {
+        string[] out = [];
+        if (e.kind == "paren") {
+            return nullReason(e.kids[0]);
+        }
+        if (e.kind == "name") {
+            i64 i = findLocal(e.text);
+            if (i < 0) {
+                out.push("R-6.4");
+                return out;
+            }
+            i64 k = flow.lost.find(locals[i].id);
+            if (k >= 0) {
+                out.push(flow.lost.vals[k]);
+            }
+            for (string o : locals[i].origin) {
+                out.push(o);
+            }
+            return out;
+        }
+        if (e.kind == "member" || e.kind == "index") {
+            out.push("R-6.4");
+        } else if (e.kind == "as") {
+            out.push("R-6.21");
+            out.push("R-4.23");
+        } else if (e.kind == "call") {
+            ref Node c = e.kids[0];
+            if (c.kind == "member" && c.kids[1].text == "lock") {
+                out.push("R-6.22");
+                out.push("R-4.41");
+            } else if (c.kind == "static" && c.kids[0].kids[1].text == "readLine") {
+                out.push("R-13.21");
+            }
+        }
+        return out;
+    }
+
+    // Ort eines Ausdrucks (Kapitel 5, Abschnitt 3.1), falls er einer ist
+    Place? placeOf(Node e) {
+        if (e.kind == "paren") {
+            return placeOf(e.kids[0]);
+        }
+        if (e.kind == "this") {
+            return new Place(-1);
+        }
+        if (e.kind == "name") {
+            i64 i = findLocal(e.text);
+            if (i >= 0) {
+                return new Place(locals[i].id);
+            }
+            shared Ty? st = selfTy();
+            if (st == null || isStatic) {
+                return null;
+            }
+            FieldInfo? f = p.fieldOf(st, e.text);
+            if (f == null || f.isStatic) {
+                return null;
+            }
+            return new Place(-1).child(e.text);
+        }
+        if (e.kind == "member") {
+            Place? o = placeOf(e.kids[0]);
+            if (o == null) {
+                return null;
+            }
+            return o.child(e.kids[1].text);
+        }
+        if (e.kind == "index") {
+            Place? o = placeOf(e.kids[0]);
+            if (o == null) {
+                return null;
+            }
+            return o.child("[]");
+        }
+        return null;
+    }
+
+    string placeName(Place pl) {
+        string s = "this";
+        if (pl.root != -1) {
+            i64 i = localById(pl.root);
+            s = "";
+            if (i >= 0) {
+                s = locals[i].name;
+            }
+        }
+        for (string f : pl.path) {
+            if (f == "[]") {
+                s = s + "[…]";
+            } else {
+                s = s + "." + f;
+            }
+        }
+        return s;
+    }
+
+    // Rahmen, die die Variable erfassen (innere Lambdas): von, bis (ausschließlich)
+    (i64, i64) capturingFrames(i64 id) {
+        i64 decl = frames.length;
+        if (id == -1) {
+            decl = 1;
+        } else {
+            i64 i = localById(id);
+            if (i >= 0) {
+                decl = locals[i].frame;
+            }
+        }
+        if (decl > frames.length) {
+            decl = frames.length;
+        }
+        return (decl, frames.length);
+    }
+
+    bool capturedByOwnLambda(i64 id) {
+        (i64 from, i64 to) = capturingFrames(id);
+        for (i64 f = from; f < to; f++) {
+            if (frames[f].ownLambda) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Zugriff auf einen Ort prüfen: erlaubt_L(κ, p)
+    void access(Place pl, bool mutable, i32 line, i32 col) & {
+        if (flow.dead) {
+            return;
+        }
+        // Zugriffe eines Lambdas auf erfasste Orte prüft die Erfassungsstelle (R-10.7).
+        (i64 from, i64 to) = capturingFrames(pl.root);
+        for (i64 f = from; f < to; f++) {
+            i64 k = Program::indexOfInt(frames[f].capIds, pl.root);
+            if (k >= 0) {
+                frames[f].capMut[k] = frames[f].capMut[k] || mutable;
+            } else {
+                frames[f].capIds.push(pl.root);
+                frames[f].capMut.push(mutable);
+            }
+        }
+        i64 k = -1;
+        for (i64 i = loans.length - 1; i >= 0; i--) {
+            if (loans[i].conflicts(mutable, pl)) {
+                k = i;
+                break;
+            }
+        }
+        if (k < 0) {
+            return;
+        }
+        string rule = loans[k].rule;
+        string how = "lesend";
+        if (loans[k].mutable) {
+            how = "veränderbar";
+        }
+        string what = "gelesen";
+        if (mutable) {
+            what = "verändert";
+        }
+        string msg = loans[k].what + " ist " + how + " geliehen und kann hier nicht " + what + " werden";
+        err(line, col, rule, msg);
+    }
+
+    void pushLoan(own Place pl, bool mutable, UntilKind until, i64 depth, string rule) & {
+        bool sharedRoot = false;
+        if (pl.root != -1) {
+            i64 i = localById(pl.root);
+            sharedRoot = i >= 0 && Tys::isShared(locals[i].ty);
+        }
+        string what = placeName(pl);
+        loans.push(new Loan(mutable, pl, sharedRoot, until, depth, rule, what));
+    }
+
+    // Schreibrecht (Kapitel 5, Abschnitt 3.2): Die Wurzel des Orts hält keinen lesenden Borrow.
+    bool writable(Place pl, i32 line, i32 col, string rule) & {
+        if (pl.root == -1) {
+            if (!thisMut) {
+                err(line, col, rule, "this ist in dieser Methode nur lesend geliehen (Methode ohne &)");
+                return false;
+            }
+            return true;
+        }
+        i64 i = localById(pl.root);
+        if (i < 0) {
+            return true;
+        }
+        if (Tys::isShared(locals[i].ty)) {
+            return true;
+        }
+        string name = locals[i].name;
+        if (capturedByOwnLambda(locals[i].id)) {
+            err(line, col, "R-10.11", name + " ist im own-Lambda erfasst und unveränderlich");
+            return false;
+        }
+        LK kind = locals[i].kind;
+        bool ok = true;
+        if ((kind == LK::Param && locals[i].mode == Mode::Read) || ((kind == LK::Ref || kind == LK::Bound) && !locals[i].mutFlag)) {
+            ok = false;
+        } else if (kind == LK::Const) {
+            ok = pl.path.length > 0;
+        }
+        if (!ok) {
+            err(line, col, rule, name + " ist nur lesend geliehen");
+        }
+        return ok;
+    }
+
+    // Zuweisung an eine lokale Variable: zugewiesen, verfügbar, verengt nach R-6.11
+    void assigned(i64 id, Ty value) & {
+        if (flow.dead) {
+            return;
+        }
+        discard flow.unassigned.remove(id);
+        discard flow.moved.take(id);
+        if (Tys::nullable(value) && !value.isError()) {
+            flow.unnarrow(id, "R-6.11");
+        } else {
+            flow.nonnull.add(id);
+            discard flow.lost.take(id);
+        }
+    }
+
+    // Verwendung von e als Wert für einen Besitzer (Kapitel 5, Abschnitt 7)
+    void consume(Node e, shared Ty vt, shared Ty dest, string reason, string[] also) & {
+        if (vt.isError() || dest.isError() || flow.dead) {
+            return;
+        }
+        if (e.kind == "paren") {
+            consume(e.kids[0], vt, dest, reason, also);
+            return;
+        }
+        if (e.kind == "cond") {
+            consume(e.kids[1], vt, dest, reason, also);
+            consume(e.kids[2], vt, dest, reason, also);
+            return;
+        }
+        if (e.kind == "coalesce") {
+            consume(e.kids[0], vt, dest, reason, also);
+            consume(e.kids[1], vt, dest, reason, also);
+            return;
+        }
+        if (e.kind == "name" && findLocal(e.text) >= 0) {
+            i64 i = findLocal(e.text);
+            string n = e.text;
+            shared Ty lty = locals[i].ty;
+            i64 id = locals[i].id;
+            bool destPlain = dest.kind != TK::Shared && dest.kind != TK::Weak
+                && !(dest.kind == TK::Nullable && (dest.args[0].kind == TK::Shared || dest.args[0].kind == TK::Weak));
+            if (Tys::isShared(lty) && destPlain && movable(dest)) {
+                string[] a = ["V-9"];
+                for (string x : also) {
+                    a.push(x);
+                }
+                errAlso(e.line, e.col, "R-5.3", a, n + " ist shared; aus shared wird nie own (copy(" + n + ") verwenden)");
+                return;
+            }
+            if (!movable(lty)) {
+                return;
+            }
+            if (locals[i].isBorrow()) {
+                string[] a = [];
+                for (string x : also) {
+                    a.push(x);
+                }
+                if (Tys::core(lty).kind == TK::Func) {
+                    a.push("R-10.16");
+                }
+                errAlso(e.line, e.col, "R-5.3", a, n + " ist nur geliehen und kann nicht verschoben oder gespeichert werden");
+                return;
+            }
+            (i64 from, i64 to) = capturingFrames(id);
+            if (from < to) {
+                bool isOwn = false;
+                for (i64 f = from; f < to; f++) {
+                    if (frames[f].ownLambda) {
+                        isOwn = true;
+                    }
+                }
+                if (isOwn) {
+                    err(e.line, e.col, "R-10.11", n + " ist im own-Lambda erfasst und kann nicht verschoben werden");
+                } else {
+                    err(e.line, e.col, "R-10.7", "ein normales Lambda erfasst " + n + " nur geliehen; ein Move ist nicht möglich");
+                }
+                return;
+            }
+            access(new Place(id), true, e.line, e.col);
+            flow.moved.put(id, reason);
+            if (callMoved.length > 0) {
+                callMoved[callMoved.length - 1].ids.push(id);
+            }
+            return;
+        }
+        if (e.kind == "call" && Program::indexOfInt(refCalls, posKey(e.line, e.col)) >= 0 && movable(vt)) {
+            errAlso(e.line, e.col, "R-5.24", also, "der Aufruf liefert einen Borrow; er wird mit ref gebunden und kann nicht verschoben werden");
+            return;
+        }
+        if (e.kind == "name" || e.kind == "member" || e.kind == "index" || e.kind == "this") {
+            if (!movable(vt) || (e.kind == "member" && e.text == "safe")) {
+                return;
+            }
+            string[] a = ["V-3"];
+            if (Tys::nullable(vt) && e.kind != "this") {
+                a.push("R-6.15");
+            }
+            for (string x : also) {
+                a.push(x);
+            }
+            string msg = "aus einem Feld kann nicht verschoben werden (replace, take oder copy verwenden)";
+            if (e.kind == "this") {
+                msg = "this kann nicht verschoben werden";
+            } else if (e.kind == "index") {
+                msg = "aus einem Element kann nicht verschoben werden (pop() oder remove() verwenden)";
+            }
+            errAlso(e.line, e.col, "R-5.3", a, msg);
+        }
+    }
+
+    // Stand nach einer Anweisung in alle umgebenden try-Blöcke übernehmen
+    void noteTryState() & {
+        if (frames.length == 0) {
+            return;
+        }
+        Flow f = flow.dup();
+        i64 t = top();
+        for (i64 i = 0; i < frames[t].tries.length; i++) {
+            Flow j = frames[t].tries[i].join(f, "R-6.12", "R-9.17");
+            frames[t].tries[i] = j;
+        }
+    }
+
+    // Prüft eine Schleife bis zum Fixpunkt (R-6.9, R-5.16)
+    void looped(Node s) & {
+        Flow entry = flow.dup();
+        Flow head = entry.dup();
+        for (i32 i = 0; i < 6; i++) {
+            ProbeState st = beginProbe();
+            flow = head.dup();
+            (Flow back, Flow ex) = loopPass(s);
+            endProbe(&st);
+            Flow next = entry.join(back, "R-6.9", "R-5.16");
+            if (next.same(head)) {
+                break;
+            }
+            head = next;
+        }
+        flow = head;
+        (Flow b2, Flow exit) = loopPass(s);
+        flow = exit;
+    }
+
+    (Flow, Flow) loopPass(Node s) & {
+        frames[top()].jumps.push(new Jump(true));
+        (Flow back, Flow exit) = loopOnce(s);
+        Jump j = frames[top()].jumps.pop();
+        for (Flow c : j.continues) {
+            back = back.join(c, "R-6.9", "R-5.16");
+        }
+        for (Flow b : j.breaks) {
+            exit = exit.join(b, "R-6.9", "R-5.16");
+        }
+        return (back, exit);
+    }
+
+    // Stände an continue mit dem aktuellen vereinigen (vor dem Update einer for-Schleife)
+    void joinContinues() & {
+        i64 t = top();
+        if (frames[t].jumps.length == 0) {
+            return;
+        }
+        i64 j = frames[t].jumps.length - 1;
+        Flow[] cs = [];
+        for (Flow c : frames[t].jumps[j].continues) {
+            cs.push(c.dup());
+        }
+        frames[t].jumps[j].continues = [];
+        for (Flow c : cs) {
+            flow = flow.join(c, "R-6.9", "R-5.16");
+        }
+    }
+
+    // ------------------------------------------------------------ Typbeziehungen
+
+    bool assignable(shared Ty from, shared Ty to) {
+        if (from.isError() || to.isError()) {
+            return true;
+        }
+        if (to.kind == TK::Nullable && to.args[0].kind == TK::Weak) {
+            if (from.kind == TK::Null) {
+                return true;
+            }
+            if (from.kind == TK::Nullable) {
+                return assignable(from.args[0], to.args[0]);
+            }
+            return assignable(from, to.args[0]);
+        }
+        if (to.kind == TK::Weak) {
+            // V-6, V-13: weak entsteht nur aus shared (oder weak)
+            if (from.kind == TK::Weak || from.kind == TK::Shared) {
+                return assignable(from.args[0], to.args[0]);
+            }
+            return false;
+        }
+        if (from.kind == TK::Weak) {
+            return false;
+        }
+        shared Ty f = Ty::unformed(from);
+        shared Ty t = Ty::unformed(to);
+        if (f.same(t)) {
+            return true;
+        }
+        if (f.kind == TK::Null) {
+            return t.kind == TK::Nullable;
+        }
+        if (f.kind == TK::Nullable && t.kind == TK::Nullable) {
+            return assignable(f.args[0], t.args[0]);
+        }
+        if (t.kind == TK::Nullable) {
+            return assignable(f, t.args[0]);
+        }
+        if (f.kind == TK::Prim && t.kind == TK::Prim) {
+            return Num::autoConverts(f.prim, t.prim);
+        }
+        if ((f.kind == TK::Vector || f.kind == TK::Array || f.kind == TK::Slice) && t.kind == TK::Slice) {
+            return Ty::unformed(f.args[0]).same(Ty::unformed(t.args[0]));
+        }
+        if (f.kind == TK::Array && t.kind == TK::Array) {
+            return Ty::unformed(f.args[0]).same(Ty::unformed(t.args[0])) && (f.size < 0 || t.size < 0 || f.size == t.size);
+        }
+        if (f.kind == TK::Tuple && t.kind == TK::Tuple) {
+            if (f.args.length != t.args.length) {
+                return false;
+            }
+            for (i64 i = 0; i < f.args.length; i++) {
+                if (!assignable(f.args[i], t.args[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (f.kind == TK::Named && t.kind == TK::Named) {
+            return p.upcasts(f, t);
+        }
+        if ((f.kind == TK::Param || f.kind == TK::Prim) && t.kind == TK::Named) {
+            return p.satisfies(f, t);
+        }
+        if (f.kind == TK::Func && t.kind == TK::Func) {
+            return f.same(t);
+        }
+        return false;
+    }
+
+    string mismatchRule(shared Ty from, shared Ty to) {
+        bool weakTarget = to.kind == TK::Weak || (to.kind == TK::Nullable && to.args[0].kind == TK::Weak);
+        if (weakTarget && from.kind != TK::Null && from.kind != TK::Nullable && from.kind != TK::Shared && from.kind != TK::Weak) {
+            return "R-4.41";
+        }
+        shared Ty f = Ty::unformed(from);
+        shared Ty t = Ty::unformed(to);
+        if (f.kind == TK::Null) {
+            return "R-6.1";
+        }
+        if (f.kind == TK::Nullable && t.kind != TK::Nullable && assignable(f.args[0], t)) {
+            return "R-6.1";
+        }
+        if (f.kind == TK::Void) {
+            return "R-4.45";
+        }
+        if ((f.kind == TK::Prim && f.prim == "bool") || (t.kind == TK::Prim && t.prim == "bool")) {
+            return "R-4.3";
+        }
+        if (f.kind == TK::Prim && t.kind == TK::Prim && Num::isNumeric(f.prim) && Num::isNumeric(t.prim)) {
+            return "R-4.6";
+        }
+        if ((f.kind == TK::Vector || f.kind == TK::Array) && (t.kind == TK::Vector || t.kind == TK::Array || t.kind == TK::Slice)) {
+            return "R-4.31";
+        }
+        if (f.kind == TK::Named && t.kind == TK::Named && f.id == t.id) {
+            return "R-4.43";
+        }
+        if (f.kind == TK::Func || t.kind == TK::Func) {
+            return "R-10.14";
+        }
+        if (f.kind == TK::Tuple || t.kind == TK::Tuple) {
+            return "R-4.34";
+        }
+        return "R-4.22";
+    }
+
+    // Meldet einen Fehler, wenn from nicht in to umgewandelt werden kann (Position und
+    // Begründung aus dem Ausdruck e)
+    bool requireE(shared Ty from, shared Ty to, Node e) & {
+        if (assignable(from, to)) {
+            return true;
+        }
+        string rule = mismatchRule(from, to);
+        string[] also = [];
+        if (rule == "R-6.1") {
+            also = nullReason(e);
+        } else if (rule == "R-4.41") {
+            also = ["V-6", "V-13"];
+        }
+        string msg = show(from) + " passt nicht zu " + show(to);
+        errAlso(e.line, e.col, rule, also, msg);
+        return false;
+    }
+
+    bool requireAt(shared Ty from, shared Ty to, i32 line, i32 col) & {
+        if (assignable(from, to)) {
+            return true;
+        }
+        string rule = mismatchRule(from, to);
+        string[] also = [];
+        if (rule == "R-4.41") {
+            also = ["V-6", "V-13"];
+        }
+        string msg = show(from) + " passt nicht zu " + show(to);
+        errAlso(line, col, rule, also, msg);
+        return false;
+    }
+
+    // ------------------------------------------------------------ Anweisungen
+
+    // Prüft einen Block; liefert, ob er normal enden kann
+    bool block(Node b) & {
+        pushScope();
+        bool c = stmts(b);
+        popScope();
+        return c;
+    }
+
+    // Anweisungsfolge (Kinder von list); meldet unerreichbaren Code (R-8.27)
+    bool stmts(Node list) & {
+        bool completes = true;
+        bool warned = false;
+        for (Node s : list.kids) {
+            if (!completes && !warned) {
+                warn(s.line, s.col, "R-8.27", "unerreichbarer Code");
+                warned = true;
+            }
+            if (!stmt(s)) {
+                completes = false;
+            }
+        }
+        return completes;
+    }
+
+    bool subStmt(Node s) & {
+        pushScope();
+        bool c = stmt(s);
+        popScope();
+        return c;
+    }
+
+    // Prüft eine Bedingung und liefert ihre Fakten W(c), F(c) (R-6.6)
+    (IdSet, IdSet) cond(Node e) & {
+        shared Ty t = expr(e, Ty::ofPrim("bool"));
+        if (!t.isError() && !Tys::isBool(t)) {
+            string msg = "Bedingung hat den Typ " + show(t) + ", nicht bool";
+            err(e.line, e.col, "R-4.3", msg);
+        }
+        return facts(e);
+    }
+
+    bool stmt(Node s) & {
+        stmtDepth++;
+        bool completes = stmtKind(s);
+        i64 depth = stmtDepth;
+        Loan[] keep = [];
+        for (Loan l : loans) {
+            if (!(l.until == UntilKind::Stmt && l.depth >= depth)) {
+                keep.push(l.dup());
+            }
+        }
+        loans = keep;
+        stmtDepth--;
+        if (!completes) {
+            flow = Flow::deadFlow();
+        }
+        noteTryState();
+        return completes;
+    }
+
+    bool stmtKind(Node s) & {
+        string k = s.kind;
+        if (k == "block") {
+            return block(s);
+        }
+        if (k == "local") {
+            localVar(s, s.line, s.col);
+            return true;
+        }
+        if (k == "ref") {
+            refDecl(s);
+            return true;
+        }
+        if (k == "tupledecl") {
+            tupleDecl(s);
+            return true;
+        }
+        if (k == "exprstmt") {
+            return exprStmt(s.kids[0], s.line, s.col);
+        }
+        if (k == "discard") {
+            ref Node e = s.kids[0];
+            bool isCall = e.kind == "call";
+            hasLastCall = false;
+            shared Ty t = expr(e, null);
+            if (!isCall) {
+                err(e.line, e.col, "R-8.14", "discard verlangt einen Aufruf");
+            } else if (t.kind == TK::Void) {
+                err(e.line, e.col, "R-8.14", "der Aufruf liefert keinen Wert, den discard verwerfen könnte");
+            } else if (hasLastCall && (lastFacts & 1) != 0) {
+                err(e.line, e.col, "R-8.15", "das Ergebnis einer nodiscard-Methode darf nicht verworfen werden");
+            }
+            return true;
+        }
+        if (k == "if") {
+            (IdSet w, IdSet f) = cond(s.kids[0]);
+            Flow baseFlow = flow.dup();
+            flow.narrow(w);
+            bool a = subStmt(s.kids[1]);
+            Flow afterThen = flow.dup();
+            flow = baseFlow;
+            flow.narrow(f);
+            bool b = true;
+            if (s.kids.length > 2) {
+                b = subStmt(s.kids[2]);
+            }
+            flow = afterThen.join(flow, "R-6.8", "R-5.15");
+            return a || b;
+        }
+        if (k == "while") {
+            bool infinite = isTrue(s.kids[0]);
+            looped(s);
+            return !infinite || containsBreakStmt(s.kids[1]);
+        }
+        if (k == "dowhile") {
+            bool infinite = isTrue(s.kids[1]);
+            looped(s);
+            return !infinite || containsBreakStmt(s.kids[0]);
+        }
+        if (k == "for") {
+            pushScope();
+            ref Node init = s.kids[0];
+            if (init.kind == "local") {
+                localVar(init, s.line, s.col);
+            } else if (init.kind == "tupledecl") {
+                tupleDecl(init);
+            } else if (init.kind == "exprs") {
+                for (Node x : init.kids) {
+                    discard exprStmt(x, s.line, s.col);
+                }
+            }
+            looped(s);
+            popScope();
+            return s.kids[1].kind != "nocond" || containsBreakStmt(s.kids[3]);
+        }
+        if (k == "foreach") {
+            foreachStmt(s);
+            return true;
+        }
+        if (k == "switch") {
+            return switchStmt(s);
+        }
+        if (k == "return") {
+            returnStmt(s);
+            return false;
+        }
+        if (k == "break" || k == "continue") {
+            jumpStmt(s, k == "break");
+            return false;
+        }
+        if (k == "throw") {
+            throwStmt(s);
+            return false;
+        }
+        return tryStmt(s);
+    }
+
+    // ein Durchlauf einer Schleife ab dem Kopf: Stand am Rücksprung und beim Verlassen über die Bedingung
+    (Flow, Flow) loopOnce(Node s) & {
+        if (s.kind == "while") {
+            bool infinite = isTrue(s.kids[0]);
+            (IdSet w, IdSet f) = cond(s.kids[0]);
+            Flow exit = flow.dup();
+            if (infinite) {
+                exit = Flow::deadFlow();
+            }
+            exit.narrow(f);
+            flow.narrow(w);
+            loopBody(s.kids[1]);
+            return (flow.dup(), exit);
+        }
+        if (s.kind == "dowhile") {
+            bool infinite = isTrue(s.kids[1]);
+            loopBody(s.kids[0]);
+            joinContinues();
+            (IdSet w, IdSet f) = cond(s.kids[1]);
+            Flow exit = flow.dup();
+            if (infinite) {
+                exit = Flow::deadFlow();
+            }
+            exit.narrow(f);
+            Flow back = flow.dup();
+            back.narrow(w);
+            return (back, exit);
+        }
+        if (s.kind == "for") {
+            ref Node c = s.kids[1];
+            IdSet w = new IdSet();
+            IdSet f = new IdSet();
+            if (c.kind != "nocond") {
+                (IdSet w2, IdSet f2) = cond(c);
+                w = w2;
+                f = f2;
+            }
+            Flow exit = Flow::deadFlow();
+            if (c.kind != "nocond") {
+                exit = flow.dup();
+            }
+            exit.narrow(f);
+            flow.narrow(w);
+            loopBody(s.kids[3]);
+            joinContinues();
+            for (Node u : s.kids[2].kids) {
+                discard exprStmt(u, s.line, s.col);
+            }
+            return (flow.dup(), exit);
+        }
+        // foreach
+        Flow exit = flow.dup();
+        loopBody(s.kids[3]);
+        return (flow.dup(), exit);
+    }
+
+    void foreachStmt(Node s) & {
+        bool mutEl = Program::flag(s, "mut");
+        bool borrowMut = Program::flag(s, "borrow");
+        ref Node iter = s.kids[2];
+        shared Ty it = expr(iter, null);
+        if (Tys::nullable(it) && !it.isError()) {
+            string[] also = nullReason(iter);
+            string msg = show(it) + " ist nullbar und nicht geprüft";
+            errAlso(iter.line, iter.col, "R-6.2", also, msg);
+        }
+        it = Tys::stripNull(it);
+        shared Ty el = elementType(it, mutEl, iter.line, iter.col);
+        pushScope();
+        // R-5.17: Die Schleife leiht den Behälter bis zu ihrem Ende.
+        Place? pl = placeOf(iter);
+        if (pl != null) {
+            if (borrowMut) {
+                discard writable(pl, iter.line, iter.col, "R-5.17");
+                access(pl, true, iter.line, iter.col);
+            }
+            string rule = "R-5.17";
+            if (Ty::unformed(it).kind == TK::Named) {
+                rule = "R-13.10";
+            }
+            i64 depth = scopeMarks.length;
+            pushLoan(pl.dup(), borrowMut, UntilKind::Block, depth, rule);
+        }
+        shared Ty vt = el;
+        if (s.kids[0].kind != "var") {
+            shared Ty t = resolve(s.kids[0]);
+            if (!el.isError() && !assignable(el, t)) {
+                string msg = "Elemente vom Typ " + show(el) + " passen nicht zu " + show(t);
+                err(s.kids[1].line, s.kids[1].col, "R-8.23", msg);
+            }
+            vt = t;
+        }
+        discard declare(s.kids[1], vt, LK::Bound, Mode::Read, mutEl);
+        looped(s);
+        popScope();
+    }
+
+    void returnStmt(Node s) & {
+        i64 t = top();
+        if (frames[t].inFinally > 0) {
+            err(s.line, s.col, "R-9.10", "return verlässt einen finally-Block");
+        }
+        bool hasRet = frames[t].ret != null;
+        RetKind rk = frames[t].ret?.kind ?? RetKind::Void;
+        shared Ty rty = frames[t].ret?.ty ?? Ty::simple(TK::Void);
+        bool rmut = frames[t].ret?.mutable ?? false;
+        bool hasV = s.kids.length > 0;
+        if (hasRet && rk == RetKind::Void) {
+            if (hasV) {
+                discard expr(s.kids[0], null);
+                err(s.kids[0].line, s.kids[0].col, "R-8.26", "eine void-Methode gibt keinen Wert zurück");
+            }
+            return;
+        }
+        if (hasRet && !hasV) {
+            string msg = "return braucht einen Wert vom Typ " + show(rty);
+            err(s.line, s.col, "R-8.26", msg);
+            return;
+        }
+        if (hasRet && rk == RetKind::Ref) {
+            ref Node v = s.kids[0];
+            // R-5.23: Der Borrow geht von this aus.
+            shared Ty vt = expr(v, rty);
+            discard requireE(vt, rty, v);
+            // V-2: Ein Pfad endet nicht in einem shared-Feld.
+            bool throughShared = v.kind != "this" && v.kind != "name" && Tys::isShared(vt) && !Tys::isShared(rty);
+            Place? pl = placeOf(v);
+            if (throughShared) {
+                string[] a = ["V-2"];
+                errAlso(v.line, v.col, "R-5.23", a, "ein Borrow auf ein shared-Feld kann nicht zurückgegeben werden");
+            } else if (pl != null && pl.root == -1) {
+                if (rmut || s.text == "mut") {
+                    discard writable(pl, v.line, v.col, "R-5.23");
+                }
+            } else {
+                err(v.line, v.col, "R-5.23", "eine Methode gibt nur Borrows zurück, die von this ausgehen");
+            }
+            return;
+        }
+        if (hasRet) {
+            ref Node v = s.kids[0];
+            shared Ty vt = expr(v, rty);
+            discard requireE(vt, rty, v);
+            string[] a = ["R-5.20"];
+            consume(v, vt, rty, "R-5.3", a);
+            return;
+        }
+        shared Ty vt = Ty::simple(TK::Void);
+        if (hasV) {
+            vt = expr(s.kids[0], null);
+            string[] none = [];
+            consume(s.kids[0], vt, vt, "R-5.3", none);
+        }
+        frames[top()].inferred.push(vt);
+    }
+
+    void jumpStmt(Node s, bool isBreak) & {
+        string word = "continue";
+        if (isBreak) {
+            word = "break";
+        }
+        i64 t = top();
+        bool ok = frames[t].loops > 0;
+        if (isBreak) {
+            ok = frames[t].loops + frames[t].switches > 0;
+        }
+        if (!ok) {
+            string rule = "R-8.25";
+            if (isLambdaFrame()) {
+                rule = "R-10.5";
+            } else if (frames[t].inFinally > 0) {
+                rule = "R-9.10";
+            }
+            err(s.line, s.col, rule, word + " außerhalb einer Schleife");
+        }
+        Flow state = flow.dup();
+        if (isBreak) {
+            if (frames[t].jumps.length > 0) {
+                frames[t].jumps[frames[t].jumps.length - 1].breaks.push(state);
+            }
+            return;
+        }
+        for (i64 j = frames[t].jumps.length - 1; j >= 0; j--) {
+            if (frames[t].jumps[j].isLoop) {
+                frames[t].jumps[j].continues.push(state);
+                return;
+            }
+        }
+    }
+
+    void throwStmt(Node s) & {
+        if (frames[top()].inFinally > 0) {
+            err(s.line, s.col, "R-9.10", "throw verlässt einen finally-Block");
+        }
+        ref Node e = s.kids[0];
+        shared Ty t = expr(e, null);
+        requireException(t, e.line, e.col, "R-9.5");
+        if (Tys::isShared(t) || Tys::nullable(t)) {
+            string msg = "throw verlangt einen own-Wert, nicht " + show(t);
+            err(e.line, e.col, "R-9.5", msg);
+            return;
+        }
+        string reason = "R-5.3";
+        if (e.kind == "name") {
+            i64 i = findLocal(e.text);
+            if (i >= 0 && locals[i].kind == LK::Catch) {
+                reason = "R-9.8";
+            }
+        }
+        shared Ty dest = Tys::stripNull(t);
+        string[] a = ["R-9.5"];
+        consume(e, t, dest, reason, a);
+    }
+
+    // R-6.12, R-9.17: catch und finally sehen jeden Stand des try-Blocks
+    static Flow relabel(Flow acc, Flow pre) {
+        Flow e = acc.dup();
+        for (i64 x : pre.nonnull.items) {
+            if (!acc.nonnull.has(x)) {
+                e.lost.put(x, "R-6.12");
+            }
+        }
+        for (i64 i = 0; i < e.moved.keys.length; i++) {
+            if (!pre.moved.has(e.moved.keys[i])) {
+                e.moved.vals[i] = "R-9.17";
+            }
+        }
+        return e;
+    }
+
+    bool tryStmt(Node s) & {
+        Flow pre = flow.dup();
+        i64 t = top();
+        frames[t].tries.push(pre.dup());
+        bool completes = block(s.kids[0]);
+        Flow accTry = frames[t].tries.pop();
+        Flow acc = accTry.join(flow, "R-6.12", "R-9.17");
+        Flow entry = Flow::deadFlow();
+        if (!pre.dead) {
+            entry = relabel(acc, pre);
+        }
+        Flow out = flow.dup();
+        Flow fin = entry.dup();
+        shared Ty[] seen = [];
+        for (Node c : s.kids) {
+            if (c.kind != "catch") {
+                continue;
+            }
+            ref Node ctn = c.kids[0];
+            shared Ty ct = resolve(ctn);
+            requireException(ct, ctn.line, ctn.col, "R-9.6");
+            // R-9.7: catch hinter dem catch einer Oberklasse ist unerreichbar.
+            if (!ct.isError()) {
+                bool shadowed = false;
+                for (shared Ty x : seen) {
+                    if (p.upcasts(Ty::unformed(ct), Ty::unformed(x))) {
+                        shadowed = true;
+                    }
+                }
+                if (shadowed) {
+                    warn(ctn.line, ctn.col, "R-8.27", "dieser catch ist unerreichbar: ein catch für eine Oberklasse steht davor");
+                }
+            }
+            seen.push(ct);
+            flow = entry.dup();
+            frames[t].tries.push(entry.dup());
+            pushScope();
+            discard declare(c.kids[1], ct, LK::Catch, Mode::Read, false);
+            if (block(c.kids[2])) {
+                completes = true;
+            }
+            popScope();
+            Flow cacc = frames[t].tries.pop();
+            fin = fin.join(cacc, "R-6.12", "R-9.17").join(flow, "R-6.12", "R-9.17");
+            out = out.join(flow, "R-6.8", "R-5.15");
+        }
+        flow = out;
+        ref Node last = s.kids[s.kids.length - 1];
+        if (last.kind == "finally") {
+            Flow normal = flow.dup();
+            flow = Flow::deadFlow();
+            if (!pre.dead) {
+                flow = relabel(fin, pre);
+            }
+            frames[t].inFinally++;
+            i64 savedLoops = frames[t].loops;
+            i64 savedSwitches = frames[t].switches;
+            frames[t].loops = 0;
+            frames[t].switches = 0;
+            bool fc = block(last.kids[0]);
+            frames[t].loops = savedLoops;
+            frames[t].switches = savedSwitches;
+            frames[t].inFinally--;
+            if (!fc) {
+                completes = false;
+            }
+            if (normal.dead) {
+                flow = Flow::deadFlow();
+            }
+        }
+        return completes;
+    }
+
+    bool isLambdaFrame() {
+        return frames.length > 1;
+    }
+
+    void loopBody(Node body) & {
+        frames[top()].loops++;
+        discard subStmt(body);
+        frames[top()].loops--;
+    }
+
+    void requireException(shared Ty t, i32 line, i32 col, string rule) & {
+        if (t.isError()) {
+            return;
+        }
+        i64 ex = p.lookupFull("rpp.core.Exception");
+        shared Ty c = Tys::core(t);
+        bool ok = false;
+        if (ex < 0) {
+            ok = true;
+        } else if (c.kind == TK::Named) {
+            shared Ty[] none = [];
+            ok = p.upcasts(c, Ty::named(ex, none));
+        }
+        if (!ok) {
+            string msg = show(t) + " ist keine Exception";
+            err(line, col, rule, msg);
+        }
+    }
+
+    void setOrigin(i64 id, string[] origin) & {
+        i64 i = localById(id);
+        if (i >= 0) {
+            locals[i].origin = [];
+            for (string o : origin) {
+                locals[i].origin.push(o);
+            }
+        }
+    }
+
+    // Initialisierer einer neuen lokalen Variablen: Move, Verengung, Herkunft
+    void initLocal(i64 id, Node init, shared Ty vt, shared Ty declared) & {
+        string[] none = [];
+        consume(init, vt, declared, "R-5.3", none);
+        assigned(id, vt);
+        if (Tys::nullable(declared)) {
+            string[] origin = nullReason(init);
+            setOrigin(id, origin);
+        }
+    }
+
+    // Loans, die der Initialisierer gerade erzeugt hat, gelten bis zum Blockende
+    void keepLoans(i64 mark) & {
+        i64 depth = scopeMarks.length;
+        i64 sd = stmtDepth;
+        for (i64 i = mark; i < loans.length; i++) {
+            if (loans[i].until == UntilKind::Stmt && loans[i].depth == sd) {
+                loans[i].until = UntilKind::Block;
+                loans[i].depth = depth;
+            }
+        }
+    }
+
+    void localVar(Node d, i32 line, i32 col) & {
+        LK kind = LK::Var;
+        if (d.text == "const") {
+            kind = LK::Const;
+        }
+        i64 mark = loans.length;
+        bool hasInit = d.kids.length > 2;
+        shared Ty ty = Ty::error();
+        shared Ty? vt = null;
+        if (d.kids[0].kind != "var") {
+            ty = resolve(d.kids[0]);
+            if (hasInit) {
+                shared Ty it = expr(d.kids[2], ty);
+                discard requireE(it, ty, d.kids[2]);
+                vt = it;
+            }
+        } else if (!hasInit) {
+            err(line, col, "R-4.48", "var verlangt einen Initialisierer");
+            vt = Ty::error();
+        } else {
+            ref Node init = d.kids[2];
+            if (init.kind == "lambda" && init.text != "own") {
+                err(init.line, init.col, "R-10.4", "ein normales Lambda braucht einen Funktionstyp aus dem Zusammenhang");
+                vt = Ty::error();
+            } else {
+                shared Ty t = expr(init, null);
+                if (t.kind == TK::Null) {
+                    err(init.line, init.col, "R-4.40", "null braucht einen nullbaren Typ aus dem Zusammenhang");
+                    vt = Ty::error();
+                } else if (t.kind == TK::Void) {
+                    string[] also = [];
+                    if (hasSafeAccess(init)) {
+                        also.push("R-6.17");
+                    }
+                    errAlso(init.line, init.col, "R-4.45", also, "eine Variable kann nicht den Typ void haben");
+                    vt = Ty::error();
+                } else {
+                    ty = t;
+                    vt = t;
+                }
+            }
+        }
+        if (Ty::unformed(ty).kind == TK::Slice) {
+            keepLoans(mark);
+        }
+        i64 id = declare(d.kids[1], ty, kind, Mode::Read, false);
+        if (hasInit && vt != null) {
+            initLocal(id, d.kids[2], vt, ty);
+        } else if (!flow.dead) {
+            flow.unassigned.add(id);
+        }
+    }
+
+    // Ausdruck ohne umgebende Klammern und as
+    static string unwrappedKind(Node e) {
+        if (e.kind == "paren" || e.kind == "as") {
+            return unwrappedKind(e.kids[0]);
+        }
+        if (e.kind == "member" && e.text == "safe") {
+            return "safemember";
+        }
+        return e.kind;
+    }
+
+    Place? unwrappedPlace(Node e) {
+        if (e.kind == "paren" || e.kind == "as") {
+            return unwrappedPlace(e.kids[0]);
+        }
+        return placeOf(e);
+    }
+
+    // ref T x = ort; (Kapitel 5, Abschnitt 7): Borrow bis zum Blockende (R-5.17, R-5.24)
+    void refDecl(Node s) & {
+        bool mutable = s.text == "mut";
+        shared Ty t = resolve(s.kids[0]);
+        i64 mark = loans.length;
+        ref Node init = s.kids[2];
+        shared Ty it = expr(init, t);
+        discard requireE(it, t, init);
+        i64 depth = scopeMarks.length;
+        Place? pl = unwrappedPlace(init);
+        string tk = unwrappedKind(init);
+        if (pl != null) {
+            if (mutable) {
+                discard writable(pl, init.line, init.col, "R-5.17");
+                access(pl, true, init.line, init.col);
+            }
+            pushLoan(pl.dup(), mutable, UntilKind::Block, depth, "R-5.17");
+        } else if (tk == "call" && stmtLoansSince(mark)) {
+            keepLoans(mark);
+        } else if (it.isError() || tk == "safemember") {
+        } else {
+            err(init.line, init.col, "R-5.17", "ref verlangt einen Ort (Variable, Feld oder Element), keinen temporären Wert");
+        }
+        i64 id = declare(s.kids[1], t, LK::Ref, Mode::Read, mutable);
+        assigned(id, it);
+        if (Tys::nullable(t)) {
+            string[] origin = nullReason(init);
+            setOrigin(id, origin);
+        }
+    }
+
+    bool stmtLoansSince(i64 mark) {
+        for (i64 i = mark; i < loans.length; i++) {
+            if (loans[i].until == UntilKind::Stmt && loans[i].depth == stmtDepth) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // (T a, U b) = e;: Die Elemente gehen an die neuen Variablen über (R-4.36)
+    void tupleDecl(Node d) & {
+        ref Node vars = d.kids[0];
+        ref Node init = d.kids[1];
+        shared Ty[] types = [];
+        for (Node tv : vars.kids) {
+            types.push(resolve(tv.kids[0]));
+        }
+        shared Ty expected = Ty::list(TK::Tuple, types);
+        shared Ty it = expr(init, expected);
+        if (Tys::core(it).kind == TK::Named) {
+            unpack(d, types, it);
+            return;
+        }
+        discard requireAt(it, expected, init.line, init.col);
+        string[] none = [];
+        consume(init, it, expected, "R-4.36", none);
+        bool useIt = it.kind == TK::Tuple && it.args.length == types.length;
+        for (i64 i = 0; i < vars.kids.length; i++) {
+            i64 id = declare(vars.kids[i].kids[1], types[i], LK::Var, Mode::Read, false);
+            if (useIt) {
+                assigned(id, it.args[i]);
+            } else {
+                assigned(id, types[i]);
+            }
+        }
+    }
+
+    // R-5.25 (V-15): zerlegt ein own-Objekt einer Klasse ohne Destruktor in seine Felder
+    void unpack(Node d, shared Ty[] types, shared Ty it0) & {
+        ref Node vars = d.kids[0];
+        ref Node init = d.kids[1];
+        i32 sl = init.line;
+        i32 sc = init.col;
+        shared Ty it = nonNullOperand(it0, init, sl, sc);
+        string[] fnames = [];
+        shared Ty[] ftys = [];
+        Access[] faccess = [];
+        i64[] fowners = [];
+        bool ok = true;
+        if (Tys::isShared(it) || Tys::weakInner(it) != null) {
+            string msg = "zerlegen lässt sich nur ein own-Objekt, nicht " + show(it);
+            err(sl, sc, "R-5.25", msg);
+            ok = false;
+        }
+        // Kette von der Klasse zur Basis, mit eingesetzten Typargumenten
+        shared Ty[] chain = [];
+        shared Ty cur = Tys::core(it);
+        while (cur.kind == TK::Named) {
+            i64 c = cur.id;
+            if (p.defs[c].kind != DefKind::Class) {
+                string msg = p.defs[c].name + " ist keine Klasse";
+                err(sl, sc, "R-5.25", msg);
+                ok = false;
+                break;
+            }
+            Subst map = p.substMap(c, cur.args);
+            shared Ty? baseFlow = p.defs[c].baseType;
+            chain.push(cur);
+            if (baseFlow != null) {
+                cur = Ty::subst(baseFlow, map);
+            } else {
+                cur = Ty::error();
+            }
+        }
+        for (i64 k = chain.length - 1; k >= 0; k--) {
+            i64 c = chain[k].id;
+            if (p.defs[c].hasDtor) {
+                string msg = p.defs[c].name + " hat einen Destruktor und lässt sich nicht zerlegen";
+                err(sl, sc, "R-5.25", msg);
+                ok = false;
+            }
+            Subst map = p.substMap(c, chain[k].args);
+            for (FieldInfo f : p.defs[c].fields) {
+                if (!f.isStatic) {
+                    fnames.push(f.name);
+                    ftys.push(Ty::subst(f.ty, map));
+                    faccess.push(f.access);
+                    fowners.push(c);
+                }
+            }
+        }
+        if (ok && fnames.length != types.length) {
+            string msg = show(it) + " hat " + fnames.length.toString() + " Felder, zerlegt wird in " + types.length.toString() + " Variablen";
+            err(sl, sc, "R-5.25", msg);
+            ok = false;
+        }
+        if (ok) {
+            for (i64 i = 0; i < fnames.length; i++) {
+                ref Node varNode = vars.kids[i].kids[1];
+                checkAccess(faccess[i], fowners[i], varNode.line, varNode.col);
+                if (!assignable(ftys[i], types[i])) {
+                    string msg = "das Feld " + fnames[i] + " hat den Typ " + show(ftys[i]) + ", nicht " + show(types[i]);
+                    err(varNode.line, varNode.col, "R-5.25", msg);
+                }
+            }
+        }
+        shared Ty dest = Ty::unformed(it);
+        string[] none = [];
+        consume(init, it, dest, "R-5.25", none);
+        for (i64 i = 0; i < vars.kids.length; i++) {
+            shared Ty vt = Ty::error();
+            if (i < ftys.length) {
+                vt = ftys[i];
+            }
+            i64 id = declare(vars.kids[i].kids[1], types[i], LK::Var, Mode::Read, false);
+            assigned(id, vt);
+        }
+    }
+
+    bool exprStmt(Node es, i32 line, i32 col) & {
+        if (es.kind == "assign") {
+            assign(es.kids[0], es.text, es.kids[1]);
+            return true;
+        }
+        ref Node e = es.kids[0];
+        hasLastCall = false;
+        shared Ty t = expr(e, null);
+        if (e.kind == "call" && hasLastCall) {
+            if ((lastFacts & 4) != 0) {
+                return false;
+            }
+            if (t.kind != TK::Void && !t.isError()) {
+                string rule = "R-8.13";
+                if ((lastFacts & 2) != 0) {
+                    rule = "R-10.17";
+                }
+                err(line, col, rule, "das Ergebnis des Aufrufs wird nicht verwendet (discard verwirft es)");
+            }
+        }
+        return true;
+    }
+
+    void assign(Node target, string op, Node value) & {
+        if (target.kind == "tuple") {
+            shared Ty vt = expr(value, null);
+            shared Ty[] types = [];
+            for (Node x : target.kids) {
+                types.push(lvalue(x));
+            }
+            shared Ty expected = Ty::list(TK::Tuple, types);
+            discard requireAt(vt, expected, value.line, value.col);
+            string[] none = [];
+            consume(value, vt, expected, "R-4.36", none);
+            bool useVt = vt.kind == TK::Tuple && vt.args.length == target.kids.length;
+            for (i64 i = 0; i < target.kids.length; i++) {
+                i64 id = localIdOf(target.kids[i]);
+                if (id >= 0) {
+                    if (useVt) {
+                        assigned(id, vt.args[i]);
+                    } else {
+                        assigned(id, Ty::error());
+                    }
+                }
+            }
+            return;
+        }
+        if (op != "=") {
+            // Verbundzuweisung liest das Ziel.
+            if (target.kind == "name" && findLocal(target.text) >= 0) {
+                discard name(target);
+            }
+        }
+        shared Ty tt = lvalue(target);
+        if (op == "=") {
+            if (value.kind == "lambda" && value.text != "own") {
+                err(value.line, value.col, "R-10.7", "ein normales Lambda kann nicht gespeichert werden");
+                return;
+            }
+            shared Ty vt = expr(value, tt);
+            discard requireE(vt, tt, value);
+            string[] also = [];
+            if (target.kind == "member") {
+                also.push("R-5.13");
+            }
+            consume(value, vt, tt, "R-5.3", also);
+            // R-5.7, R-5.13: Erst der Wert, dann der Ort; x.f = g(x) verschiebt x vor dem Schreiben.
+            if (target.kind != "name") {
+                Place? pl = placeOf(target);
+                if (pl != null && pl.root != -1) {
+                    string reason = flow.moved.take(pl.root);
+                    if (reason != "") {
+                        string nm = placeName(new Place(pl.root));
+                        string[] a = [reason, "R-5.7", "R-5.13"];
+                        errAlso(target.line, target.col, "R-5.3", a, nm + " wird im Wert verschoben und ist danach kein Ziel mehr");
+                    }
+                }
+            }
+            i64 id = localIdOf(target);
+            if (id >= 0) {
+                assigned(id, vt);
+            }
+            return;
+        }
+        // Verbundzuweisung (R-8.20)
+        string bop = op.substring(0, 1);
+        tt = nonNullOperand(tt, target, target.line, target.col);
+        if (Tys::isString(tt) && bop == "+") {
+            shared Ty vt = expr(value, tt);
+            discard requireAt(vt, tt, value.line, value.col);
+            return;
+        }
+        shared Ty vt = Ty::error();
+        if (isLiteral(value)) {
+            vt = expr(value, tt);
+        } else {
+            vt = expr(value, null);
+        }
+        vt = nonNullOperand(vt, value, value.line, value.col);
+        shared Ty result = arith(bop, tt, vt, target.line, target.col);
+        if (!result.isError() && !tt.isError() && !assignable(result, tt)) {
+            string msg = show(tt) + " " + bop + "= " + show(vt) + " ergibt " + show(result) + ", das nicht in " + show(tt) + " passt";
+            err(target.line, target.col, "R-8.20", msg);
+        }
+    }
+
+    // Typ eines Zuweisungsziels; prüft R-8.18, R-8.19, R-4.19, das Schreibrecht und die Loans
+    shared Ty lvalue(Node e) & {
+        if (e.kind == "name") {
+            i64 i = findLocal(e.text);
+            if (i >= 0) {
+                string n = e.text;
+                LK kind = locals[i].kind;
+                Mode mode = locals[i].mode;
+                bool mf = locals[i].mutFlag;
+                shared Ty lty = locals[i].ty;
+                i64 id = locals[i].id;
+                if (kind == LK::Const) {
+                    err(e.line, e.col, "R-8.18", n + " ist const");
+                } else if (kind == LK::Param && mode == Mode::Read) {
+                    err(e.line, e.col, "R-8.19", "der Parameter " + n + " ist nur lesbar");
+                } else if (((kind == LK::Param && mode == Mode::Mut) || (kind == LK::Bound && mf)) && Ty::unformed(lty).kind != TK::Prim) {
+                    // Über einen veränderbaren Borrow setzt man Felder, ersetzt aber nie das Objekt.
+                    string[] a = ["R-5.12"];
+                    errAlso(e.line, e.col, "R-8.19", a, n + " ist ein Borrow; das Objekt kann nicht ersetzt werden");
+                } else if (kind == LK::Ref) {
+                    err(e.line, e.col, "R-8.19", n + " ist eine ref-Variable");
+                } else if (capturedByOwnLambda(id)) {
+                    err(e.line, e.col, "R-10.11", n + " ist im own-Lambda erfasst und unveränderlich");
+                }
+                access(new Place(id), true, e.line, e.col);
+                return lty;
+            }
+            shared Ty t = expr(e, null);
+            Place? pl = placeOf(e);
+            if (pl != null) {
+                discard writable(pl, e.line, e.col, "R-5.13");
+                access(pl, true, e.line, e.col);
+            }
+            return t;
+        }
+        if (e.kind == "index") {
+            shared Ty ot = probeExpr(e.kids[0]);
+            if (Tys::isString(ot)) {
+                err(e.line, e.col, "R-4.19", "Strings sind unveränderlich; s[i] kann nicht zugewiesen werden");
+                return Ty::error();
+            }
+            shared Ty t = expr(e, null);
+            Place? pl = placeOf(e);
+            if (pl != null) {
+                discard writable(pl, e.line, e.col, "R-5.13");
+                access(pl, true, e.line, e.col);
+            }
+            return t;
+        }
+        if (e.kind == "member") {
+            shared Ty t = expr(e, null);
+            Place? pl = placeOf(e);
+            if (pl != null) {
+                discard writable(pl, e.line, e.col, "R-5.13");
+                access(pl, true, e.line, e.col);
+            }
+            return t;
+        }
+        if (e.kind == "paren") {
+            return lvalue(e.kids[0]);
+        }
+        err(e.line, e.col, "R-8.19", "kein Zuweisungsziel");
+        return Ty::error();
+    }
+
+    shared Ty elementType(shared Ty t, bool mutable, i32 line, i32 col) & {
+        shared Ty u = Ty::unformed(t);
+        if (u.kind == TK::Error) {
+            return u;
+        }
+        if (u.kind == TK::Vector || u.kind == TK::Array || u.kind == TK::Slice) {
+            return u.args[0];
+        }
+        if (u.kind == TK::Prim && u.prim == "string") {
+            return Ty::ofPrim("char");
+        }
+        if (u.kind == TK::Nullable) {
+            return elementType(u.args[0], mutable, line, col);
+        }
+        if (u.kind == TK::Named) {
+            string name = "rpp.core.Iterable";
+            if (mutable) {
+                name = "rpp.core.MutIterable";
+            }
+            i64 it = p.lookupFull(name);
+            if (it >= 0) {
+                shared Ty[] all = [];
+                all.push(u);
+                for (shared Ty s : p.supertypes(u)) {
+                    all.push(s);
+                }
+                for (shared Ty s : all) {
+                    if (s.kind == TK::Named && s.id == it && s.args.length > 0) {
+                        return s.args[0];
+                    }
+                }
+            }
+        }
+        string msg = show(t) + " ist nicht iterierbar";
+        err(line, col, "R-8.23", msg);
+        return Ty::error();
+    }
+
+    bool switchStmt(Node s) & {
+        ref Node subject = s.kids[0];
+        shared Ty st = expr(subject, null);
+        if (Tys::nullable(st) && !st.isError()) {
+            string[] also = nullReason(subject);
+            string msg = "switch über den nullbaren Wert " + show(st);
+            errAlso(subject.line, subject.col, "R-6.2", also, msg);
+        }
+        st = Tys::stripNull(st);
+        i64 enumDef = -1;
+        shared Ty su = Ty::unformed(st);
+        if (su.kind == TK::Named && p.defs[su.id].kind == DefKind::Enum) {
+            enumDef = su.id;
+        }
+        string sp = Tys::prim(st);
+        bool allowed = st.isError() || enumDef >= 0 || Tys::isInteger(st) || sp == "char" || sp == "string";
+        if (!allowed) {
+            string msg = "switch über " + show(st) + " ist nicht erlaubt";
+            err(subject.line, subject.col, "R-8.24", msg);
+        }
+        Flow baseFlow = flow.dup();
+        Flow out = Flow::deadFlow();
+        string[] seen = [];
+        bool hasDefault = false;
+        bool anyCompletes = false;
+        i64 ncases = s.kids.length - 1;
+        for (i64 ci = 1; ci < s.kids.length; ci++) {
+            ref Node c = s.kids[ci];
+            if (c.text == "default") {
+                hasDefault = true;
+            }
+            flow = baseFlow.dup();
+            pushScope();
+            for (Node pat : c.kids[0].kids) {
+                string key = pattern(pat, st, enumDef);
+                if (Program::hasString(seen, key)) {
+                    err(c.line, c.col, "R-8.24", "die Marke " + key + " kommt doppelt vor");
+                }
+                seen.push(key);
+            }
+            i64 t = top();
+            frames[t].switches++;
+            frames[t].jumps.push(new Jump(false));
+            bool completes = stmts(c.kids[1]);
+            Jump j = frames[t].jumps.pop();
+            for (Node x : c.kids[1].kids) {
+                if (containsBreakStmt(x)) {
+                    completes = true;
+                }
+            }
+            frames[t].switches--;
+            if (completes) {
+                anyCompletes = true;
+            }
+            out = out.join(flow, "R-6.8", "R-5.15");
+            for (Flow b : j.breaks) {
+                out = out.join(b, "R-6.8", "R-5.15");
+            }
+            popScope();
+        }
+        bool exhaustive = false;
+        if (enumDef >= 0) {
+            exhaustive = true;
+            for (VariantInfo v : p.defs[enumDef].variants) {
+                if (!Program::hasString(seen, v.name)) {
+                    exhaustive = false;
+                }
+            }
+        }
+        if (!hasDefault && !exhaustive && !st.isError()) {
+            string msg = "switch braucht ein default";
+            if (enumDef >= 0) {
+                msg = "switch über ein Enum nennt nicht alle Varianten und hat kein default";
+            }
+            err(s.line, s.col, "R-8.24", msg);
+        }
+        if (!(hasDefault || exhaustive) || ncases == 0) {
+            out = out.join(baseFlow, "R-6.8", "R-5.15");
+        }
+        flow = out;
+        if (hasDefault || exhaustive) {
+            return anyCompletes || ncases == 0;
+        }
+        return true;
+    }
+
+    // Prüft eine Case-Marke und liefert ihren Schlüssel für die Prüfung auf Doppelte
+    string pattern(Node pat, shared Ty st, i64 enumDef) & {
+        if (pat.kind == "plit") {
+            bool negative = pat.text == "-";
+            ref Node lit = pat.kids[0];
+            shared Ty lt = Ty::simple(TK::Null);
+            if (lit.kind == "int") {
+                lt = Ty::ofPrim("i32");
+                if (Tys::isInteger(st)) {
+                    lt = st;
+                }
+            } else if (lit.kind == "char") {
+                lt = Ty::ofPrim("char");
+            } else if (lit.kind == "str") {
+                lt = Ty::ofPrim("string");
+            } else if (lit.kind == "bool") {
+                lt = Ty::ofPrim("bool");
+            } else if (lit.kind == "float") {
+                lt = Ty::ofPrim("f64");
+            }
+            if (!st.isError() && !assignable(lt, st)) {
+                string msg = "die Marke passt nicht zu " + show(st);
+                err(0, 0, "R-8.24", msg);
+            }
+            string text = lit.text;
+            if (lit.kind == "int") {
+                (bool ok, ui64 mag) = Num::value(lit.text);
+                text = "";
+                if (ok) {
+                    text = mag.toString();
+                }
+            } else if (lit.kind == "bool") {
+                text = "Bool(" + lit.text + ")";
+            } else if (lit.kind == "null") {
+                text = "Null";
+            }
+            if (negative) {
+                return "-" + text;
+            }
+            return text;
+        }
+        // pname
+        ref Node head = pat.kids[0];
+        string variant = "";
+        bool ownerOk = true;
+        if (head.kind == "id") {
+            variant = head.text;
+        } else {
+            variant = head.kids[1].text;
+            i64 owner = -1;
+            if (head.kids[0].kind == "typename") {
+                shared Ty t = resolveTN(head.kids[0], head.line, head.col);
+                if (t.kind == TK::Named) {
+                    owner = t.id;
+                }
+            }
+            ownerOk = (owner >= 0 && owner == enumDef) || enumDef < 0;
+        }
+        if (enumDef >= 0) {
+            i64 vi = -1;
+            for (i64 k = 0; k < p.defs[enumDef].variants.length; k++) {
+                if (vi < 0 && p.defs[enumDef].variants[k].name == variant) {
+                    vi = k;
+                }
+            }
+            if (vi >= 0 && ownerOk) {
+                if (pat.kids.length > 1) {
+                    ref Node bs = pat.kids[1];
+                    PInfo[] fields = dupParams(p.defs[enumDef].variants[vi].fields);
+                    if (bs.kids.length != fields.length) {
+                        string msg = variant + " hat " + fields.length.toString() + " Daten";
+                        err(bs.kids[0].line, bs.kids[0].col, "R-8.24", msg);
+                    }
+                    for (i64 k = 0; k < bs.kids.length && k < fields.length; k++) {
+                        discard declare(bs.kids[k], fields[k].ty, LK::Bound, Mode::Read, false);
+                    }
+                }
+            } else {
+                string msg = variant + " ist keine Variante von " + p.defs[enumDef].name;
+                err(0, 0, "R-8.24", msg);
+            }
+        }
+        return variant;
+    }
+
+    // ------------------------------------------------------------ Ausdrücke
+
+    // Prüft einen Ausdruck. Für einen Ort wird hier der lesende Zugriff gegen die Loans
+    // geprüft, einmal für den ganzen Ort.
+    shared Ty expr(Node e, shared Ty? expected) & {
+        string k = e.kind;
+        bool isPlace = k == "name" || k == "member" || k == "index" || k == "this" || k == "paren";
+        i64 saved = placeQuiet;
+        if (!isPlace) {
+            placeQuiet = 0;
+        } else if (saved == 0 && k != "paren") {
+            Place? pl = placeOf(e);
+            if (pl != null) {
+                access(pl, false, e.line, e.col);
+            }
+        }
+        shared Ty t = exprInner(e, expected);
+        placeQuiet = saved;
+        return t;
+    }
+
+    static bool isLiteralKind(string k) {
+        return k == "int" || k == "float" || k == "str" || k == "char" || k == "bool" || k == "null";
+    }
+
+    shared Ty exprInner(Node e, shared Ty? expected) & {
+        bool asArg = asArgument;
+        asArgument = false;
+        string k = e.kind;
+        if (isLiteralKind(k)) {
+            return literal(e, expected, e.line, e.col, false);
+        }
+        if (k == "name") {
+            return name(e);
+        }
+        if (k == "this") {
+            if (isStatic || cls < 0) {
+                err(e.line, e.col, "R-7.4", "statische Methoden haben kein this");
+                return Ty::error();
+            }
+            if (anyOwnLambda()) {
+                err(e.line, e.col, "R-10.10", "ein own-Lambda kann this nicht erfassen");
+                return Ty::error();
+            }
+            return selfTy() ?? Ty::error();
+        }
+        if (k == "base") {
+            err(e.line, e.col, "R-7.15", "base steht nur vor einem Methodenaufruf");
+            return Ty::error();
+        }
+        if (k == "paren") {
+            asArgument = asArg;
+            return expr(e.kids[0], expected);
+        }
+        if (k == "tuple") {
+            shared Ty? exu = null;
+            if (expected != null) {
+                exu = Ty::unformed(expected);
+            }
+            bool useExp = exu != null && exu.kind == TK::Tuple && exu.args.length == e.kids.length;
+            shared Ty[] ts = [];
+            for (i64 i = 0; i < e.kids.length; i++) {
+                ref Node x = e.kids[i];
+                shared Ty? et = null;
+                if (useExp && exu != null) {
+                    et = exu.args[i];
+                }
+                shared Ty xt = expr(x, et);
+                // R-4.36: Ein Tupel besitzt seine Elemente.
+                string[] a = ["R-4.36"];
+                consume(x, xt, et ?? xt, "R-5.3", a);
+                ts.push(xt);
+            }
+            return Ty::list(TK::Tuple, ts);
+        }
+        if (k == "array") {
+            return arrayLiteral(e, expected);
+        }
+        if (k == "new") {
+            shared Ty t = resolveTN(e.kids[0], e.line, e.col);
+            return newObject(t, e.kids[1], e.line, e.col);
+        }
+        if (k == "cast") {
+            return castExpr(e.kids[0], e.kids[1], e.line, e.col);
+        }
+        if (k == "copy") {
+            return copyExpr(e);
+        }
+        if (k == "static") {
+            return staticValue(e.kids[0]);
+        }
+        if (k == "lambda") {
+            return lambda(e.text == "own", e.kids[0], e.kids[1], expected, asArg, e.line, e.col);
+        }
+        if (k == "unary") {
+            return unary(e.text, e.kids[0], expected, e.line, e.col);
+        }
+        if (k == "binary") {
+            return binary(e.text, e.kids[0], e.kids[1], e.line, e.col);
+        }
+        if (k == "as") {
+            return asExpr(e);
+        }
+        if (k == "coalesce") {
+            return coalesce(e, expected);
+        }
+        if (k == "cond") {
+            (IdSet w, IdSet f) = cond(e.kids[0]);
+            Flow baseFlow = flow.dup();
+            flow.narrow(w);
+            shared Ty a = expr(e.kids[1], expected);
+            Flow afterThen = flow.dup();
+            flow = baseFlow;
+            flow.narrow(f);
+            shared Ty b = expr(e.kids[2], expected);
+            flow = afterThen.join(flow, "R-6.7", "R-5.15");
+            shared Ty? j = join(a, b);
+            if (j == null) {
+                string msg = show(a) + " und " + show(b) + " haben keinen gemeinsamen Typ";
+                err(e.line, e.col, "R-8.9", msg);
+                return Ty::error();
+            }
+            return j;
+        }
+        if (k == "member") {
+            return member(e.kids[0], e.kids[1], e.text == "safe", e.line, e.col);
+        }
+        if (k == "call") {
+            return call(e.kids[0], e.kids[1], e.line, e.col);
+        }
+        if (k == "index") {
+            return indexExpr(e);
+        }
+        if (k == "slice") {
+            return sliceExpr(e);
+        }
+        // postinc, postdec
+        return incDec(e.kids[0], e.line, e.col);
+    }
+
+    shared Ty copyExpr(Node e) & {
+        ref Node x = e.kids[0];
+        shared Ty t0 = expr(x, null);
+        shared Ty t = nonNullOperand(t0, x, x.line, x.col);
+        shared Ty c = Tys::core(t);
+        if (c.kind == TK::Func) {
+            err(e.line, e.col, "R-10.15", "Funktionswerte können nicht kopiert werden");
+            return Ty::error();
+        }
+        if (c.kind == TK::Named && p.defs[c.id].kind == DefKind::Class) {
+            i64 cur = c.id;
+            bool has = false;
+            while (cur >= 0) {
+                if (p.defs[cur].hasCopy) {
+                    has = true;
+                    break;
+                }
+                shared Ty? b = p.defs[cur].baseType;
+                cur = -1;
+                if (b != null) {
+                    cur = b.id;
+                }
+            }
+            if (!has) {
+                string nm = p.defs[c.id].name;
+                err(e.line, e.col, "R-7.11", nm + " hat kein copy");
+            }
+        }
+        return Ty::unformed(t);
+    }
+
+    shared Ty asExpr(Node e) & {
+        ref Node x = e.kids[0];
+        ref Node ty = e.kids[1];
+        shared Ty st0 = expr(x, null);
+        shared Ty st = nonNullOperand(st0, x, x.line, x.col);
+        shared Ty tt = resolve(ty);
+        if (st.isError() || tt.isError()) {
+            return Ty::error();
+        }
+        shared Ty s = Tys::core(st);
+        shared Ty t = Ty::unformed(tt);
+        bool ok = s.kind == TK::Named && t.kind == TK::Named && p.defs[t.id].kind != DefKind::Enum && !s.same(t) && p.upcasts(t, s);
+        if (!ok || tt.kind == TK::Nullable) {
+            string msg = show(tt) + " ist kein Untertyp von " + show(st);
+            err(ty.line, ty.col, "R-4.23", msg);
+            return Ty::error();
+        }
+        if (Ty::unformed(st).kind == TK::Shared) {
+            return Ty::nullable(Ty::wrap(TK::Shared, tt));
+        }
+        return Ty::nullable(tt);
+    }
+
+    shared Ty coalesce(Node e, shared Ty? expected) & {
+        ref Node left = e.kids[0];
+        ref Node right = e.kids[1];
+        shared Ty? le = null;
+        if (expected != null) {
+            le = Ty::nullable(expected);
+        }
+        shared Ty lt = expr(left, le);
+        shared Ty inner = Ty::error();
+        if (!lt.isError()) {
+            if (declaredNullable(left, lt)) {
+                inner = Tys::stripNull(lt);
+            } else {
+                string msg = "?? verlangt links einen nullbaren Wert, nicht " + show(lt);
+                err(left.line, left.col, "R-6.18", msg);
+                inner = lt;
+            }
+        }
+        // b wird nur ausgewertet, wenn a null ist (R-6.18).
+        Flow baseFlow = flow.dup();
+        shared Ty rt = expr(right, expected ?? inner);
+        flow = baseFlow.join(flow, "R-6.18", "R-5.15");
+        return join(inner, rt) ?? Ty::error();
+    }
+
+    shared Ty indexExpr(Node e) & {
+        ref Node object = e.kids[0];
+        ref Node index = e.kids[1];
+        placeQuiet++;
+        shared Ty ot0 = expr(object, null);
+        placeQuiet--;
+        shared Ty ot = nonNullOperand(ot0, object, object.line, object.col);
+        i64 saved = placeQuiet;
+        placeQuiet = 0;
+        shared Ty i64t = Ty::ofPrim("i64");
+        shared Ty it = expr(index, i64t);
+        placeQuiet = saved;
+        if (!it.isError() && !assignable(it, i64t)) {
+            string msg = "ein Index ist eine Ganzzahl, nicht " + show(it);
+            err(index.line, index.col, "R-4.33", msg);
+        }
+        shared Ty c = Tys::core(ot);
+        if (c.kind == TK::Error) {
+            return c;
+        }
+        if (c.kind == TK::Prim && c.prim == "string") {
+            return Ty::ofPrim("char");
+        }
+        if (c.kind == TK::Vector || c.kind == TK::Array || c.kind == TK::Slice) {
+            return c.args[0];
+        }
+        string msg = show(c) + " hat keinen Index";
+        err(e.line, e.col, "R-8.7", msg);
+        return Ty::error();
+    }
+
+    shared Ty sliceExpr(Node e) & {
+        ref Node object = e.kids[0];
+        shared Ty ot0 = expr(object, null);
+        shared Ty ot = nonNullOperand(ot0, object, object.line, object.col);
+        // Der Slice leiht den Behälter bis zum Ende der Anweisung oder, an eine lokale
+        // Variable gebunden, bis zum Blockende.
+        Place? pl = placeOf(object);
+        if (pl != null) {
+            i64 sd = stmtDepth;
+            pushLoan(pl.dup(), false, UntilKind::Stmt, sd, "R-5.17");
+        }
+        shared Ty i64t = Ty::ofPrim("i64");
+        for (i64 i = 1; i <= 2; i++) {
+            ref Node b = e.kids[i];
+            if (b.kind == "none") {
+                continue;
+            }
+            shared Ty bt = expr(b, i64t);
+            if (!bt.isError() && !assignable(bt, i64t)) {
+                err(b.line, b.col, "R-8.7", "Bereichsgrenzen sind Ganzzahlen");
+            }
+        }
+        shared Ty c = Tys::core(ot);
+        if (c.kind == TK::Error) {
+            return c;
+        }
+        if (c.kind == TK::Vector || c.kind == TK::Array || c.kind == TK::Slice) {
+            return Ty::wrap(TK::Slice, c.args[0]);
+        }
+        string msg = "Bereiche gibt es nicht für " + show(c);
+        err(e.line, e.col, "R-8.7", msg);
+        return Ty::error();
+    }
+
+    shared Ty literal(Node lit, shared Ty? expected, i32 line, i32 col, bool negative) & {
+        string target = "";
+        if (expected != null) {
+            target = Tys::prim(Tys::core(expected));
+        }
+        string k = lit.kind;
+        if (k == "int") {
+            (bool ok, ui64 mag) = Num::value(lit.text);
+            if (!ok) {
+                err(line, col, "R-4.7", "ungültiges Literal");
+                return Ty::error();
+            }
+            if (Num::isNumeric(target)) {
+                if (!Num::fits(negative, mag, target)) {
+                    err(line, col, "R-4.7", Num::show(negative, mag) + " passt nicht in " + target);
+                }
+                return Ty::ofPrim(target);
+            }
+            return Ty::ofPrim(Num::defaultInt(negative, mag));
+        }
+        if (k == "float") {
+            if (Num::isFloat(target)) {
+                if (!Num::floatFits(lit.text, target)) {
+                    err(line, col, "R-4.7", lit.text + " ist in " + target + " nicht endlich darstellbar");
+                }
+                return Ty::ofPrim(target);
+            }
+            if (Num::isInteger(target)) {
+                err(line, col, "R-4.7", "ein Gleitkommaliteral passt nicht in " + target);
+                return Ty::error();
+            }
+            return Ty::ofPrim("f64");
+        }
+        if (k == "str") {
+            return Ty::ofPrim("string");
+        }
+        if (k == "char") {
+            return Ty::ofPrim("char");
+        }
+        if (k == "bool") {
+            return Ty::ofPrim("bool");
+        }
+        return Ty::simple(TK::Null);
+    }
+
+    shared Ty arrayLiteral(Node e, shared Ty? expected) & {
+        shared Ty? exp = null;
+        if (expected != null) {
+            exp = Ty::unformed(expected);
+        }
+        shared Ty? el = null;
+        if (exp != null) {
+            if (exp.kind == TK::Vector || exp.kind == TK::Array || exp.kind == TK::Slice) {
+                el = exp.args[0];
+            } else if (exp.kind == TK::Nullable) {
+                shared Ty x = Ty::unformed(exp.args[0]);
+                if (x.kind == TK::Vector || x.kind == TK::Array) {
+                    el = x.args[0];
+                }
+            }
+            if (exp.kind == TK::Array && exp.size >= 0 && exp.size != e.kids.length) {
+                err(e.line, e.col, "R-4.32", "das Array hat " + exp.size.toString() + " Elemente, das Literal " + e.kids.length.toString());
+            }
+        }
+        if (el != null) {
+            for (Node x : e.kids) {
+                shared Ty xt = expr(x, el);
+                discard requireE(xt, el, x);
+            }
+            if (exp != null && exp.kind == TK::Array) {
+                return exp;
+            }
+            return Ty::wrap(TK::Vector, el);
+        }
+        if (e.kids.length == 0) {
+            err(e.line, e.col, "R-4.32", "[] braucht einen Typ aus dem Zusammenhang");
+            return Ty::error();
+        }
+        shared Ty first = expr(e.kids[0], null);
+        for (i64 i = 1; i < e.kids.length; i++) {
+            shared Ty xt = expr(e.kids[i], first);
+            discard requireE(xt, first, e.kids[i]);
+        }
+        return Ty::wrap(TK::Vector, first);
+    }
+
+    shared Ty name(Node n) & {
+        string nm = n.text;
+        i64 li = findLocal(nm);
+        if (li >= 0) {
+            i64 id = locals[li].id;
+            shared Ty lty = locals[li].ty;
+            LK kind = locals[li].kind;
+            bool borrow = locals[li].isBorrow();
+            if (!flow.dead) {
+                if (flow.unassigned.remove(id)) {
+                    err(n.line, n.col, "R-4.46", nm + " ist nicht auf jedem Weg zugewiesen");
+                }
+                string reason = flow.moved.take(id);
+                if (reason != "") {
+                    string[] also = [reason];
+                    bool inCall = false;
+                    for (IdList c : callMoved) {
+                        if (Program::indexOfInt(c.ids, id) >= 0) {
+                            inCall = true;
+                        }
+                    }
+                    if (inCall) {
+                        also.push("R-5.10");
+                    }
+                    shared Ty c = Tys::core(lty);
+                    if (c.kind == TK::Named && p.defs[c.id].kind == DefKind::Enum) {
+                        also.push("R-4.29");
+                    }
+                    if (kind == LK::Catch) {
+                        also.push("R-9.8");
+                    }
+                    errAlso(n.line, n.col, "R-5.3", also, nm + " wurde verschoben und ist nicht mehr verfügbar");
+                }
+            }
+            // Erfassung durch Lambdas (R-10.7 bis R-10.9)
+            (i64 from, i64 to) = capturingFrames(id);
+            if (from < to) {
+                bool byOwn = false;
+                for (i64 f = from; f < to; f++) {
+                    if (Program::indexOfInt(frames[f].captures, id) < 0) {
+                        frames[f].captures.push(id);
+                    }
+                    if (frames[f].ownLambda) {
+                        byOwn = true;
+                    }
+                }
+                bool plain = Tys::core(lty).kind == TK::Prim || Tys::isShared(lty);
+                if (byOwn && borrow && !plain) {
+                    err(n.line, n.col, "R-10.9", nm + " ist nur geliehen und kann nicht per Wert erfasst werden (copy verwenden)");
+                }
+            }
+            return localType(findLocal(nm));
+        }
+        shared Ty? st = selfTy();
+        if (st != null) {
+            FieldInfo? f = p.fieldOf(st, nm);
+            if (f != null) {
+                if (!f.isStatic && isStatic) {
+                    err(n.line, n.col, "R-7.4", nm + " ist ein Feld; statische Methoden haben kein this");
+                    return Ty::error();
+                }
+                if (!f.isStatic && anyOwnLambda()) {
+                    err(n.line, n.col, "R-10.10", "ein own-Lambda kann this nicht erfassen");
+                    return Ty::error();
+                }
+                checkAccess(f.access, f.owner, n.line, n.col);
+                return f.ty;
+            }
+        }
+        string rule = "R-8.16";
+        if (inMixin()) {
+            rule = "R-7.19";
+        }
+        err(n.line, n.col, rule, nm + " ist hier nicht bekannt");
+        return Ty::error();
+    }
+
+    void checkAccess(Access access, i64 owner, i32 line, i32 col) & {
+        bool ok = true;
+        if (access == Access::Private) {
+            ok = cls == owner;
+        } else if (access == Access::Protected) {
+            ok = cls >= 0 && p.isSubclass(cls, owner);
+        }
+        if (!ok) {
+            string nm = p.defs[owner].name;
+            err(line, col, "R-7.2", "der Member ist in " + nm + " nicht sichtbar");
+        }
+    }
+
+    shared Ty? join(shared Ty a, shared Ty b) {
+        if (a.isError()) {
+            return b;
+        }
+        if (b.isError()) {
+            return a;
+        }
+        string x = Tys::prim(a);
+        string y = Tys::prim(b);
+        if (Num::isNumeric(x) && Num::isNumeric(y)) {
+            string c = Num::common(x, y);
+            if (c == "") {
+                return null;
+            }
+            return Ty::ofPrim(c);
+        }
+        if (a.kind == TK::Null) {
+            return Ty::nullable(b);
+        }
+        if (b.kind == TK::Null) {
+            return Ty::nullable(a);
+        }
+        if (assignable(a, b)) {
+            return b;
+        }
+        if (assignable(b, a)) {
+            return a;
+        }
+        return null;
+    }
+
+    bool isPlainEnum(Ty t) {
+        if (t.kind != TK::Named || p.defs[t.id].kind != DefKind::Enum) {
+            return false;
+        }
+        for (VariantInfo v : p.defs[t.id].variants) {
+            if (v.fields.length > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    shared Ty castExpr(Node ty, Node x, i32 line, i32 col) & {
+        shared Ty target = resolve(ty);
+        shared Ty src = expr(x, null);
+        if (src.isError() || target.isError()) {
+            return target;
+        }
+        shared Ty s = Ty::unformed(src);
+        shared Ty t = Ty::unformed(target);
+        string a = Tys::prim(s);
+        string b = Tys::prim(t);
+        if (a == "bool" || b == "bool") {
+            err(line, col, "R-4.3", "zwischen bool und anderen Typen gibt es keine Umwandlung");
+            return Ty::error();
+        }
+        bool ok = false;
+        if (Num::isNumeric(a) && Num::isNumeric(b)) {
+            ok = true;
+        } else if ((a == "char" && Num::isInteger(b)) || (b == "char" && Num::isInteger(a))) {
+            ok = true;
+        } else if ((a == "byte" && b == "ui8") || (a == "ui8" && b == "byte")) {
+            ok = true;
+        } else if (a != "" && a == b) {
+            ok = true;
+        } else if (Num::isInteger(a) && b == "") {
+            ok = isPlainEnum(t);
+        } else if (a == "" && Num::isInteger(b)) {
+            ok = isPlainEnum(s);
+        }
+        if (!ok) {
+            string msg = "cast von " + show(src) + " nach " + show(target) + " gibt es nicht";
+            err(line, col, "R-4.8", msg);
+            return Ty::error();
+        }
+        return target;
+    }
+
+    shared Ty incDec(Node x, i32 line, i32 col) & {
+        shared Ty t = lvalue(x);
+        if (!t.isError() && !Tys::isInteger(t)) {
+            string msg = "++ und -- gibt es nur für Ganzzahlen, nicht für " + show(t);
+            err(line, col, "R-8.8", msg);
+            return Ty::error();
+        }
+        return t;
+    }
+
+    shared Ty unary(string op, Node x, shared Ty? expected, i32 line, i32 col) & {
+        if (op == "!") {
+            shared Ty t0 = expr(x, Ty::ofPrim("bool"));
+            shared Ty t = nonNullOperand(t0, x, x.line, x.col);
+            if (!t.isError() && !Tys::isBool(t)) {
+                string msg = "! verlangt bool, nicht " + show(t);
+                err(line, col, "R-4.3", msg);
+            }
+            return Ty::ofPrim("bool");
+        }
+        if (op == "-") {
+            if (x.kind == "int" || x.kind == "float") {
+                shared Ty t = literal(x, expected, line, col, true);
+                string q = Tys::prim(t);
+                if (Num::isUnsigned(q)) {
+                    err(line, col, "R-4.13", "einstelliges - auf " + q);
+                }
+                return t;
+            }
+            shared Ty t0 = expr(x, expected);
+            shared Ty t = nonNullOperand(t0, x, x.line, x.col);
+            if (t.isError()) {
+                return Ty::error();
+            }
+            string q = Tys::prim(t);
+            if (Num::isUnsigned(q)) {
+                err(line, col, "R-4.13", "einstelliges - auf dem vorzeichenlosen Typ " + q);
+                return Ty::error();
+            }
+            if (Num::isNumeric(q)) {
+                return t;
+            }
+            string msg = "- verlangt eine Zahl, nicht " + show(t);
+            err(line, col, "R-4.13", msg);
+            return Ty::error();
+        }
+        if (op == "~") {
+            shared Ty t0 = expr(x, expected);
+            shared Ty t = nonNullOperand(t0, x, x.line, x.col);
+            if (!t.isError() && !Tys::isInteger(t) && Tys::prim(t) != "byte") {
+                string msg = "~ verlangt eine Ganzzahl oder byte, nicht " + show(t);
+                err(line, col, "R-4.16", msg);
+                return Ty::error();
+            }
+            return t;
+        }
+        // ++, --
+        return incDec(x, line, col);
+    }
+
+    // Typ von a op b für arithmetische Operatoren (R-4.4, R-4.5, R-4.12, R-4.13, R-4.20)
+    shared Ty arith(string op, shared Ty a, shared Ty b, i32 line, i32 col) & {
+        if (a.isError() || b.isError()) {
+            return Ty::error();
+        }
+        if (op == "+" && (Tys::isString(a) || Tys::isString(b))) {
+            if (Tys::isString(a) && Tys::isString(b)) {
+                return Ty::ofPrim("string");
+            }
+            err(line, col, "R-4.20", "+ verbindet nur zwei Strings; Zahlen brauchen toString()");
+            return Ty::error();
+        }
+        string x = Tys::prim(a);
+        string y = Tys::prim(b);
+        if (x == "" || y == "") {
+            string msg = op + " gibt es nicht für " + show(a) + " und " + show(b);
+            err(line, col, "R-4.13", msg);
+            return Ty::error();
+        }
+        for (string q : [x, y]) {
+            string rule = "";
+            if (q == "byte") {
+                rule = "R-4.5";
+            } else if (q == "char") {
+                rule = "R-4.4";
+            } else if (q == "bool") {
+                rule = "R-4.3";
+            } else if (q == "string") {
+                rule = "R-4.20";
+            }
+            if (rule != "") {
+                err(line, col, rule, "keine Arithmetik mit " + q);
+                return Ty::error();
+            }
+        }
+        string c = Num::common(x, y);
+        if (c == "") {
+            err(line, col, "R-4.12", x + " und " + y + " haben keinen gemeinsamen Typ; nötig ist cast");
+            return Ty::error();
+        }
+        return Ty::ofPrim(c);
+    }
+
+    // Ein Operand muss verengt sein (R-6.2, R-6.23); liefert den Typ ohne ?
+    shared Ty nonNullOperand(shared Ty t, Node e, i32 line, i32 col) & {
+        if (t.isError() || !Tys::nullable(t) || t.kind == TK::Null) {
+            return t;
+        }
+        string[] also = [];
+        string rule = "R-6.2";
+        if (Ty::unformed(Tys::stripNull(t)).kind == TK::Prim) {
+            also.push("R-6.2");
+            rule = "R-6.23";
+        }
+        for (string r : nullReason(e)) {
+            also.push(r);
+        }
+        string msg = exprText(e) + " hat den nullbaren Typ " + show(t) + " und ist hier nicht geprüft";
+        errAlso(line, col, rule, also, msg);
+        return Tys::stripNull(t);
+    }
+
+    // Prüft beide Operanden; ein Literal bekommt den Typ des anderen Operanden (R-4.7)
+    (shared Ty, shared Ty) operands(Node l, Node r) & {
+        (shared Ty a, shared Ty b) = operandsRaw(l, r);
+        shared Ty na = nonNullOperand(a, l, l.line, l.col);
+        shared Ty nb = nonNullOperand(b, r, r.line, r.col);
+        return (na, nb);
+    }
+
+    (shared Ty, shared Ty) operandsRaw(Node l, Node r) & {
+        bool ll = isLiteral(l);
+        bool rl = isLiteral(r);
+        if (ll && !rl) {
+            shared Ty rt = expr(r, null);
+            shared Ty? ctx = null;
+            if (Tys::isNumeric(rt)) {
+                ctx = rt;
+            }
+            shared Ty lt = expr(l, ctx);
+            return (lt, rt);
+        }
+        if (!ll && rl) {
+            shared Ty lt = expr(l, null);
+            shared Ty? ctx = null;
+            if (Tys::isNumeric(lt)) {
+                ctx = lt;
+            }
+            shared Ty rt = expr(r, ctx);
+            return (lt, rt);
+        }
+        shared Ty lt = expr(l, null);
+        shared Ty rt = expr(r, null);
+        return (lt, rt);
+    }
+
+    shared Ty binary(string op, Node l, Node r, i32 line, i32 col) & {
+        shared Ty boolT = Ty::ofPrim("bool");
+        if (op == "&&" || op == "||") {
+            // R-6.7: b wird unter W(a) bzw. F(a) geprüft und nur bedingt ausgewertet.
+            shared Ty t1 = expr(l, boolT);
+            if (!t1.isError() && !Tys::isBool(t1)) {
+                string msg = op + " verlangt bool, nicht " + show(t1);
+                err(l.line, l.col, "R-4.3", msg);
+            }
+            (IdSet w, IdSet f) = facts(l);
+            Flow baseFlow = flow.dup();
+            IdSet add = w.dup();
+            IdSet drop = f.dup();
+            if (op == "||") {
+                add = f.dup();
+                drop = w.dup();
+            }
+            flow.narrow(add);
+            for (i64 v : IdSet::minus(drop, add).items) {
+                flow.unnarrow(v, "R-6.7");
+            }
+            shared Ty t2 = expr(r, boolT);
+            if (!t2.isError() && !Tys::isBool(t2)) {
+                string msg = op + " verlangt bool, nicht " + show(t2);
+                err(r.line, r.col, "R-4.3", msg);
+            }
+            flow = baseFlow.join(flow, "R-6.7", "R-5.15");
+            return boolT;
+        }
+        if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") {
+            (shared Ty a, shared Ty b) = operands(l, r);
+            return arith(op, a, b, line, col);
+        }
+        if (op == "<<" || op == ">>") {
+            shared Ty a0 = expr(l, null);
+            shared Ty a = nonNullOperand(a0, l, l.line, l.col);
+            shared Ty b0 = expr(r, Ty::ofPrim("i32"));
+            shared Ty b = nonNullOperand(b0, r, r.line, r.col);
+            if (a.isError() || b.isError()) {
+                return Ty::error();
+            }
+            if (!(Tys::isInteger(a) || Tys::prim(a) == "byte") || !Tys::isInteger(b)) {
+                err(line, col, "R-4.16", "Schiebeoperatoren verlangen Ganzzahlen");
+                return Ty::error();
+            }
+            return a;
+        }
+        if (op == "&" || op == "|" || op == "^") {
+            (shared Ty a, shared Ty b) = operands(l, r);
+            if (a.isError() || b.isError()) {
+                return Ty::error();
+            }
+            if (Tys::prim(a) == "byte" && Tys::prim(b) == "byte") {
+                return a;
+            }
+            if (Tys::isInteger(a) && Tys::isInteger(b)) {
+                string c = Num::common(Tys::prim(a), Tys::prim(b));
+                if (c == "") {
+                    err(line, col, "R-4.12", "kein gemeinsamer Typ");
+                    return Ty::error();
+                }
+                return Ty::ofPrim(c);
+            }
+            string msg = op + " gibt es für Ganzzahlen und byte, nicht für " + show(a) + " und " + show(b);
+            err(line, col, "R-4.16", msg);
+            return Ty::error();
+        }
+        if (op == "<" || op == ">" || op == "<=" || op == ">=") {
+            (shared Ty a, shared Ty b) = operands(l, r);
+            compare(a, b, line, col);
+            return boolT;
+        }
+        // == und !=
+        bool withNull = r.kind == "null" || l.kind == "null";
+        if (withNull) {
+            // R-6.3: Vergleich mit null nur für nullbare Werte
+            shared Ty a = expr(l, null);
+            shared Ty b = expr(r, null);
+            bool rightNull = r.kind == "null";
+            shared Ty other = b;
+            if (rightNull) {
+                other = a;
+            }
+            bool declNull = false;
+            if (rightNull) {
+                declNull = declaredNullable(l, other);
+            } else {
+                declNull = declaredNullable(r, other);
+            }
+            if (other.kind == TK::Null) {
+                err(line, col, "R-6.3", "null == null steht schon fest");
+            } else if (!other.isError() && !declNull) {
+                string msg = show(other) + " ist nicht nullbar; der Vergleich mit null steht schon fest";
+                err(line, col, "R-6.3", msg);
+            }
+            return boolT;
+        }
+        (shared Ty a, shared Ty b) = operands(l, r);
+        equality(a, b, line, col);
+        return boolT;
+    }
+
+    void compare(shared Ty a, shared Ty b, i32 line, i32 col) & {
+        if (a.isError() || b.isError()) {
+            return;
+        }
+        string x = Tys::prim(a);
+        string y = Tys::prim(b);
+        if (x != "" && y != "") {
+            if (Num::isNumeric(x) && Num::isNumeric(y)) {
+                if (Num::common(x, y) == "") {
+                    err(line, col, "R-4.12", x + " und " + y + " haben keinen gemeinsamen Typ");
+                }
+                return;
+            }
+            if (x == y && (x == "char" || x == "byte" || x == "string")) {
+                return;
+            }
+        }
+        i64 cmp = p.lookupFull("rpp.core.Comparable");
+        if (cmp >= 0) {
+            shared Ty[] margs = [];
+            margs.push(Ty::unformed(b));
+            shared Ty m = Ty::named(cmp, margs);
+            if (p.satisfies(Ty::unformed(a), m)) {
+                return;
+            }
+        }
+        string rule = "R-4.17";
+        if (Ty::unformed(a).kind == TK::Param) {
+            rule = "R-4.42";
+        }
+        string msg = show(a) + " und " + show(b) + " lassen sich nicht mit < vergleichen";
+        err(line, col, rule, msg);
+    }
+
+    void equality(shared Ty a, shared Ty b, i32 line, i32 col) & {
+        if (a.isError() || b.isError()) {
+            return;
+        }
+        if (a.kind == TK::Null || b.kind == TK::Null) {
+            return;
+        }
+        shared Ty x = Tys::core(a);
+        shared Ty y = Tys::core(b);
+        string rule = "";
+        string msg = "";
+        if (x.kind == TK::Prim && y.kind == TK::Prim && Num::isNumeric(x.prim) && Num::isNumeric(y.prim)) {
+            if (Num::common(x.prim, y.prim) == "") {
+                rule = "R-4.12";
+                msg = x.prim + " und " + y.prim + " haben keinen gemeinsamen Typ";
+            }
+        } else if (x.kind == TK::Prim && y.kind == TK::Prim && x.prim == y.prim) {
+        } else if (x.kind == TK::Tuple || y.kind == TK::Tuple) {
+            rule = "R-4.35";
+            msg = "Tupel haben kein ==";
+        } else if (x.kind == TK::Func || y.kind == TK::Func) {
+            rule = "R-4.38";
+            msg = "Funktionstypen haben kein ==";
+        } else if (x.kind == TK::Vector || x.kind == TK::Array || x.kind == TK::Slice) {
+            rule = "R-4.33";
+            msg = "Arrays haben kein ==";
+        } else if (x.kind == TK::Named && p.defs[x.id].kind == DefKind::Enum) {
+            if (!isPlainEnum(x)) {
+                rule = "R-4.28";
+                msg = "Enums mit Daten vergleicht man mit switch";
+            } else if (!x.same(y)) {
+                rule = "R-4.28";
+                msg = "verschiedene Enums";
+            }
+        } else if (x.kind == TK::Named || x.kind == TK::Param) {
+            i64 eq = p.lookupFull("rpp.core.Equatable");
+            bool ok = false;
+            if (eq >= 0) {
+                shared Ty[] margs = [];
+                margs.push(y);
+                ok = p.satisfies(x, Ty::named(eq, margs));
+                if (!ok) {
+                    // Equatable<T> mit einer Oberklasse T
+                    shared Ty[] outer = [];
+                    outer.push(x);
+                    for (shared Ty s : p.supertypes(x)) {
+                        outer.push(s);
+                    }
+                    for (shared Ty s : outer) {
+                        shared Ty[] inner = p.supertypes(s);
+                        inner.push(s);
+                        for (shared Ty t : inner) {
+                            if (t.kind == TK::Named && t.id == eq && t.args.length > 0 && assignable(y, t.args[0])) {
+                                ok = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!ok) {
+                if (x.kind == TK::Param) {
+                    rule = "R-4.42";
+                    msg = "== verlangt " + show(x) + " : Equatable";
+                } else {
+                    rule = "R-4.24";
+                    msg = show(x) + " importiert Equatable nicht";
+                }
+            }
+        } else {
+            rule = "R-4.17";
+            msg = show(a) + " und " + show(b) + " lassen sich nicht vergleichen";
+        }
+        if (rule != "") {
+            err(line, col, rule, msg);
+        }
+    }
+
+    // ------------------------------------------------------------ Member
+
+    // Hat der Ausdruck einen nullbaren Typ? Für Variablen zählt der deklarierte Typ.
+    bool declaredNullable(Node e, Ty t) {
+        if (e.kind == "paren") {
+            return declaredNullable(e.kids[0], t);
+        }
+        if (e.kind == "name") {
+            i64 i = findLocal(e.text);
+            if (i >= 0) {
+                return Tys::nullable(locals[i].ty);
+            }
+        }
+        return Tys::nullable(t);
+    }
+
+    // Empfänger eines Zugriffs x.f, x.m() (R-6.2) bzw. x?.f (R-6.16): ohne ?
+    shared Ty receiver(shared Ty ot, Node object, bool safe, i32 line, i32 col) & {
+        if (ot.isError()) {
+            return ot;
+        }
+        if (safe) {
+            if (!declaredNullable(object, ot)) {
+                string msg = "?. auf dem nicht nullbaren Wert " + show(ot);
+                err(line, col, "R-6.16", msg);
+            }
+            return Tys::stripNull(ot);
+        }
+        return nonNullOperand(ot, object, object.line, object.col);
+    }
+
+    shared Ty member(Node object, Node id, bool safe, i32 line, i32 col) & {
+        placeQuiet++;
+        shared Ty ot0 = expr(object, null);
+        placeQuiet--;
+        shared Ty ot = receiver(ot0, object, safe, line, col);
+        shared Ty t = fieldType(ot, id, line, col);
+        if (safe) {
+            return Ty::nullable(t);
+        }
+        return t;
+    }
+
+    shared Ty fieldType(shared Ty ot, Node id, i32 line, i32 col) & {
+        shared Ty core = Tys::core(ot);
+        if (ot.isError()) {
+            return Ty::error();
+        }
+        if (Tys::weakInner(ot) != null) {
+            err(line, col, "R-4.41", "über weak greift man nur mit lock() zu");
+            return Ty::error();
+        }
+        string nm = id.text;
+        if (core.kind == TK::Prim && core.prim == "string" && (nm == "length" || nm == "byteLength")) {
+            return Ty::ofPrim("i64");
+        }
+        if ((core.kind == TK::Vector || core.kind == TK::Array || core.kind == TK::Slice) && nm == "length") {
+            return Ty::ofPrim("i64");
+        }
+        if (core.kind == TK::Named) {
+            FieldInfo? f = p.fieldOf(core, nm);
+            if (f != null) {
+                if (f.isStatic) {
+                    err(line, col, "R-7.27", nm + " ist statisch und wird mit :: angesprochen");
+                }
+                checkAccess(f.access, f.owner, id.line, id.col);
+                return f.ty;
+            }
+        }
+        string rule = unknownMemberRule(core);
+        string msg = show(core) + " hat kein Feld " + nm;
+        err(id.line, id.col, rule, msg);
+        return Ty::error();
+    }
+
+    string unknownMemberRule(Ty t) {
+        if (t.kind == TK::Named && p.defs[t.id].kind == DefKind::Mixin) {
+            return "R-7.22";
+        }
+        if (t.kind == TK::Param) {
+            return "R-7.24";
+        }
+        return "R-7.1";
+    }
+
+    // ------------------------------------------------------------ Aufrufe
+
+    shared Ty call(Node callee, Node args, i32 line, i32 col) & {
+        hasLastCall = false;
+        (shared Ty t, i32 facts) = callInner(callee, args, line, col);
+        hasLastCall = true;
+        lastFacts = facts;
+        return t;
+    }
+
+    void probeArgs(Node args) & {
+        for (Node a : args.kids) {
+            discard probeExpr(a.kids[0]);
+        }
+    }
+
+    (shared Ty, i32) callInner(Node callee, Node args, i32 line, i32 col) & {
+        if (callee.kind == "name") {
+            string nm = callee.text;
+            if (findLocal(nm) >= 0) {
+                shared Ty t0 = expr(callee, null);
+                shared Ty t = nonNullOperand(t0, callee, callee.line, callee.col);
+                return (callValue(t, args, callee.line, callee.col), 2);
+            }
+            shared Ty? st0 = selfTy();
+            bool ownMethod = st0 != null && p.methodsOf(st0, nm).length > 0;
+            if (!ownMethod) {
+                (bool handled, shared Ty bt, i32 bf) = builtinFunction(nm, args, line, col);
+                if (handled) {
+                    return (bt, bf);
+                }
+            }
+            shared Ty? st = selfTy();
+            if (st == null) {
+                err(callee.line, callee.col, "R-8.16", nm + " ist hier nicht bekannt");
+                return (Ty::error(), 0);
+            }
+            MethodInfo[] cands = p.methodsOf(st, nm);
+            if (cands.length == 0) {
+                if (p.fieldOf(st, nm) != null) {
+                    shared Ty t0 = expr(callee, null);
+                    shared Ty t = nonNullOperand(t0, callee, callee.line, callee.col);
+                    return (callValue(t, args, callee.line, callee.col), 2);
+                }
+                string rule = "R-8.16";
+                if (inMixin()) {
+                    rule = "R-7.19";
+                }
+                err(callee.line, callee.col, rule, nm + " ist hier nicht bekannt");
+                return (Ty::error(), 0);
+            }
+            pendingRecv = new Place(-1);
+            return invoke(cands, args, line, col, 0, Ty::error(), nm);
+        }
+        if (callee.kind == "member") {
+            ref Node object = callee.kids[0];
+            ref Node id = callee.kids[1];
+            bool safe = callee.text == "safe";
+            if (object.kind == "base") {
+                shared Ty? baseFlow = null;
+                if (cls >= 0) {
+                    baseFlow = p.defs[cls].baseType;
+                }
+                if (isStatic || baseFlow == null) {
+                    err(callee.line, callee.col, "R-7.15", "base.m() gibt es nur in Methoden einer Unterklasse");
+                    return (Ty::error(), 0);
+                }
+                MethodInfo[] cands = p.methodsOf(baseFlow, id.text);
+                pendingRecv = new Place(-1);
+                return invoke(cands, args, line, col, 0, Ty::error(), id.text);
+            }
+            shared Ty ot0 = expr(object, null);
+            if (ot0.isError()) {
+                probeArgs(args);
+                return (Ty::error(), 0);
+            }
+            shared Ty ot = receiver(ot0, object, safe, callee.line, callee.col);
+            // R-6.16: Bei null wird der Rest der Kette übersprungen, auch die Argumente.
+            Flow? baseFlow = null;
+            if (safe) {
+                baseFlow = flow.dup();
+            }
+            pendingRecv = placeOf(object);
+            (shared Ty t, i32 facts) = methodCall(ot, id, args, line, col);
+            pendingRecv = null;
+            if (baseFlow != null) {
+                flow = baseFlow.join(flow, "R-6.16", "R-5.15");
+            }
+            if (safe) {
+                return (Ty::nullable(t), facts);
+            }
+            return (t, facts);
+        }
+        if (callee.kind == "static") {
+            return staticCall(callee.kids[0], args, line, col);
+        }
+        if (callee.kind == "paren" && callee.kids[0].kind == "lambda") {
+            ref Node inner = callee.kids[0];
+            PInfo[] ps = [];
+            for (Node x : inner.kids[0].kids) {
+                ps.push(paramInfo(x));
+            }
+            for (i64 i = 0; i < args.kids.length && i < ps.length; i++) {
+                ref Node ax = args.kids[i].kids[0];
+                shared Ty at = expr(ax, ps[i].ty);
+                discard requireE(at, ps[i].ty, ax);
+                if (ps[i].mode == Mode::Own) {
+                    string[] none = [];
+                    consume(ax, at, ps[i].ty, "R-5.3", none);
+                }
+            }
+            if (args.kids.length != ps.length) {
+                err(line, col, "R-10.17", "falsche Anzahl von Argumenten");
+            }
+            shared Ty t = lambdaBody(inner.text == "own", ps, inner.kids[1], null, inner.line, inner.col);
+            return (t, 2);
+        }
+        shared Ty t = expr(callee, null);
+        return (callValue(t, args, callee.line, callee.col), 2);
+    }
+
+    // Aufruf eines Funktionswerts (R-10.17)
+    shared Ty callValue(shared Ty t, Node args, i32 line, i32 col) & {
+        shared Ty c = Tys::core(t);
+        if (c.kind == TK::Error) {
+            for (Node a : args.kids) {
+                discard expr(a.kids[0], null);
+            }
+            return Ty::error();
+        }
+        if (c.kind == TK::Func) {
+            i64 n = c.modes.length;
+            if (n != args.kids.length) {
+                err(line, col, "R-10.17", "die Funktion erwartet " + n.toString() + " Argumente");
+            }
+            MethodInfo m = new MethodInfo("", -1, new Ret(RetKind::Void, Ty::simple(TK::Void), false), Access::Public, 0, 0, 0);
+            for (i64 i = 0; i < n; i++) {
+                m.params.push(new PInfo("p" + i.toString(), c.args[i], c.modes[i]));
+            }
+            m.isStatic = true;
+            m.hasBody = true;
+            i64 id = beginCall();
+            checkArgs(m, args, id);
+            endCall(id);
+            return c.args[n];
+        }
+        string msg = show(c) + " ist keine Funktion";
+        err(line, col, "R-10.17", msg);
+        return Ty::error();
+    }
+
+    PInfo paramInfo(Node pnode) & {
+        shared Ty ty = resolve(pnode.kids[0]);
+        Mode mode = Mode::Read;
+        if (pnode.text == "mut") {
+            mode = Mode::Mut;
+        } else if (pnode.kids[0].text == "own") {
+            mode = Mode::Own;
+        }
+        return new PInfo(pnode.kids[1].text, ty, mode);
+    }
+
+    (shared Ty, i32) methodCall(shared Ty ot, Node id, Node args, i32 line, i32 col) & {
+        shared Ty core = Tys::core(ot);
+        string nm = id.text;
+        shared Ty? wi = Tys::weakInner(ot);
+        if (wi != null) {
+            if (nm == "lock" && args.kids.length == 0) {
+                return (Ty::nullable(Ty::wrap(TK::Shared, wi)), 1);
+            }
+            err(id.line, id.col, "R-4.41", "über weak greift man nur mit lock() zu");
+            return (Ty::error(), 0);
+        }
+        (bool isBuiltin, MethodInfo[] bcands) = builtinMethods(core, nm);
+        if (isBuiltin) {
+            return invoke(bcands, args, line, col, 3, core, nm);
+        }
+        Place? recv = take(&pendingRecv);
+        MethodInfo[] cands = [];
+        if (core.kind == TK::Named) {
+            cands = p.methodsOf(core, nm);
+        } else if (core.kind == TK::Param) {
+            for (shared Ty c : p.tparams[core.id].constraints) {
+                for (MethodInfo m : p.methodsOf(c, nm)) {
+                    cands.push(m.substituted(new Subst()));
+                }
+            }
+        }
+        if (cands.length == 0) {
+            if (core.kind == TK::Named) {
+                FieldInfo? f = p.fieldOf(core, nm);
+                if (f != null) {
+                    checkAccess(f.access, f.owner, id.line, id.col);
+                    return (callValue(f.ty, args, id.line, id.col), 2);
+                }
+            }
+            string rule = unknownMemberRule(core);
+            string msg = show(core) + " hat keine Methode " + nm;
+            err(id.line, id.col, rule, msg);
+            probeArgs(args);
+            return (Ty::error(), 0);
+        }
+        pendingRecv = recv;
+        return invoke(cands, args, line, col, 1, Ty::error(), nm);
+    }
+
+    (shared Ty, i32) staticCall(Node sr, Node args, i32 line, i32 col) & {
+        ref Node ownerNode = sr.kids[0];
+        ref Node mem = sr.kids[1];
+        string nm = mem.text;
+        if (ownerNode.kind == "prim") {
+            pendingRecv = null;
+            (bool ok, MethodInfo[] cands) = builtinStatics(ownerNode.text, nm);
+            if (ok) {
+                return invoke(cands, args, line, col, 2, Ty::error(), nm);
+            }
+            err(mem.line, mem.col, "R-13.3", ownerNode.text + "::" + nm + " gibt es nicht");
+            return (Ty::error(), 0);
+        }
+        shared Ty owner = resolveTN(ownerNode, sr.line, sr.col);
+        if (owner.kind != TK::Named) {
+            if (!owner.isError()) {
+                err(sr.line, sr.col, "R-7.27", "vor :: steht ein Typ");
+            }
+            return (Ty::error(), 0);
+        }
+        i64 d = owner.id;
+        if (p.defs[d].kind == DefKind::Enum) {
+            i64 vi = -1;
+            for (i64 k = 0; k < p.defs[d].variants.length; k++) {
+                if (vi < 0 && p.defs[d].variants[k].name == nm) {
+                    vi = k;
+                }
+            }
+            if (vi >= 0 && p.defs[d].variants[vi].fields.length > 0) {
+                PInfo[] fields = dupParams(p.defs[d].variants[vi].fields);
+                if (fields.length != args.kids.length) {
+                    err(line, col, "R-4.25", nm + " hat " + fields.length.toString() + " Daten");
+                }
+                for (i64 i = 0; i < args.kids.length && i < fields.length; i++) {
+                    ref Node ax = args.kids[i].kids[0];
+                    shared Ty at = expr(ax, fields[i].ty);
+                    discard requireE(at, fields[i].ty, ax);
+                    string[] a = ["R-4.29"];
+                    consume(ax, at, fields[i].ty, "R-5.3", a);
+                }
+                return (owner, 0);
+            }
+            err(mem.line, mem.col, "R-4.25", nm + " ist keine Variante mit Daten");
+            return (Ty::error(), 0);
+        }
+        if (p.defs[d].kind == DefKind::Mixin) {
+            // M::m() ruft die Fassung aus dem importierten Mixin für this auf (R-7.15).
+            shared Ty? st = selfTy();
+            shared Ty? mt = null;
+            if (st != null) {
+                for (shared Ty s : p.supertypes(st)) {
+                    if (mt == null && s.kind == TK::Named && s.id == d) {
+                        mt = s;
+                    }
+                }
+            }
+            if (mt == null || isStatic) {
+                err(sr.line, sr.col, "R-7.15", "M::m() gibt es nur in einer Klasse, die M importiert");
+                return (Ty::error(), 0);
+            }
+            MethodInfo[] cands = [];
+            for (MethodInfo m : p.methodsOf(mt, nm)) {
+                if (m.owner == d) {
+                    cands.push(m.substituted(new Subst()));
+                }
+            }
+            pendingRecv = new Place(-1);
+            return invoke(cands, args, line, col, 0, Ty::error(), nm);
+        }
+        MethodInfo[] cands = [];
+        for (MethodInfo m : p.methodsOf(owner, nm)) {
+            if (m.isStatic) {
+                cands.push(m.substituted(new Subst()));
+            }
+        }
+        if (cands.length == 0) {
+            string tn = p.defs[d].name;
+            err(mem.line, mem.col, "R-7.27", tn + " hat keine statische Methode " + nm);
+            return (Ty::error(), 0);
+        }
+        return invoke(cands, args, line, col, 2, Ty::error(), nm);
+    }
+
+    shared Ty staticValue(Node sr) & {
+        ref Node ownerNode = sr.kids[0];
+        ref Node mem = sr.kids[1];
+        string nm = mem.text;
+        if (ownerNode.kind == "prim") {
+            if ((nm == "MIN" || nm == "MAX") && Num::isNumeric(ownerNode.text)) {
+                return Ty::ofPrim(ownerNode.text);
+            }
+            err(mem.line, mem.col, "R-13.3", ownerNode.text + "::" + nm + " ist kein Wert");
+            return Ty::error();
+        }
+        shared Ty owner = resolveTN(ownerNode, sr.line, sr.col);
+        if (owner.kind != TK::Named) {
+            return Ty::error();
+        }
+        i64 d = owner.id;
+        if (p.defs[d].kind == DefKind::Enum) {
+            i64 vi = -1;
+            for (i64 k = 0; k < p.defs[d].variants.length; k++) {
+                if (vi < 0 && p.defs[d].variants[k].name == nm) {
+                    vi = k;
+                }
+            }
+            if (vi >= 0) {
+                if (p.defs[d].variants[vi].fields.length == 0) {
+                    return owner;
+                }
+                err(mem.line, mem.col, "R-4.25", nm + " trägt Daten: " + nm + "(…)");
+                return Ty::error();
+            }
+        }
+        FieldInfo? f = p.fieldOf(owner, nm);
+        if (f != null && f.isStatic) {
+            checkAccess(f.access, f.owner, mem.line, mem.col);
+            return f.ty;
+        }
+        string tn = p.defs[d].name;
+        err(mem.line, mem.col, "R-7.27", tn + "::" + nm + " ist kein statischer Wert");
+        return Ty::error();
+    }
+
+    // Literal mit Vorzeichen: 0 kein Literal, 1 Ganzzahl, 2 Gleitkomma (wie literal_info)
+    static (i32, bool, ui64) literalInfo(Node e) {
+        if (e.kind == "int") {
+            (bool ok, ui64 v) = Num::value(e.text);
+            if (ok) {
+                return (1, false, v);
+            }
+            return (0, false, 0);
+        }
+        if (e.kind == "float") {
+            return (2, false, 0);
+        }
+        if (e.kind == "unary" && e.text == "-") {
+            ref Node x = e.kids[0];
+            if (x.kind == "int") {
+                (bool ok, ui64 v) = Num::value(x.text);
+                if (ok) {
+                    return (1, true, v);
+                }
+                return (0, false, 0);
+            }
+            if (x.kind == "float") {
+                return (2, false, 0);
+            }
+            return (0, false, 0);
+        }
+        if (e.kind == "paren") {
+            return literalInfo(e.kids[0]);
+        }
+        return (0, false, 0);
+    }
+
+    static bool isLiteral(Node e) {
+        (i32 k, bool n, ui64 v) = literalInfo(e);
+        return k != 0;
+    }
+
+    ArgShape argShape(Node a) & {
+        ref Node x = a.kids[0];
+        if (x.kind == "lambda") {
+            ArgShape s = new ArgShape(4, Ty::error());
+            ProbeState st = beginProbe();
+            for (Node pn : x.kids[0].kids) {
+                s.lparams.push(paramInfo(pn));
+            }
+            endProbe(&st);
+            return s;
+        }
+        if (x.kind == "null") {
+            return new ArgShape(3, Ty::error());
+        }
+        (i32 k, bool neg, ui64 mag) = literalInfo(x);
+        if (k == 1) {
+            ArgShape s = new ArgShape(1, Ty::error());
+            s.neg = neg;
+            s.mag = mag;
+            return s;
+        }
+        if (k == 2) {
+            return new ArgShape(2, Ty::error());
+        }
+        return new ArgShape(0, probeExpr(x));
+    }
+
+    // Rang eines Arguments für einen Parametertyp (R-7.17); -1: passt nicht
+    i32 rank(ArgShape a, shared Ty pty) {
+        shared Ty pu = Ty::unformed(pty);
+        shared Ty pt = pu;
+        bool nullable = false;
+        if (pu.kind == TK::Nullable) {
+            pt = Ty::unformed(pu.args[0]);
+            nullable = true;
+        }
+        i32 r = 0;
+        if (a.kind == 3) {
+            if (nullable || pty.isError()) {
+                return 0;
+            }
+            return -1;
+        } else if (a.kind == 1) {
+            string q = Tys::prim(pt);
+            if (q != "" && q == Num::defaultInt(a.neg, a.mag)) {
+                r = 0;
+            } else if (Num::isNumeric(q) && Num::fits(a.neg, a.mag, q)) {
+                r = 1;
+            } else if (pt.isError() || pt.kind == TK::Param) {
+                r = 0;
+            } else {
+                return -1;
+            }
+        } else if (a.kind == 2) {
+            string q = Tys::prim(pt);
+            if (q == "f64") {
+                r = 0;
+            } else if (q == "f32") {
+                r = 1;
+            } else if (pt.isError() || pt.kind == TK::Param) {
+                r = 0;
+            } else {
+                return -1;
+            }
+        } else if (a.kind == 4) {
+            if (pt.kind == TK::Func) {
+                bool ok = pt.modes.length == a.lparams.length;
+                for (i64 i = 0; ok && i < pt.modes.length; i++) {
+                    ref PInfo l = a.lparams[i];
+                    shared Ty fty = pt.args[i];
+                    if (pt.modes[i] != l.mode || !(Ty::unformed(fty).same(Ty::unformed(l.ty)) || l.ty.isError() || fty.kind == TK::Param)) {
+                        ok = false;
+                    }
+                }
+                if (!ok) {
+                    return -1;
+                }
+                r = 0;
+            } else if (pt.isError() || pt.kind == TK::Param) {
+                r = 0;
+            } else {
+                return -1;
+            }
+        } else {
+            shared Ty t = Ty::unformed(a.ty);
+            if (t.kind == TK::Nullable) {
+                t = Ty::unformed(t.args[0]);
+            }
+            string x = Tys::prim(t);
+            string y = Tys::prim(pt);
+            if (t.isError() || pt.isError() || pt.kind == TK::Param || t.same(pt)) {
+                r = 0;
+            } else if (x != "" && y != "") {
+                if (Num::autoConverts(x, y)) {
+                    r = 1;
+                } else {
+                    return -1;
+                }
+            } else if ((t.kind == TK::Vector || t.kind == TK::Array || t.kind == TK::Slice) && pt.kind == TK::Slice
+                && Ty::unformed(t.args[0]).same(Ty::unformed(pt.args[0]))) {
+                r = 0;
+            } else if (assignable(t, pt)) {
+                r = 2;
+            } else {
+                return -1;
+            }
+        }
+        bool argNullable = a.kind == 0 && Ty::unformed(a.ty).kind == TK::Nullable;
+        if (nullable && !argNullable && r < 3) {
+            return 3;
+        }
+        return r;
+    }
+
+    // Wählt unter den Varianten aus und prüft die Argumente (R-7.17, R-4.44).
+    // recv: 0 this, 1 Objekt, 2 statisch, 3 eingebaut (recvTy ist dann der Typ)
+    (shared Ty, i32) invoke(MethodInfo[] cands, Node args, i32 line, i32 col, i32 recv, shared Ty recvTy, string nm) & {
+        Place? recvPlace = null;
+        if (recv != 2) {
+            recvPlace = take(&pendingRecv);
+        }
+        ArgShape[] shapes = [];
+        for (Node a : args.kids) {
+            shapes.push(argShape(a));
+        }
+        i64 n = args.kids.length;
+        MethodInfo[] viable = [];
+        RankList[] ranks = [];
+        for (MethodInfo m0 : cands) {
+            if (m0.params.length != n) {
+                continue;
+            }
+            (bool ok, MethodInfo m) = instantiate(m0, shapes);
+            if (!ok) {
+                continue;
+            }
+            RankList rl = new RankList();
+            bool fits = true;
+            for (i64 i = 0; i < n; i++) {
+                i32 r = rank(shapes[i], m.params[i].ty);
+                if (r < 0) {
+                    fits = false;
+                    break;
+                }
+                rl.r.push(r);
+            }
+            if (fits) {
+                viable.push(m);
+                ranks.push(rl);
+            }
+        }
+        i64 chosenIdx = 0;
+        if (viable.length == 0) {
+            i64 sameArity = 0;
+            i64 single = -1;
+            for (i64 i = 0; i < cands.length; i++) {
+                if (cands[i].params.length == n) {
+                    sameArity++;
+                    single = i;
+                }
+            }
+            if (sameArity == 1) {
+                // genau eine Variante: den ersten unpassenden Parameter melden
+                (bool ok, MethodInfo m) = instantiate(cands[single], shapes);
+                if (cands[single].tparams.length > 0 && !ok) {
+                    err(line, col, "R-4.44", "die Typargumente von " + nm + " lassen sich nicht ableiten");
+                    return (Ty::error(), factsOf(cands[single]));
+                }
+                i64 id = beginCall();
+                checkArgs(m, args, id);
+                endCall(id);
+                return (m.ret.ty, factsOf(m));
+            }
+            if (sameArity == 0 && cands.length == 1) {
+                string msg = nm + " erwartet " + cands[0].params.length.toString() + " Argumente, nicht " + n.toString();
+                err(line, col, "R-7.17", msg);
+            } else {
+                string rule = "R-7.17";
+                for (Node a : args.kids) {
+                    if (a.kids[0].kind == "lambda") {
+                        rule = "R-10.18";
+                    }
+                }
+                err(line, col, rule, "keine Variante von " + nm + " passt zu den Argumenten");
+            }
+            probeArgs(args);
+            return (Ty::error(), 0);
+        }
+        if (viable.length > 1) {
+            chosenIdx = best(viable, ranks);
+            if (chosenIdx < 0) {
+                err(line, col, "R-7.17", "der Aufruf von " + nm + " ist mehrdeutig");
+                return (Ty::error(), 0);
+            }
+        }
+        MethodInfo chosen = viable[chosenIdx].substituted(new Subst());
+        if (recv == 0) {
+            if (isStatic && !chosen.isStatic) {
+                err(line, col, "R-7.4", nm + " braucht this; statische Methoden haben kein this");
+            }
+            if (!chosen.isStatic && anyOwnLambda()) {
+                err(line, col, "R-10.10", "ein own-Lambda kann this nicht erfassen");
+            }
+        } else if (recv == 1) {
+            if (chosen.isStatic) {
+                err(line, col, "R-7.27", nm + " ist statisch und wird mit :: aufgerufen");
+            }
+        }
+        if (chosen.owner != -1) {
+            checkAccess(chosen.access, chosen.owner, line, col);
+        }
+        if (recv == 3) {
+            builtinConstraints(recvTy, nm, line, col);
+        }
+        i64 id = beginCall();
+        // R-5.10: Der Empfänger ist für die Dauer des Aufrufs geliehen.
+        if (chosen.isStatic) {
+            recvPlace = null;
+        }
+        if (recvPlace != null) {
+            if (chosen.mutThis) {
+                discard writable(recvPlace, line, col, "R-5.10");
+                access(recvPlace, true, line, col);
+            }
+            pushLoan(recvPlace.dup(), chosen.mutThis, UntilKind::Call, id, "R-5.10");
+        }
+        checkArgs(chosen, args, id);
+        endCall(id);
+        // R-5.24: Eine Borrow-Rückgabe gilt als Loan auf den Empfänger.
+        if (chosen.ret.kind == RetKind::Ref) {
+            refCalls.push(posKey(line, col));
+            if (recvPlace != null) {
+                i64 sd = stmtDepth;
+                pushLoan(recvPlace.dup(), chosen.ret.mutable || chosen.mutThis, UntilKind::Stmt, sd, "R-5.24");
+            }
+        }
+        return (chosen.ret.ty, factsOf(chosen));
+    }
+
+    static i32 factsOf(MethodInfo m) {
+        if (m.isNodiscard) {
+            return 1;
+        }
+        return 0;
+    }
+
+    i64 beginCall() & {
+        callSeq++;
+        callMoved.push(new IdList());
+        return callSeq;
+    }
+
+    void endCall(i64 id) & {
+        Loan[] keep = [];
+        for (Loan l : loans) {
+            if (!(l.until == UntilKind::Call && l.depth == id)) {
+                keep.push(l.dup());
+            }
+        }
+        loans = keep;
+        discard callMoved.pop();
+    }
+
+    // Argumente nach der Markierung der Parameter (R-5.8, R-5.9)
+    void checkArgs(MethodInfo m, Node args, i64 callId) & {
+        for (i64 k = 0; k < args.kids.length && k < m.params.length; k++) {
+            ref Node a = args.kids[k];
+            ref Node x = a.kids[0];
+            shared Ty pty = m.params[k].ty;
+            Mode pm = m.params[k].mode;
+            string pn = m.params[k].name;
+            asArgument = true;
+            shared Ty at = expr(x, pty);
+            asArgument = false;
+            bool isLambda = x.kind == "lambda";
+            if (!isLambda) {
+                discard requireE(at, pty, x);
+            }
+            bool bm = a.text == "mut";
+            if (pm == Mode::Mut && !bm && !isLambda && !at.isError()) {
+                err(x.line, x.col, "R-5.9", "der Parameter " + pn + " ist veränderbar geliehen; das Argument braucht &");
+            } else if (pm != Mode::Mut && bm) {
+                err(x.line, x.col, "R-5.9", "der Parameter " + pn + " ist nicht veränderbar geliehen; & ist hier falsch");
+            }
+            // V-9: Ein Parameter vom Typ shared T oder weak T speichert den Wert.
+            bool stores = pm == Mode::Own || (pm == Mode::Read && (Tys::isShared(pty) || Tys::weakInner(pty) != null));
+            if (stores) {
+                string[] a9 = ["V-9"];
+                consume(x, at, pty, "R-5.3", a9);
+            } else if (pm != Mode::Own) {
+                bool mutable = pm == Mode::Mut;
+                Place? pl = placeOf(x);
+                if (pl == null) {
+                    continue;
+                }
+                if (mutable) {
+                    discard writable(pl, x.line, x.col, "R-5.9");
+                    access(pl, true, x.line, x.col);
+                }
+                if (mutable || Tys::core(at).kind != TK::Prim) {
+                    pushLoan(pl.dup(), mutable, UntilKind::Call, callId, "R-5.9");
+                }
+            }
+        }
+    }
+
+    // Setzt die Typargumente einer generischen Methode aus den Argumenten ein (R-4.44, R-7.28)
+    (bool, MethodInfo) instantiate(MethodInfo m, ArgShape[] shapes) {
+        if (m.tparams.length == 0) {
+            return (true, m.substituted(new Subst()));
+        }
+        Subst map = new Subst();
+        for (i64 i = 0; i < shapes.length && i < m.params.length; i++) {
+            shared Ty? at = null;
+            if (shapes[i].kind == 0) {
+                at = shapes[i].ty;
+            } else if (shapes[i].kind == 1) {
+                at = Ty::ofPrim(Num::defaultInt(shapes[i].neg, shapes[i].mag));
+            } else if (shapes[i].kind == 2) {
+                at = Ty::ofPrim("f64");
+            }
+            if (at != null) {
+                unify(m.params[i].ty, at, m.tparams, &map);
+            }
+        }
+        for (i64 t : m.tparams) {
+            if (Program::indexOfInt(map.keys, t) < 0) {
+                return (false, m.substituted(new Subst()));
+            }
+        }
+        return (true, m.substituted(map));
+    }
+
+    // Bindet Typ-Parameter einer generischen Methode an die Typen der Argumente
+    void unify(shared Ty param0, shared Ty arg0, i64[] tps, Subst& map) {
+        shared Ty arg = Ty::unformed(arg0);
+        shared Ty param = Ty::unformed(param0);
+        if (param.kind == TK::Param && Program::indexOfInt(tps, param.id) >= 0) {
+            if (!arg.isError() && Program::indexOfInt(map.keys, param.id) < 0) {
+                map.keys.push(param.id);
+                map.vals.push(arg);
+            }
+            return;
+        }
+        if (param.kind == TK::Nullable && arg.kind == TK::Nullable) {
+            unify(param.args[0], arg.args[0], tps, &map);
+            return;
+        }
+        if (param.kind == TK::Nullable) {
+            unify(param.args[0], arg, tps, &map);
+            return;
+        }
+        bool pv = param.kind == TK::Vector || param.kind == TK::Slice || param.kind == TK::Array;
+        bool av = arg.kind == TK::Vector || arg.kind == TK::Slice || arg.kind == TK::Array;
+        if (pv && av) {
+            unify(param.args[0], arg.args[0], tps, &map);
+            return;
+        }
+        if (param.kind == TK::Tuple && arg.kind == TK::Tuple && param.args.length == arg.args.length) {
+            for (i64 i = 0; i < param.args.length; i++) {
+                unify(param.args[i], arg.args[i], tps, &map);
+            }
+            return;
+        }
+        if (param.kind == TK::Func && arg.kind == TK::Func && param.modes.length == arg.modes.length) {
+            for (i64 i = 0; i < param.args.length; i++) {
+                unify(param.args[i], arg.args[i], tps, &map);
+            }
+            return;
+        }
+        if (param.kind == TK::Named && arg.kind == TK::Named) {
+            shared Ty[] all = [];
+            all.push(arg);
+            for (shared Ty s : p.supertypes(arg)) {
+                all.push(s);
+            }
+            for (shared Ty s : all) {
+                if (s.kind == TK::Named && s.id == param.id) {
+                    for (i64 i = 0; i < param.args.length && i < s.args.length; i++) {
+                        unify(param.args[i], s.args[i], tps, &map);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    // Ist Variante i besser als Variante j (R-7.17)?
+    bool better(MethodInfo[] vm, RankList[] ranks, i64 i, i64 j) {
+        bool strictly = false;
+        for (i64 k = 0; k < ranks[i].r.length; k++) {
+            i32 ra = ranks[i].r[k];
+            i32 rb = ranks[j].r[k];
+            shared Ty pa = vm[i].params[k].ty;
+            shared Ty pb = vm[j].params[k].ty;
+            i32 cmp = 0;
+            if (ra != rb) {
+                cmp = -1;
+                if (ra < rb) {
+                    cmp = 1;
+                }
+            } else if (!Ty::unformed(pa).same(Ty::unformed(pb))) {
+                // speziellerer Typ: lässt sich in den anderen umwandeln
+                bool ab = assignable(pa, pb);
+                bool ba = assignable(pb, pa);
+                if (ab && !ba) {
+                    cmp = 1;
+                } else if (!ab && ba) {
+                    cmp = -1;
+                }
+            }
+            if (cmp < 0) {
+                return false;
+            }
+            if (cmp > 0) {
+                strictly = true;
+            }
+        }
+        return strictly || (vm[i].tparams.length == 0 && vm[j].tparams.length > 0);
+    }
+
+    i64 best(MethodInfo[] vm, RankList[] ranks) {
+        for (i64 i = 0; i < vm.length; i++) {
+            bool all = true;
+            for (i64 j = 0; j < vm.length; j++) {
+                if (i != j && !better(vm, ranks, i, j)) {
+                    all = false;
+                    break;
+                }
+            }
+            if (all) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // ------------------------------------------------------------ new
+
+    shared Ty newObject(shared Ty t, Node args, i32 line, i32 col) & {
+        if (t.kind == TK::Error) {
+            probeArgs(args);
+            return Ty::error();
+        }
+        if (t.kind == TK::Param) {
+            if (!p.tparams[t.id].needsNew) {
+                string msg = "new " + p.tparams[t.id].name + "() verlangt den Constraint new()";
+                err(line, col, "R-7.24", msg);
+            }
+            return t;
+        }
+        if (t.kind != TK::Named) {
+            string msg = "new " + show(t) + " ist nicht möglich";
+            err(line, col, "R-7.5", msg);
+            return Ty::error();
+        }
+        i64 d = t.id;
+        string dn = p.defs[d].name;
+        if (p.defs[d].kind != DefKind::Class) {
+            err(line, col, "R-7.5", dn + " ist keine Klasse");
+            return Ty::error();
+        }
+        if (p.defs[d].isAbstract) {
+            bool inOwnCtor = false;
+            if (frames.length > 0) {
+                i64 tf = top();
+                inOwnCtor = frames[tf].ret != null && (frames[tf].ret?.kind ?? RetKind::Val) == RetKind::Void && cls == d;
+            }
+            if (!inOwnCtor) {
+                err(line, col, "R-7.14", dn + " ist abstrakt");
+                return Ty::error();
+            }
+        }
+        Subst map = p.substMap(d, t.args);
+        if (p.defs[d].ctors.length == 0) {
+            if (args.kids.length > 0) {
+                err(line, col, "R-7.5", dn + " hat keinen Konstruktor mit Parametern");
+            } else if (!p.hasDefaultCtor(d)) {
+                err(line, col, "R-7.5", dn + " hat keinen parameterlosen Konstruktor");
+            }
+            return t;
+        }
+        MethodInfo[] cands = [];
+        bool hasEmpty = false;
+        for (CtorInfo c : p.defs[d].ctors) {
+            MethodInfo m = new MethodInfo(dn, d, new Ret(RetKind::Val, t, false), c.access, c.line, c.col, c.member);
+            for (PInfo x : c.params) {
+                m.params.push(new PInfo(x.name, Ty::subst(x.ty, map), x.mode));
+            }
+            if (c.params.length == 0) {
+                hasEmpty = true;
+            }
+            m.isStatic = true;
+            m.hasBody = true;
+            cands.push(m);
+        }
+        if (args.kids.length == 0 && !hasEmpty) {
+            err(line, col, "R-7.5", dn + " hat keinen parameterlosen Konstruktor");
+            return t;
+        }
+        (shared Ty r, i32 f) = invoke(cands, args, line, col, 2, Ty::error(), dn);
+        return t;
+    }
+
+    // ------------------------------------------------------------ Lambdas
+
+    shared Ty lambda(bool isOwn, Node params, Node body, shared Ty? expected, bool asArg, i32 line, i32 col) & {
+        PInfo[] ps = [];
+        for (Node x : params.kids) {
+            ps.push(paramInfo(x));
+        }
+        shared Ty? exp = null;
+        if (expected != null) {
+            exp = Tys::core(expected);
+        }
+        if (exp != null && exp.kind == TK::Func) {
+            if (!isOwn && !asArg) {
+                err(line, col, "R-10.7", "ein normales Lambda steht nur als Argument oder wird direkt aufgerufen");
+                return Ty::error();
+            }
+            bool ok = exp.modes.length == ps.length;
+            for (i64 i = 0; ok && i < ps.length; i++) {
+                if (exp.modes[i] != ps[i].mode || !(Ty::unformed(exp.args[i]).same(Ty::unformed(ps[i].ty)) || ps[i].ty.isError())) {
+                    ok = false;
+                }
+            }
+            if (!ok) {
+                err(line, col, "R-10.14", "die Parameter des Lambdas passen nicht zum erwarteten Funktionstyp");
+                return Ty::error();
+            }
+            shared Ty r = exp.args[exp.args.length - 1];
+            Ret ret = new Ret(RetKind::Val, r, false);
+            if (r.kind == TK::Void) {
+                ret = new Ret(RetKind::Void, r, false);
+            }
+            discard lambdaBody(isOwn, ps, body, ret, line, col);
+            return exp;
+        }
+        if (exp != null && exp.kind == TK::Error) {
+            discard lambdaBody(isOwn, ps, body, null, line, col);
+            return Ty::error();
+        }
+        if (exp == null || exp.kind == TK::Param) {
+            if (!isOwn && !asArg) {
+                err(line, col, "R-10.4", "ein normales Lambda braucht einen Funktionstyp aus dem Zusammenhang");
+                return Ty::error();
+            }
+            shared Ty r = lambdaBody(isOwn, ps, body, null, line, col);
+            shared Ty[] pts = [];
+            Mode[] modes = [];
+            for (PInfo x : ps) {
+                pts.push(x.ty);
+                modes.push(x.mode);
+            }
+            return Ty::func(pts, modes, r);
+        }
+        string msg = "ein Lambda passt nicht zu " + show(exp);
+        err(line, col, "R-10.14", msg);
+        return Ty::error();
+    }
+
+    // Prüft den Rumpf eines Lambdas; liefert den (abgeleiteten) Rückgabetyp
+    shared Ty lambdaBody(bool isOwn, PInfo[] ps, Node body, own Ret? ret, i32 line, i32 col) & {
+        // R-6.13: Das Lambda sieht die Fakten an seiner Stelle; sein Rumpf ändert den Stand außen nicht.
+        Flow outer = flow.dup();
+        Loan[] outerLoans = [];
+        for (Loan l : loans) {
+            outerLoans.push(l.dup());
+        }
+        loans = [];
+        bool hasRet = ret != null;
+        RetKind rk = ret?.kind ?? RetKind::Void;
+        shared Ty rty = ret?.ty ?? Ty::simple(TK::Void);
+        frames.push(new Frame(ret, isOwn));
+        pushScope();
+        for (PInfo x : ps) {
+            if (findLocal(x.name) >= 0) {
+                err(0, 0, "R-8.17", x.name + " verdeckt eine sichtbare Variable");
+            }
+            discard newLocal(x.name, x.ty, LK::Param, x.mode, false);
+        }
+        shared Ty result = Ty::simple(TK::Void);
+        if (body.kind != "block") {
+            shared Ty? exp = null;
+            if (hasRet && rk == RetKind::Val) {
+                exp = rty;
+            }
+            shared Ty t = expr(body, exp);
+            if (hasRet && rk == RetKind::Val) {
+                if (!assignable(t, rty)) {
+                    string msg = "das Lambda liefert " + show(t) + ", erwartet ist " + show(rty);
+                    err(body.line, body.col, "R-10.14", msg);
+                }
+                result = rty;
+            } else if (hasRet && rk == RetKind::Void) {
+                if (t.kind != TK::Void && !t.isError()) {
+                    string msg = "das Lambda liefert " + show(t) + ", erwartet ist void";
+                    err(body.line, body.col, "R-10.14", msg);
+                }
+                result = Ty::simple(TK::Void);
+            } else {
+                result = t;
+            }
+        } else {
+            bool completes = block(body);
+            if (hasRet && rk == RetKind::Val) {
+                if (completes) {
+                    (i32 el, i32 ec) = blockEnd(body);
+                    err(el, ec, "R-8.26", "das Lambda endet ohne return");
+                }
+                result = rty;
+            } else if (hasRet && rk == RetKind::Void) {
+                result = Ty::simple(TK::Void);
+            } else {
+                shared Ty t = Ty::simple(TK::Void);
+                for (shared Ty x : frames[top()].inferred) {
+                    if (t.kind == TK::Void) {
+                        t = x;
+                    } else {
+                        t = join(t, x) ?? Ty::error();
+                    }
+                }
+                result = t;
+            }
+        }
+        popScope();
+        Frame frame = frames.pop();
+        loans = outerLoans;
+        flow = outer;
+        // R-10.7: Ein Lambda leiht die erfassten Variablen, solange es läuft.
+        for (i64 k = 0; k < frame.capIds.length; k++) {
+            i64 id = frame.capIds[k];
+            bool mutable = frame.capMut[k];
+            if (!mutable && isOwn && id != -1) {
+                i64 li = localById(id);
+                mutable = li >= 0 && movable(locals[li].ty) && !locals[li].isBorrow();
+            }
+            Place place = new Place(id);
+            i64 found = -1;
+            for (i64 i = loans.length - 1; i >= 0; i--) {
+                if (loans[i].conflicts(mutable, place)) {
+                    found = i;
+                    break;
+                }
+            }
+            if (found >= 0) {
+                string how = "lesend";
+                if (loans[found].mutable) {
+                    how = "veränderbar";
+                }
+                string[] a = [loans[found].rule];
+                string msg = "das Lambda verwendet " + loans[found].what + ", das gerade " + how + " geliehen ist";
+                errAlso(line, col, "R-10.7", a, msg);
+            }
+        }
+        // R-10.8: Ein own-Lambda verschiebt erfasste own-Werte in sich.
+        if (isOwn) {
+            for (i64 id : frame.captures) {
+                i64 li = localById(id);
+                if (li < 0) {
+                    continue;
+                }
+                if (locals[li].frame <= frames.length && movable(locals[li].ty) && !locals[li].isBorrow() && !flow.dead) {
+                    flow.moved.put(id, "R-10.8");
+                }
+            }
+        }
+        return result;
+    }
+
+    // ------------------------------------------------------------ Eingebautes
+
+    static MethodInfo builtin(string nm, shared Ty[] types, Mode[] modes, shared Ty ret, bool isNd) {
+        Ret r = new Ret(RetKind::Val, ret, false);
+        if (ret.kind == TK::Void) {
+            r = new Ret(RetKind::Void, ret, false);
+        }
+        MethodInfo m = new MethodInfo(nm, -1, r, Access::Public, 0, 0, 0);
+        for (i64 i = 0; i < types.length; i++) {
+            m.params.push(new PInfo("p" + i.toString(), types[i], modes[i]));
+        }
+        m.mutThis = nm == "push" || nm == "insert" || nm == "pop" || nm == "remove" || nm == "clear" || nm == "sort" || nm == "sortBy";
+        m.isNodiscard = isNd;
+        m.hasBody = true;
+        return m;
+    }
+
+    static MethodInfo[] one(string nm, shared Ty[] types, Mode[] modes, shared Ty ret) {
+        MethodInfo[] out = [];
+        out.push(builtin(nm, types, modes, ret, false));
+        return out;
+    }
+
+    // Eingebaute Methoden der primitiven Typen, von string und der Vektoren (R-13.11 bis R-13.13, R-13.16)
+    (bool, MethodInfo[]) builtinMethods(shared Ty t, string nm) {
+        shared Ty s = Ty::ofPrim("string");
+        shared Ty b = Ty::ofPrim("bool");
+        shared Ty i64t = Ty::ofPrim("i64");
+        shared Ty[] none = [];
+        Mode[] noModes = [];
+        Mode[] r1 = [Mode::Read];
+        Mode[] r2 = [Mode::Read, Mode::Read];
+        MethodInfo[] empty = [];
+        if (t.kind == TK::Prim) {
+            string q = t.prim;
+            if (nm == "toString") {
+                return (true, one(nm, none, noModes, s));
+            }
+            if (Num::isNumeric(q) && nm == "abs") {
+                return (true, one(nm, none, noModes, t));
+            }
+            if (Num::isNumeric(q) && (nm == "min" || nm == "max")) {
+                shared Ty[] ps = [t];
+                return (true, one(nm, ps, r1, t));
+            }
+            if (q == "char" && (nm == "isLetter" || nm == "isDigit" || nm == "isWhitespace" || nm == "isUpper" || nm == "isLower")) {
+                return (true, one(nm, none, noModes, b));
+            }
+            if (q == "char" && (nm == "toUpper" || nm == "toLower")) {
+                return (true, one(nm, none, noModes, t));
+            }
+            if (q == "string") {
+                if (nm == "byteAt") {
+                    shared Ty[] ps = [i64t];
+                    return (true, one(nm, ps, r1, Ty::ofPrim("byte")));
+                }
+                if (nm == "substring") {
+                    shared Ty[] ps = [i64t, i64t];
+                    return (true, one(nm, ps, r2, s));
+                }
+                if (nm == "indexOf") {
+                    shared Ty[] ps = [s];
+                    return (true, one(nm, ps, r1, Ty::nullable(i64t)));
+                }
+                if (nm == "startsWith" || nm == "endsWith" || nm == "contains") {
+                    shared Ty[] ps = [s];
+                    return (true, one(nm, ps, r1, b));
+                }
+                if (nm == "split") {
+                    shared Ty[] ps = [s];
+                    return (true, one(nm, ps, r1, Ty::wrap(TK::Vector, s)));
+                }
+                if (nm == "trim" || nm == "toUpper" || nm == "toLower") {
+                    return (true, one(nm, none, noModes, s));
+                }
+                if (nm == "replace") {
+                    shared Ty[] ps = [s, s];
+                    return (true, one(nm, ps, r2, s));
+                }
+                if (nm == "bytes") {
+                    return (true, one(nm, none, noModes, Ty::wrap(TK::Vector, Ty::ofPrim("byte"))));
+                }
+            }
+            return (false, empty);
+        }
+        if (t.kind == TK::Vector) {
+            shared Ty e = t.args[0];
+            shared Ty voidT = Ty::simple(TK::Void);
+            if (nm == "push") {
+                shared Ty[] ps = [e];
+                Mode[] ms = [Mode::Own];
+                return (true, one(nm, ps, ms, voidT));
+            }
+            if (nm == "insert") {
+                shared Ty[] ps = [i64t, e];
+                Mode[] ms = [Mode::Read, Mode::Own];
+                return (true, one(nm, ps, ms, voidT));
+            }
+            if (nm == "pop") {
+                return (true, one(nm, none, noModes, e));
+            }
+            if (nm == "remove") {
+                shared Ty[] ps = [i64t];
+                return (true, one(nm, ps, r1, e));
+            }
+            if (nm == "clear" || nm == "sort") {
+                return (true, one(nm, none, noModes, voidT));
+            }
+            if (nm == "first" || nm == "last") {
+                MethodInfo f = builtin(nm, none, noModes, Ty::nullable(e), false);
+                f.ret = new Ret(RetKind::Ref, Ty::nullable(e), false);
+                MethodInfo[] out = [];
+                out.push(f);
+                return (true, out);
+            }
+            if (nm == "contains") {
+                shared Ty[] ps = [e];
+                return (true, one(nm, ps, r1, b));
+            }
+            if (nm == "indexOf") {
+                shared Ty[] ps = [e];
+                return (true, one(nm, ps, r1, Ty::nullable(i64t)));
+            }
+            if (nm == "sortBy") {
+                shared Ty[] fps = [e, e];
+                shared Ty f = Ty::func(fps, r2, Ty::ofPrim("i32"));
+                shared Ty[] ps = [f];
+                return (true, one(nm, ps, r1, voidT));
+            }
+        }
+        return (false, empty);
+    }
+
+    // Constraints eingebauter Methoden: sort verlangt Comparable, contains/indexOf Equatable
+    void builtinConstraints(shared Ty t, string nm, i32 line, i32 col) & {
+        if (t.kind != TK::Vector) {
+            return;
+        }
+        shared Ty e = t.args[0];
+        string mixinName = "";
+        if (nm == "sort") {
+            mixinName = "Comparable";
+        } else if (nm == "contains" || nm == "indexOf") {
+            mixinName = "Equatable";
+        } else {
+            return;
+        }
+        i64 md = p.lookupFull("rpp.core." + mixinName);
+        if (md >= 0) {
+            shared Ty[] margs = [Ty::unformed(e)];
+            shared Ty m = Ty::named(md, margs);
+            if (!p.satisfies(Ty::unformed(e), m)) {
+                string msg = nm + " verlangt, dass " + show(e) + " " + mixinName + " erfüllt";
+                err(line, col, "R-13.16", msg);
+            }
+        }
+    }
+
+    (bool, MethodInfo[]) builtinStatics(string q, string nm) {
+        shared Ty s = Ty::ofPrim("string");
+        Mode[] r1 = [Mode::Read];
+        Mode[] r2 = [Mode::Read, Mode::Read];
+        shared Ty[] ps = [s];
+        MethodInfo[] out = [];
+        if (Num::isNumeric(q) && nm == "parse") {
+            out.push(builtin(nm, ps, r1, Ty::ofPrim(q), true));
+            return (true, out);
+        }
+        if (Num::isNumeric(q) && nm == "tryParse") {
+            out.push(builtin(nm, ps, r1, Ty::nullable(Ty::ofPrim(q)), true));
+            return (true, out);
+        }
+        if (q == "string" && nm == "join") {
+            shared Ty[] ps2 = [s, Ty::wrap(TK::Slice, s)];
+            out.push(builtin(nm, ps2, r2, s, false));
+            return (true, out);
+        }
+        if (q == "string" && nm == "fromUtf8") {
+            shared Ty[] ps2 = [Ty::wrap(TK::Slice, Ty::ofPrim("byte"))];
+            out.push(builtin(nm, ps2, r1, s, false));
+            return (true, out);
+        }
+        return (false, out);
+    }
+
+    // print, assert, fail, take, replace, same (R-13.21, R-6.10, R-9.19, V-3, R-4.24)
+    (bool, shared Ty, i32) builtinFunction(string nm, Node args, i32 line, i32 col) & {
+        shared Ty s = Ty::ofPrim("string");
+        i64 n = args.kids.length;
+        if (nm == "print" || nm == "fail") {
+            if (n != 1) {
+                err(line, col, "R-8.16", nm + " erwartet 1 Argumente");
+            }
+            for (Node a : args.kids) {
+                shared Ty t = expr(a.kids[0], s);
+                discard requireE(t, s, a.kids[0]);
+            }
+            if (nm == "fail") {
+                return (true, Ty::simple(TK::Void), 4);
+            }
+            return (true, Ty::simple(TK::Void), 0);
+        }
+        if (nm == "assert") {
+            if (n != 2) {
+                err(line, col, "R-8.16", nm + " erwartet 2 Argumente");
+            }
+            IdSet w = new IdSet();
+            if (n > 0) {
+                (IdSet w2, IdSet f2) = cond(args.kids[0].kids[0]);
+                w = w2;
+            }
+            if (n > 1) {
+                shared Ty t = expr(args.kids[1].kids[0], s);
+                discard requireE(t, s, args.kids[1].kids[0]);
+            }
+            // R-6.10: Nach assert gilt W(c).
+            if (n > 0) {
+                flow.narrow(w);
+            }
+            return (true, Ty::simple(TK::Void), 0);
+        }
+        if (nm == "take") {
+            if (n != 1) {
+                err(line, col, "R-8.16", nm + " erwartet 1 Argumente");
+            }
+            shared Ty t = Ty::error();
+            if (n > 0) {
+                t = fieldArg(args.kids[0].kids[0]);
+            }
+            if (!t.isError() && Ty::unformed(t).kind != TK::Nullable) {
+                err(line, col, "R-5.7", "take verlangt ein nullbares Feld");
+            }
+            return (true, t, 0);
+        }
+        if (nm == "replace") {
+            if (n != 2) {
+                err(line, col, "R-8.16", nm + " erwartet 2 Argumente");
+            }
+            // R-5.7: zuerst der neue Wert, dann der Ort
+            shared Ty t = Ty::error();
+            if (n > 0) {
+                t = probeExpr(args.kids[0].kids[0]);
+            }
+            if (n > 1) {
+                ref Node vx = args.kids[1].kids[0];
+                shared Ty v = expr(vx, t);
+                discard requireE(v, t, vx);
+                string[] a = ["R-5.7"];
+                consume(vx, v, t, "R-5.3", a);
+            }
+            shared Ty ft = Ty::error();
+            if (n > 0) {
+                ft = fieldArg(args.kids[0].kids[0]);
+            }
+            return (true, ft, 0);
+        }
+        if (nm == "same") {
+            if (n != 2) {
+                err(line, col, "R-8.16", nm + " erwartet 2 Argumente");
+            }
+            for (Node a : args.kids) {
+                discard expr(a.kids[0], null);
+            }
+            return (true, Ty::ofPrim("bool"), 0);
+        }
+        return (false, Ty::error(), 0);
+    }
+
+    // Das Feld in take(&x.f) und replace(&x.f, v): ein Ort, der verändert wird (R-5.7)
+    shared Ty fieldArg(Node x) & {
+        shared Ty t = expr(x, null);
+        Place? pl = placeOf(x);
+        if (pl != null) {
+            discard writable(pl, x.line, x.col, "R-5.7");
+            access(pl, true, x.line, x.col);
+        }
+        return t;
+    }
+
+    // ------------------------------------------------------------ Hilfen
+
+    // Text eines einfachen Ausdrucks für Meldungen
+    static string exprText(Node e) {
+        if (e.kind == "name") {
+            return e.text;
+        }
+        if (e.kind == "this") {
+            return "this";
+        }
+        if (e.kind == "paren") {
+            return exprText(e.kids[0]);
+        }
+        if (e.kind == "member") {
+            string sep = ".";
+            if (e.text == "safe") {
+                sep = "?.";
+            }
+            return exprText(e.kids[0]) + sep + e.kids[1].text;
+        }
+        if (e.kind == "index") {
+            return exprText(e.kids[0]) + "[…]";
+        }
+        if (e.kind == "call") {
+            return exprText(e.kids[0]) + "(…)";
+        }
+        return "der Ausdruck";
+    }
+
+    // Enthält die Kette einen sicheren Zugriff ?. (R-6.17)?
+    static bool hasSafeAccess(Node e) {
+        if (e.kind == "member") {
+            return e.text == "safe" || hasSafeAccess(e.kids[0]);
+        }
+        if (e.kind == "call" || e.kind == "paren") {
+            return hasSafeAccess(e.kids[0]);
+        }
+        return false;
+    }
+
+    static bool isTrue(Node e) {
+        return e.kind == "bool" && e.text == "true";
+    }
+
+    // Enthält die Anweisung ein break, das diese Schleife verlässt?
+    static bool containsBreakStmt(Node s) {
+        if (s.kind == "break") {
+            return true;
+        }
+        if (s.kind == "block") {
+            for (Node x : s.kids) {
+                if (containsBreakStmt(x)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (s.kind == "if") {
+            return containsBreakStmt(s.kids[1]) || (s.kids.length > 2 && containsBreakStmt(s.kids[2]));
+        }
+        if (s.kind == "try") {
+            for (Node c : s.kids) {
+                ref Node b = c;
+                if (c.kind == "catch") {
+                    for (Node x : c.kids[2].kids) {
+                        if (containsBreakStmt(x)) {
+                            return true;
+                        }
+                    }
+                } else if (c.kind == "finally") {
+                    for (Node x : c.kids[0].kids) {
+                        if (containsBreakStmt(x)) {
+                            return true;
+                        }
+                    }
+                } else {
+                    for (Node x : c.kids) {
+                        if (containsBreakStmt(x)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        // break in inneren Schleifen und switch gehört diesen
+        return false;
+    }
+
+    // Felder, die die Anweisungen ab Kind from auf jedem Weg setzen (für R-7.7); "*" steht
+    // für „endet nicht normal“ (dann gelten alle als gesetzt).
+    static string[] assignedFields(Node list, i64 from) {
+        string[] set = [];
+        for (i64 i = from; i < list.kids.length; i++) {
+            if (assignedStep(list.kids[i], &set)) {
+                return set;
+            }
+        }
+        return set;
+    }
+
+    static void addField(string[]& set, string n) {
+        if (!Program::hasString(set, n)) {
+            set.push(n);
+        }
+    }
+
+    // eine Anweisung; true, wenn danach nichts mehr zählt
+    static bool assignedStep(Node s, string[]& set) {
+        if (s.kind == "exprstmt" && s.kids[0].kind == "assign") {
+            ref Node target = s.kids[0].kids[0];
+            if (target.kind == "member" && target.kids[0].kind == "this") {
+                addField(&set, target.kids[1].text);
+            } else if (target.kind == "name") {
+                addField(&set, target.text);
+            }
+            return false;
+        }
+        if (s.kind == "block") {
+            for (string x : assignedFields(s, 0)) {
+                addField(&set, x);
+            }
+            return false;
+        }
+        if (s.kind == "if" && s.kids.length > 2) {
+            string[] a = [];
+            discard assignedStep(s.kids[1], &a);
+            string[] b = [];
+            discard assignedStep(s.kids[2], &b);
+            if (Program::hasString(a, "*")) {
+                for (string x : b) {
+                    addField(&set, x);
+                }
+            } else if (Program::hasString(b, "*")) {
+                for (string x : a) {
+                    addField(&set, x);
+                }
+            } else {
+                for (string x : a) {
+                    if (Program::hasString(b, x)) {
+                        addField(&set, x);
+                    }
+                }
+            }
+            return false;
+        }
+        if (s.kind == "return" || s.kind == "throw") {
+            addField(&set, "*");
+            return true;
+        }
+        if (s.kind == "exprstmt" && s.kids[0].kind == "eval") {
+            ref Node e = s.kids[0].kids[0];
+            if (e.kind == "call" && e.kids[0].kind == "name" && e.kids[0].text == "fail") {
+                addField(&set, "*");
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+class RankList {
+public:
+    i32[] r = [];
+}

@@ -1,6 +1,6 @@
 # R++ Spezifikationsgerüst
 
-Stand: 21.11.2026, Entwurf 0.29. Grundlage ist das Dokument „R++ Designentscheidungen“. Dieses Gerüst legt die Kapitelstruktur der Sprachspezifikation fest. Die Grammatik liegt als ausführbare ANTLR4-Datei im Projektdokument „RPP.g4“ vor und ist mit einem Testlauf geprüft (siehe Abschnitt 3.4).
+Stand: 22.11.2026, Entwurf 0.47. Grundlage ist das Dokument „R++ Designentscheidungen“. Dieses Gerüst legt die Kapitelstruktur der Sprachspezifikation fest. Die Grammatik liegt als ausführbare ANTLR4-Datei im Projektdokument „RPP.g4“ vor und ist mit einem Testlauf geprüft (siehe Abschnitt 3.4).
 
 ## Konventionen
 
@@ -144,7 +144,7 @@ Die im Entwurf vermuteten Mehrdeutigkeiten sind wie folgt aufgelöst. ANTLR meld
 
 ### 3.4 Testlauf
 
-Stand des letzten Laufs: 18 positive Dateien, 127 negative Tests, 80 Lesarten, 242 Konformitätstests (nur Syntax; 233 von 244 Regeln genannt, 11 begründet ohne Test); 0 Fehler, 0 unerwartete Mehrdeutigkeiten. Erzeugt wurde der Parser mit antlr-ng 1.0.10 (Python-Ziel); mit dem Java-Werkzeug von ANTLR ist die Grammatik nicht getestet. Dieselben Fälle liest der Rust-Parser `rppc` (Meilenstein M1) mit demselben Ergebnis.
+Stand des letzten Laufs: 18 positive Dateien, 127 negative Tests, 80 Lesarten, 258 Konformitätstests (Syntax; 234 von 245 Regeln genannt, 11 begründet ohne Test); 0 Fehler, 0 unerwartete Mehrdeutigkeiten. Erzeugt wurde der Parser mit antlr-ng 1.0.10 (Python-Ziel); mit dem Java-Werkzeug von ANTLR ist die Grammatik nicht getestet. Dieselben Fälle liest der Rust-Parser `rppc` (Meilenstein M1) mit demselben Ergebnis.
 
 Regeln, die die Grammatik nicht ausdrückt und die ein späterer Prüfschritt übernehmen muss:
 
@@ -181,6 +181,6 @@ Die dabei nötigen Festlegungen V-1 bis V-11 und die Schreibweise `ref` für ben
 
 ## Nächste Schritte
 
-1. Ein Testverzeichnis für die Konformitätstests festlegen, damit R-11.19 und R-11.20 prüfbar werden.
-2. Erste Implementierung in Rust nach „R++ Implementierungsplan“ fortsetzen: M1 (Syntax) ist fertig, als Nächstes M2 (Projekte, Namensauflösung, Typprüfung).
+1. M6 fortsetzen: Die ganze Prüfung in R++ (`rpp-compiler/`: Lexer, Präprozessor, Parser, Projekte, Deklarationen, Rümpfe mit Flussanalyse) ist fertig und gleichwertig zu `rppc`. Als Nächstes die Angaben für die Ausführung und ein Codegenerator, damit sich der Compiler selbst übersetzen kann; dazu die Laufzeit der Prüfung im Interpreter (Fixpunkt an verschachtelten Schleifen). Offen aus M5 sind Typargumente generischer Methoden zur Laufzeit.
+2. Ein Bibliotheksverzeichnis für die Konformitätstests festlegen, damit R-11.19 und R-11.20 prüfbar werden.
 3. Satz 5.1 maschinell beweisen (Coq, Lean oder Isabelle); das ausführbare Modell dient dabei als Referenz.

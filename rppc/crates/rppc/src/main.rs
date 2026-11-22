@@ -4,8 +4,22 @@
 //!   rppc parse [--symbols a,b,…] DATEI…   eine oder mehrere Dateien parsen
 //!   rppc syntaxtest [WURZEL]              alle Grammatik- und Konformitätstests auf Syntax prüfen
 //!
+//! Meilenstein M2:
+//!   rppc check DATEI|PROJEKT              Namen und Typen prüfen
+//!   rppc test [-v] [WURZEL]               Konformitätstests semantisch prüfen
+//!
+//! Meilenstein M6 (Vergleich mit dem Lexer in R++):
+//!   rppc tokens DATEI                     Tokens ausgeben, eine Zeile je Token
+//!   rppc pre SYMBOLE DATEI                bedingte Kompilierung anwenden (Symbole mit Komma)
+//!   rppc ast SYMBOLE DATEI                Syntaxbaum in Textform (oder der erste Fehler)
+//!
+//! Meilenstein M4:
+//!   rppc run [--release] [--pruefen] DATEI|PROJEKT [-- ARGUMENTE…]   Programm ausführen (Debug-Interpreter)
+//!
 //! WURZEL ist das Verzeichnis, das `rpp-grammatik/` und `konformitaet/` enthält.
 
+mod conftest;
+mod defsdump;
 mod syntaxtest;
 
 use std::collections::HashSet;
@@ -59,6 +73,138 @@ fn run() -> ExitCode {
                 ExitCode::SUCCESS
             }
         }
+        Some("run") => {
+            let mut release = false;
+            let mut check = false;
+            let mut input = None;
+            let mut prog_args = Vec::new();
+            let mut rest = args[1..].iter();
+            while let Some(a) = rest.next() {
+                match a.as_str() {
+                    "--release" => release = true,
+                    "--pruefen" => check = true,
+                    "--" => {
+                        prog_args.extend(rest.by_ref().cloned());
+                    }
+                    _ if input.is_none() => input = Some(PathBuf::from(a)),
+                    _ => prog_args.push(a.clone()),
+                }
+            }
+            let Some(input) = input else { return usage() };
+            let mut stdin = String::new();
+            let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin);
+            match conftest::execute(&input, release, check, prog_args, stdin) {
+                Ok(o) => {
+                    print!("{}", o.stdout);
+                    eprint!("{}", o.stderr);
+                    ExitCode::from(o.exit as u8)
+                }
+                Err(diags) => {
+                    for d in diags {
+                        println!("{d}");
+                    }
+                    ExitCode::from(1)
+                }
+            }
+        }
+        Some("pre") => match (args.get(1), args.get(2)) {
+            (Some(list), Some(p)) => {
+                let symbols: HashSet<String> = list.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect();
+                let source = match std::fs::read_to_string(p) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("{p}: {e}");
+                        return ExitCode::from(1);
+                    }
+                };
+                // dieselbe Form wie rpp-compiler (rppcc pre): Text oder "Zeile N: Meldung"
+                match rpp_syntax::preprocess::preprocess(&source, &symbols) {
+                    Ok(text) => println!("{text}"),
+                    Err(e) => println!("Zeile {}: {}", e.line, e.message),
+                }
+                ExitCode::SUCCESS
+            }
+            _ => usage(),
+        },
+        Some("projekt") => {
+            // geladene Projekte, Dateien und Meldungen; dieselbe Form wie rpp-compiler (rppcc projekt)
+            let release = args.get(1).is_some_and(|a| a == "--release");
+            let rest = &args[if release { 2 } else { 1 }..];
+            let (Some(std_dir), Some(input)) = (rest.first(), rest.get(1)) else { return usage() };
+            print!("{}", projekt(std::path::Path::new(input), std::path::Path::new(std_dir), release));
+            ExitCode::SUCCESS
+        }
+        Some("pruefe") => {
+            // alle Meldungen der Prüfung (rppcc pruefe)
+            let (Some(std_dir), Some(input)) = (args.get(1), args.get(2)) else { return usage() };
+            print!("{}", defsdump::pruefe(std::path::Path::new(input), std::path::Path::new(std_dir)));
+            ExitCode::SUCCESS
+        }
+        Some("defs") => {
+            // Deklarationstabellen und Meldungen der Deklarationsphase (rppcc defs)
+            let release = args.get(1).is_some_and(|a| a == "--release");
+            let rest = &args[if release { 2 } else { 1 }..];
+            let (Some(std_dir), Some(input)) = (rest.first(), rest.get(1)) else { return usage() };
+            print!("{}", defsdump::defs(std::path::Path::new(input), std::path::Path::new(std_dir), release));
+            ExitCode::SUCCESS
+        }
+        Some("ast") => match (args.get(1), args.get(2)) {
+            (Some(list), Some(p)) => {
+                let symbols: HashSet<String> = list.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect();
+                let source = match std::fs::read_to_string(p) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("{p}: {e}");
+                        return ExitCode::from(1);
+                    }
+                };
+                // dieselbe Form wie rpp-compiler (rppcc ast): Syntaxbaum oder "Zeile l:c Meldung"
+                match rpp_syntax::parse(&source, &symbols) {
+                    Ok(u) => print!("{}", rpp_syntax::dump::unit(&u)),
+                    Err(e) => println!("{e}"),
+                }
+                ExitCode::SUCCESS
+            }
+            _ => usage(),
+        },
+        Some("tokens") => match args.get(1) {
+            Some(p) => {
+                let source = match std::fs::read_to_string(p) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("{p}: {e}");
+                        return ExitCode::from(1);
+                    }
+                };
+                // eine Zeile je Token, dieselbe Form wie rpp-compiler (rppcc tokens)
+                for t in rpp_syntax::lexer::lex(&source) {
+                    use rpp_syntax::lexer::TokenKind as K;
+                    let pos = format!("{}:{}", t.span.line, t.span.col);
+                    match t.kind {
+                        K::Keyword(k) => println!("{pos} kw {}", k.as_str()),
+                        K::Ident(s) => println!("{pos} id {s}"),
+                        K::Int(s) => println!("{pos} int {s}"),
+                        K::Float(s) => println!("{pos} float {s}"),
+                        K::Str(s) => println!("{pos} str {s}"),
+                        K::Char(s) => println!("{pos} char {s}"),
+                        K::Punct(p) => println!("{pos} punct {}", p.as_str()),
+                        K::Error(s) => println!("{pos} error {s}"),
+                        K::Eof => println!("{pos} eof"),
+                    }
+                }
+                ExitCode::SUCCESS
+            }
+            None => usage(),
+        },
+        Some("check") => match args.get(1) {
+            Some(p) => conftest::check(&PathBuf::from(p)),
+            None => usage(),
+        },
+        Some("test") => {
+            let verbose = args.iter().any(|a| a == "-v");
+            let root = args.iter().skip(1).find(|a| *a != "-v").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".."));
+            conftest::run(&root, verbose)
+        }
         Some("syntaxtest") => {
             let root = args.get(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".."));
             syntaxtest::run(&root)
@@ -75,4 +221,60 @@ fn main() -> ExitCode {
         .expect("Thread starten")
         .join()
         .unwrap_or(ExitCode::from(101))
+}
+
+/// Textform eines geladenen Arbeitsbereichs (Vergleich mit `rppcc projekt`, Meilenstein M6).
+fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) -> String {
+    use rpp_sema::project::{slash_path, ProjectKind, Workspace};
+    use std::fmt::Write;
+    let ws = Workspace::load_mode(input, std_dir, release);
+    let mut out = String::new();
+    for (i, p) in ws.projects.iter().enumerate() {
+        let kind = if p.kind == ProjectKind::Executable { "programm" } else { "bibliothek" };
+        let mut flags = String::new();
+        if p.is_std {
+            flags.push_str(" std");
+        }
+        if p.single_file {
+            flags.push_str(" einzeldatei");
+        }
+        let _ = writeln!(out, "projekt {i} {} {kind}{flags} {}", p.name, slash_path(&p.dir));
+        if let Some(m) = &p.main_file {
+            let _ = writeln!(out, "  main {}", slash_path(m));
+        }
+        if !p.deps.is_empty() {
+            let deps: Vec<String> = p.deps.iter().map(|d| d.to_string()).collect();
+            let _ = writeln!(out, "  abhängig {}", deps.join(" "));
+        }
+    }
+    for f in &ws.files {
+        let pkg = f.package();
+        use rpp_syntax::ast::TopDecl;
+        let has_main = f.unit.decls.iter().any(|d| matches!(d, TopDecl::Main(_)));
+        let types: Vec<&str> = f
+            .unit
+            .decls
+            .iter()
+            .filter_map(|d| match d {
+                TopDecl::Class(c) => Some(c.name.name.as_str()),
+                TopDecl::Mixin(m) => Some(m.name.name.as_str()),
+                TopDecl::Enum(e) => Some(e.name.name.as_str()),
+                TopDecl::Main(_) => None,
+            })
+            .collect();
+        let _ = writeln!(
+            out,
+            "datei {} projekt={} paket={} erwartet={} typen={}{}",
+            slash_path(&f.path),
+            f.project,
+            if pkg.is_empty() { "-" } else { &pkg },
+            f.expected_package.as_deref().map_or("-", |e| if e.is_empty() { "." } else { e }),
+            if types.is_empty() { "-".to_string() } else { types.join(",") },
+            if has_main { " main" } else { "" }
+        );
+    }
+    for d in &ws.diags {
+        let _ = writeln!(out, "fehler {}:{}:{} [{}] {}", slash_path(&d.file), d.span.line, d.span.col, d.rule, d.message);
+    }
+    out
 }

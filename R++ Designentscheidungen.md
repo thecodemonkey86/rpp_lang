@@ -391,4 +391,26 @@ Entschieden am 21.11.2026; Einzelheiten in „R++ Implementierungsplan“.
 - [E] Aufbau und Meilensteine nach „R++ Implementierungsplan“ (angenommen am 21.11.2026 mit dem Beginn von M1): Cargo-Workspace `rppc/`, Parser von Hand (rekursiver Abstieg und Vorrangparser), gemeinsame Zwischenrepräsentation, Interpreter mit Prüfmodus für die Invarianten aus Kapitel 5, Meilensteine M1 bis M6.
 - [E] Die negativen Grammatiktests und die Lesarten liegen als Dateien in `rpp-grammatik/tests/neg` und `tests/lesarten`; der ANTLR-Testlauf und der Rust-Parser lesen dieselben Dateien.
 - [E] Meilenstein M1 ist abgeschlossen: Der Rust-Parser erkennt dieselbe Sprache wie `RPP.g4`, geprüft mit allen Grammatik- und Konformitätstests und einem Differenztest an mutierten Programmen.
-
+- [E] Meilenstein M2 ist abgeschlossen: Projekte, Namensauflösung und Typprüfung; alle Konformitätstests außer denen für M3 bestehen.
+- [E] V-4.13 (angenommen am 21.11.2026): Klarstellung zu R-4.12, dass bei zwei Ganzzahlen nur Ganzzahltypen gemeinsamer Typ sein können (sonst hätte `i32`, `ui32` keinen).
+- [E] V-8.3 (angenommen am 21.11.2026): Eine Klassenmethode, die eine `nodiscard`-Anforderung erfüllt, muss `nodiscard` nicht wiederholen; ihr Ergebnis bleibt `nodiscard`.
+- [E] Meilenstein M3, erster Teil: Flussanalyse für Verengung, sichere Initialisierung, Moves und Borrows sowie Warnungen; alle 242 Konformitätstests bestehen. Offen ist der Vergleich mit dem FR++-Modell.
+- [E] V-12 (Kapitel 5, angenommen am 21.11.2026): Ein Zweig, der nicht normal endet, trägt zum Zustand nach `if`, `switch`, Schleife oder `try` nichts bei, wie bei der Verengung (R-6.8).
+- [E] V-6.1 (Kapitel 6, angenommen am 21.11.2026): Für R-6.3, R-6.16 und R-6.18 zählt bei Variablen der deklarierte Typ; eine Verengung macht `v?.m()`, `v ?? w` und `v == null` nicht zum Fehler.
+- [E] V-14.2 (Kapitel 14, angenommen am 21.11.2026): Eine Meldung darf neben der verletzten Regel begründende Regeln nennen; ein abgelehnter Test ist erfüllt, wenn eine davon die erwartete ist.
+- [E] Meilenstein M3 ist abgeschlossen: Flussanalyse in `rppc`, alle Konformitätstests bestehen, und `rppc` beurteilt übersetzte FR++-Programme wie das Modell (5000 Zufallsprogramme ohne Abweichung).
+- [E] V-13 (Kapitel 5, angenommen am 21.11.2026): Ein `own`-Wert an einem `weak`-Ziel ist ein Fehler (R-4.41); `weak` entsteht nur aus `shared` oder `weak`.
+- [E] Meilenstein M4 ist begonnen: Debug-Interpreter `rpp-interp`, `rppc run`; alle Laufzeittests außer zweien, die eingebaute Teile der Bibliothek brauchen (M5), bestehen in beiden Modi.
+- [E] V-14 (Kapitel 5, angenommen am 22.11.2026): Lesart von V-7 bei Vererbung – erst alle Destruktoren (Klasse bis Basis), dann alle Felder in umgekehrter Reihenfolge; ebenso beim Aufräumen nach einem werfenden Konstruktor.
+- [E] Implementierungsplan (angenommen am 22.11.2026): Die Zwischenrepräsentation kommt erst mit JIT bzw. Releasemodus; bis dahin führt der Interpreter den geprüften AST aus.
+- [E] Meilenstein M4 ist abgeschlossen: Debug-Interpreter mit Prüfmodus für die Invarianten aus Kapitel 5; alle Laufzeittests mit `print` und `rpp.core` bestehen in beiden Modi; Ausführung gleich wie im FR++-Modell bis auf einen erklärten Fall.
+- [E] Meilenstein M5, erster Teil: eingebaute Teile der Standardbibliothek im Interpreter; alle 245 Konformitätstests bestehen in beiden Modi.
+- [E] V-15 (Kapitel 5, angenommen am 22.11.2026): Ein `own`-Objekt einer Klasse ohne Destruktor lässt sich mit `(K k, V v) = e;` in seine Felder zerlegen (R-5.25); Moves aus einzelnen Feldern bleiben verboten (V-3).
+- [E] Meilenstein M5 ist abgeschlossen: Standardbibliothek eingebaut, Typargumente zur Laufzeit, Hash-Index; alle 255 Konformitätstests bestehen in beiden Modi.
+- [E] V-14.3 (Kapitel 14, angenommen am 22.11.2026): Laufzeittests laufen in einem frischen, leeren Arbeitsverzeichnis, das sie beschreiben dürfen.
+- [E] Meilenstein M6 ist begonnen: Der Compiler in R++ entsteht in `rpp-compiler/`, Schritt für Schritt und jeweils gegen `rppc` verglichen; erster Teil ist der Lexer.
+- [E] M6: Der Parser in R++ baut einen einheitlichen Syntaxbaum (Art, Text, Position, Kinder) statt einer Klasse je Knotenart; verglichen wird über eine gemeinsame Textform.
+- [E] M6: Das Laden von Projekten ist nach R++ übertragen und gleichwertig zu `rppc`; falsche Formen in `rpp.yaml` (keine Liste, kein Text) sind Fehler nach R-11.13.
+- [E] V-13.8 (Kapitel 13, angenommen am 22.11.2026): `File::exists(path)` und `Path::absolute(p)` in `rpp.io`.
+- [E] M6: Die Deklarationsphase ist nach R++ übertragen; Typen sind dort unveränderliche, geteilte Werte (`shared Ty`).
+- [E] M6: Die Prüfung der Rümpfe ist nach R++ übertragen; der Prüfer besitzt das Programm und leiht die Syntaxbäume. Die Angaben für die Ausführung folgen mit dem Codegenerator.

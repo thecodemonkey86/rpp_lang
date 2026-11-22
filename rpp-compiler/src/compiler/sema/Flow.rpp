@@ -1,0 +1,325 @@
+// Zustand der Flussanalyse, gleichwertig zu rppc/crates/rpp-sema/src/flow.rs: Typverengung
+// (Kapitel 6), sichere Initialisierung (R-4.46), Moves (Kapitel 5) und Loans.
+// Mengen und Zuordnungen über Variablennummern sind sortierte Listen.
+package compiler.sema;
+
+// Menge von Variablennummern (sortiert)
+export class IdSet {
+public:
+    i64[] items = [];
+
+    bool has(i64 x) {
+        for (i64 y : items) {
+            if (y == x) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void add(i64 x) & {
+        i64 at = 0;
+        while (at < items.length && items[at] < x) {
+            at++;
+        }
+        if (at < items.length && items[at] == x) {
+            return;
+        }
+        items.insert(at, x);
+    }
+
+    // entfernt x; true, wenn es enthalten war
+    bool remove(i64 x) & {
+        for (i64 i = 0; i < items.length; i++) {
+            if (items[i] == x) {
+                discard items.remove(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    IdSet dup() {
+        IdSet c = new IdSet();
+        for (i64 x : items) {
+            c.items.push(x);
+        }
+        return c;
+    }
+
+    bool same(IdSet o) {
+        if (items.length != o.items.length) {
+            return false;
+        }
+        for (i64 i = 0; i < items.length; i++) {
+            if (items[i] != o.items[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static IdSet inter(IdSet a, IdSet b) {
+        IdSet c = new IdSet();
+        for (i64 x : a.items) {
+            if (b.has(x)) {
+                c.items.push(x);
+            }
+        }
+        return c;
+    }
+
+    static IdSet unite(IdSet a, IdSet b) {
+        IdSet c = a.dup();
+        for (i64 x : b.items) {
+            c.add(x);
+        }
+        return c;
+    }
+
+    // a ohne b
+    static IdSet minus(IdSet a, IdSet b) {
+        IdSet c = new IdSet();
+        for (i64 x : a.items) {
+            if (!b.has(x)) {
+                c.items.push(x);
+            }
+        }
+        return c;
+    }
+}
+
+// Zuordnung Variablennummer → Regel (sortiert nach Nummer)
+export class IdMap {
+public:
+    i64[] keys = [];
+    string[] vals = [];
+
+    i64 find(i64 k) {
+        for (i64 i = 0; i < keys.length; i++) {
+            if (keys[i] == k) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    bool has(i64 k) {
+        return find(k) >= 0;
+    }
+
+    void put(i64 k, string v) & {
+        i64 at = 0;
+        while (at < keys.length && keys[at] < k) {
+            at++;
+        }
+        if (at < keys.length && keys[at] == k) {
+            vals[at] = v;
+            return;
+        }
+        keys.insert(at, k);
+        vals.insert(at, v);
+    }
+
+    // entfernt k und liefert seinen Wert; "" , wenn es fehlte
+    string take(i64 k) & {
+        i64 i = find(k);
+        if (i < 0) {
+            return "";
+        }
+        discard keys.remove(i);
+        return vals.remove(i);
+    }
+
+    IdMap dup() {
+        IdMap c = new IdMap();
+        for (i64 i = 0; i < keys.length; i++) {
+            c.keys.push(keys[i]);
+            c.vals.push(vals[i]);
+        }
+        return c;
+    }
+
+    bool sameKeys(IdMap o) {
+        if (keys.length != o.keys.length) {
+            return false;
+        }
+        for (i64 i = 0; i < keys.length; i++) {
+            if (keys[i] != o.keys[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+export class Flow {
+public:
+    // nicht erreichbar (nach return, throw, break, continue, fail)
+    bool dead = false;
+    // verengte nullbare Variablen (R-6.5)
+    IdSet nonnull = new IdSet();
+    // warum eine Variable nicht (mehr) verengt ist
+    IdMap lost = new IdMap();
+    // möglicherweise noch nicht zugewiesen (R-4.46)
+    IdSet unassigned = new IdSet();
+    // möglicherweise verschoben, mit der Regel, die den Move begründet
+    IdMap moved = new IdMap();
+
+    static Flow deadFlow() {
+        Flow f = new Flow();
+        f.dead = true;
+        return f;
+    }
+
+    Flow dup() {
+        Flow c = new Flow();
+        c.dead = dead;
+        c.nonnull = nonnull.dup();
+        c.lost = lost.dup();
+        c.unassigned = unassigned.dup();
+        c.moved = moved.dup();
+        return c;
+    }
+
+    // Vereinigung zweier Stände; nullRule begründet den Verlust einer Verengung, die nur
+    // auf einem Weg galt, moveRule einen Move, der nur auf einem Weg geschah.
+    Flow join(Flow o, string nullRule, string moveRule) {
+        if (dead) {
+            return o.dup();
+        }
+        if (o.dead) {
+            return dup();
+        }
+        Flow r = new Flow();
+        r.nonnull = IdSet::inter(nonnull, o.nonnull);
+        r.lost = o.lost.dup();
+        for (i64 i = 0; i < lost.keys.length; i++) {
+            r.lost.put(lost.keys[i], lost.vals[i]);
+        }
+        for (i64 x : nonnull.items) {
+            if (!o.nonnull.has(x)) {
+                r.lost.put(x, nullRule);
+            }
+        }
+        for (i64 x : o.nonnull.items) {
+            if (!nonnull.has(x)) {
+                r.lost.put(x, nullRule);
+            }
+        }
+        r.moved = o.moved.dup();
+        for (i64 i = 0; i < moved.keys.length; i++) {
+            r.moved.put(moved.keys[i], moved.vals[i]);
+        }
+        for (i64 i = 0; i < r.moved.keys.length; i++) {
+            i64 k = r.moved.keys[i];
+            if (moved.has(k) != o.moved.has(k) && r.moved.vals[i] == "R-5.3") {
+                r.moved.vals[i] = moveRule;
+            }
+        }
+        r.unassigned = IdSet::unite(unassigned, o.unassigned);
+        return r;
+    }
+
+    // gleiche Fakten (für den Fixpunkt an Schleifenköpfen)
+    bool same(Flow o) {
+        return dead == o.dead && nonnull.same(o.nonnull) && unassigned.same(o.unassigned) && moved.sameKeys(o.moved);
+    }
+
+    void narrow(IdSet ids) & {
+        if (!dead) {
+            for (i64 x : ids.items) {
+                nonnull.add(x);
+            }
+        }
+    }
+
+    void unnarrow(i64 id, string rule) & {
+        if (nonnull.remove(id) || !lost.has(id)) {
+            lost.put(id, rule);
+        }
+    }
+}
+
+// Ein Ort: eine Variable mit Feldnamen; "[]" steht für ein Element. Wurzel -1 ist this.
+export class Place {
+public:
+    i64 root;
+    string[] path = [];
+    constructor(i64 root) {
+        this.root = root;
+    }
+    Place child(string name) {
+        Place p = new Place(root);
+        for (string s : path) {
+            p.path.push(s);
+        }
+        p.path.push(name);
+        return p;
+    }
+    Place dup() {
+        Place p = new Place(root);
+        for (string s : path) {
+            p.path.push(s);
+        }
+        return p;
+    }
+    bool prefixOf(Place o) {
+        if (path.length > o.path.length) {
+            return false;
+        }
+        for (i64 i = 0; i < path.length; i++) {
+            if (path[i] != o.path[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+// Wie lange ein Loan besteht
+export enum UntilKind {
+    // bis zum Ende des Blocks dieser Tiefe
+    Block,
+    // bis zum Ende der Anweisung dieser Tiefe
+    Stmt,
+    // bis zum Ende dieses Aufrufs
+    Call,
+}
+
+// Ein aktiver Borrow
+export class Loan {
+public:
+    bool mutable;
+    Place place;
+    // Die Wurzel ist eine shared-Variable: Dann überlappen alle Orte mit dieser Wurzel.
+    bool sharedRoot;
+    UntilKind until;
+    i64 depth;
+    // Regel, gegen die ein Zugriff während des Loans verstößt
+    string rule;
+    // Name des Orts für Meldungen
+    string what;
+
+    constructor(bool mutable, own Place place, bool sharedRoot, UntilKind until, i64 depth, string rule, string what) {
+        this.mutable = mutable;
+        this.place = place;
+        this.sharedRoot = sharedRoot;
+        this.until = until;
+        this.depth = depth;
+        this.rule = rule;
+        this.what = what;
+    }
+
+    Loan dup() {
+        return new Loan(mutable, place.dup(), sharedRoot, until, depth, rule, what);
+    }
+
+    // erlaubt_L(κ, p) für diesen einen Loan
+    bool conflicts(bool m, Place p) {
+        if (!m && !mutable) {
+            return false;
+        }
+        return p.root == place.root && (sharedRoot || p.prefixOf(place) || place.prefixOf(p));
+    }
+}

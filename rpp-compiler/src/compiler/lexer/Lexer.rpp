@@ -1,0 +1,294 @@
+// Lexer für R++ (Kapitel 2 des Spezifikationsgerüsts), gleichwertig zu
+// rppc/crates/rpp-syntax/src/lexer.rs: Zeilen ab 1, Spalten ab 0 in Zeichen;
+// ein Zeichen, das kein Token beginnt, wird ein Fehler-Token, danach endet die Zerlegung.
+package compiler.lexer;
+
+using rpp.collections.Set;
+
+export class Lexer {
+private:
+    char[] chars = [];
+    i64 pos = 0;
+    i32 line = 1;
+    i32 col = 0;
+    Set<string> keywords = new Set<string>();
+    // längste zuerst: der größte Treffer gewinnt; << und >> gibt es nicht als Token
+    string[] puncts = [
+        "?.", "??", "::", "..", "++", "--", "&&", "||", "==", "!=", "<=", ">=",
+        "+=", "-=", "*=", "/=", "%=", "=>",
+        "{", "}", "(", ")", "[", "]", ";", ",", ".", "?", ":", "=", "<", ">",
+        "+", "-", "*", "/", "%", "!", "~", "&", "|", "^"
+    ];
+
+    // Zeichen an pos + offset; hinter dem Ende '\0' (dann ist inside(offset) falsch)
+    char at(i64 offset) {
+        i64 i = pos + offset;
+        if (i < chars.length) {
+            return chars[i];
+        }
+        return '\0';
+    }
+
+    bool inside(i64 offset) {
+        return pos + offset < chars.length;
+    }
+
+    void advance() & {
+        char c = chars[pos];
+        pos++;
+        if (c == '\n') {
+            line++;
+            col = 0;
+        } else {
+            col++;
+        }
+    }
+
+    string take(i64 n) & {
+        string s = "";
+        for (i64 i = 0; i < n; i++) {
+            s = s + chars[pos].toString();
+            advance();
+        }
+        return s;
+    }
+
+    static bool identStart(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    }
+
+    static bool identChar(char c) {
+        return identStart(c) || (c >= '0' && c <= '9');
+    }
+
+    static bool digit(char c, bool hex) {
+        if (c >= '0' && c <= '9') {
+            return true;
+        }
+        return hex && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'));
+    }
+
+    // Leerraum und Kommentare überspringen; ein offener Blockkommentar ist ein Fehler.
+    Token? skipTrivia() & {
+        while (true) {
+            char c = at(0);
+            if (inside(0) && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) {
+                advance();
+            } else if (c == '/' && at(1) == '/') {
+                while (inside(0) && at(0) != '\r' && at(0) != '\n') {
+                    advance();
+                }
+            } else if (c == '/' && at(1) == '*') {
+                i32 l = line;
+                i32 k = col;
+                advance();
+                advance();
+                while (true) {
+                    if (!inside(0)) {
+                        return new Token(Kind::Error, "Kommentar ohne '*/'", l, k);
+                    }
+                    if (at(0) == '*' && at(1) == '/') {
+                        advance();
+                        advance();
+                        break;
+                    }
+                    advance();
+                }
+            } else {
+                return null;
+            }
+        }
+    }
+
+    // Länge einer Ziffernfolge ab offset: [0-9] ([0-9_]* [0-9])? bzw. hexadezimal
+    i64 digitsLen(i64 offset, bool hex) {
+        if (!inside(offset) || !digit(at(offset), hex)) {
+            return 0;
+        }
+        i64 end = offset + 1;
+        i64 last = end;
+        while (inside(end)) {
+            char c = at(end);
+            if (digit(c, hex)) {
+                end++;
+                last = end;
+            } else if (c == '_') {
+                end++;
+            } else {
+                break;
+            }
+        }
+        return last - offset;
+    }
+
+    Token number(i32 l, i32 k) & {
+        if (at(0) == '0' && at(1) == 'x') {
+            i64 hex = digitsLen(2, true);
+            if (hex > 0) {
+                return new Token(Kind::Int, take(2 + hex), l, k);
+            }
+        }
+        i64 n = digitsLen(0, false);
+        // FloatLiteral : Digits '.' Digits ([eE] [+-]? Digits)?
+        if (at(n) == '.') {
+            i64 frac = digitsLen(n + 1, false);
+            if (frac > 0) {
+                i64 m = n + 1 + frac;
+                if (at(m) == 'e' || at(m) == 'E') {
+                    i64 sign = 0;
+                    if (at(m + 1) == '+' || at(m + 1) == '-') {
+                        sign = 1;
+                    }
+                    i64 exp = digitsLen(m + 1 + sign, false);
+                    if (exp > 0) {
+                        m = m + 1 + sign + exp;
+                    }
+                }
+                return new Token(Kind::Float, take(m), l, k);
+            }
+        }
+        return new Token(Kind::Int, take(n), l, k);
+    }
+
+    // Länge eines Elements eines String- oder Zeichenliterals ab n; 0, wenn keins folgt
+    i64 element(i64 n, char quote) {
+        if (!inside(n)) {
+            return 0;
+        }
+        char c = at(n);
+        if (c == '\\') {
+            if (inside(n + 1)) {
+                return 2;
+            }
+            return 0;
+        }
+        if (c != quote && c != '\r' && c != '\n') {
+            return 1;
+        }
+        return 0;
+    }
+
+    // StringLiteral : '"' (~["\\\r\n] | '\\' .)* '"'
+    // CharLiteral   : '\'' (~['\\\r\n] | '\\' .) '\''
+    Token quoted(char quote, bool many, i32 l, i32 k) & {
+        i64 n = 1;
+        i64 count = 0;
+        while (true) {
+            if (inside(n) && at(n) == quote && (many || count == 1)) {
+                break;
+            }
+            i64 len = element(n, quote);
+            if (len > 0 && (many || count == 0)) {
+                n = n + len;
+                count++;
+            } else {
+                advance();
+                string what = many ? "String" : "Zeichen";
+                return new Token(Kind::Error, "ungültiges " + what + "-Literal", l, k);
+            }
+        }
+        string text = take(n + 1);
+        string inner = text.substring(1, n);
+        if (many) {
+            return new Token(Kind::Str, inner, l, k);
+        }
+        return new Token(Kind::Char, inner, l, k);
+    }
+
+    bool matches(string p) {
+        for (i64 i = 0; i < p.length; i++) {
+            if (!inside(i) || at(i) != p[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    i64 punctLength() {
+        for (string p : puncts) {
+            if (matches(p)) {
+                return p.length;
+            }
+        }
+        return 0;
+    }
+
+    Token next(i32 l, i32 k) & {
+        char c = at(0);
+        if (identStart(c)) {
+            i64 n = 1;
+            while (inside(n) && identChar(at(n))) {
+                n++;
+            }
+            string text = take(n);
+            if (keywords.contains(text)) {
+                return new Token(Kind::Keyword, text, l, k);
+            }
+            return new Token(Kind::Ident, text, l, k);
+        }
+        if (c >= '0' && c <= '9') {
+            return number(l, k);
+        }
+        if (c == '"') {
+            return quoted('"', true, l, k);
+        }
+        if (c == '\'') {
+            return quoted('\'', false, l, k);
+        }
+        i64 len = punctLength();
+        if (len > 0) {
+            return new Token(Kind::Punct, take(len), l, k);
+        }
+        advance();
+        return new Token(Kind::Error, "unerwartetes Zeichen '" + c.toString() + "'", l, k);
+    }
+
+public:
+    constructor(string source) {
+        for (char c : source) {
+            chars.push(c);
+        }
+        // reservierte Wörter; main ist keines (Gerüst, Abschnitt 2)
+        string[] words = [
+            "abstract", "as", "base", "bool", "break", "byte", "case", "cast", "catch", "char",
+            "class", "const", "constructor", "continue", "copy", "default", "destructor", "discard",
+            "do", "else", "enum", "export", "f32", "f64", "false", "finally", "for", "i8", "i16", "i32",
+            "i64", "if", "import", "mixin", "new", "nodiscard", "null", "override", "own",
+            "package", "private", "protected", "public", "ref", "return", "shared", "static", "string",
+            "switch", "this", "throw", "true", "try", "ui8", "ui16", "ui32", "ui64", "using", "var",
+            "virtual", "void", "weak", "while"
+        ];
+        for (string w : words) {
+            keywords.add(w);
+        }
+    }
+
+    // reserviertes Wort? (für Projektnamen, R-11.17)
+    bool isKeyword(string w) {
+        return keywords.contains(w);
+    }
+
+    // Zerlegt den Text in Tokens; das letzte ist Eof oder ein Fehler.
+    Token[] lex() & {
+        Token[] tokens = [];
+        while (true) {
+            Token? err = skipTrivia();
+            if (err != null) {
+                tokens.push(err);
+                return tokens;
+            }
+            i32 l = line;
+            i32 k = col;
+            if (!inside(0)) {
+                tokens.push(new Token(Kind::Eof, "", l, k));
+                return tokens;
+            }
+            Token t = next(l, k);
+            bool stop = t.kind == Kind::Error;
+            tokens.push(t);
+            if (stop) {
+                return tokens;
+            }
+        }
+    }
+}

@@ -291,12 +291,21 @@
   ok    kap05_ownership/abgelehnt/n18_ref_auf_temporaeren_wert.rpp
   ok    kap05_ownership/abgelehnt/n19_ref_lesend_veraendern.rpp
   ok    kap05_ownership/abgelehnt/n20_ref_mut_und_direkter_zugriff.rpp
+  ok    kap05_ownership/abgelehnt/n21_own_an_weak.rpp
+  ok    kap05_ownership/abgelehnt/n22_zerlegen_mit_destruktor.rpp
+  ok    kap05_ownership/abgelehnt/n23_zerlegen_falsche_feldzahl.rpp
+  ok    kap05_ownership/abgelehnt/n24_zerlegen_geliehen.rpp
+  ok    kap05_ownership/abgelehnt/n25_zerlegen_privat.rpp
+  ok    kap05_ownership/abgelehnt/n26_nach_zerlegen_benutzt.rpp
   ok    kap05_ownership/akzeptiert/a01_moves.rpp
   ok    kap05_ownership/akzeptiert/a02_felder.rpp
   ok    kap05_ownership/akzeptiert/a03_borrows.rpp
   ok    kap05_ownership/akzeptiert/a04_shared_weak.rpp
   ok    kap05_ownership/akzeptiert/a05_lambdas.rpp
   ok    kap05_ownership/akzeptiert/a06_ref.rpp
+  ok    kap05_ownership/akzeptiert/a07_zerlegen.rpp
+  ok    kap05_ownership/laufzeit/l01_zerlegen.rpp
+  ok    kap05_ownership/laufzeit/l02_own_argument_ausdruck.rpp
   ok    kap06_null/abgelehnt/n01_ohne_pruefung.rpp
   ok    kap06_null/abgelehnt/n02_feld_verengen.rpp
   ok    kap06_null/abgelehnt/n03_zuweisung_hebt_auf.rpp
@@ -360,6 +369,7 @@
   ok    kap07_klassen/laufzeit/l01_erzeugung.rpp
   ok    kap07_klassen/laufzeit/l02_destruktoren.rpp
   ok    kap07_klassen/laufzeit/l03_kopie_virtuell.rpp
+  ok    kap07_klassen/laufzeit/l04_new_t.rpp
   ok    kap08_anweisungen/abgelehnt/n01_inkrement_gleitkomma.rpp
   ok    kap08_anweisungen/abgelehnt/n02_kein_gemeinsamer_typ.rpp
   ok    kap08_anweisungen/abgelehnt/n03_bereich_auf_string.rpp
@@ -432,8 +442,8 @@
   ok    kap10_lambdas/akzeptiert/a03_funktionstypen.rpp
   ok    kap10_lambdas/akzeptiert/a04_ueberladen.rpp
   ok    kap10_lambdas/laufzeit/l01_erfassen.rpp
-  ok    kap11_projekte/abgelehnt/n01_using_konflikt.rpp
-  ok    kap11_projekte/abgelehnt/n02_alias_verdeckt.rpp
+  ok    kap11_projekte/abgelehnt/n01_using_konflikt/
+  ok    kap11_projekte/abgelehnt/n02_alias_verdeckt/
   ok    kap11_projekte/abgelehnt/n03_export_mit_internem_typ.rpp
   ok    kap11_projekte/abgelehnt/n04_zwei_main.rpp
   ok    kap11_projekte/abgelehnt/n05_paket_passt_nicht/
@@ -476,6 +486,10 @@
   ok    kap13_bibliothek/laufzeit/l02_parse_und_vorbedingung.rpp
   ok    kap13_bibliothek/laufzeit/l03_set_reihenfolge.rpp
   ok    kap13_bibliothek/laufzeit/l04_konsole.rpp
+  ok    kap13_bibliothek/laufzeit/l05_map_set.rpp
+  ok    kap13_bibliothek/laufzeit/l06_fmt_und_fehlender_schluessel.rpp
+  ok    kap13_bibliothek/laufzeit/l07_map_eigene_schluessel.rpp
+  ok    kap13_bibliothek/laufzeit/l08_dateien.rpp
 
-Umfang: 18 positive Dateien, 127 negative Tests, 80 Lesarten, 242 Konformitätstests
+Umfang: 18 positive Dateien, 127 negative Tests, 80 Lesarten, 256 Konformitätstests
 Ergebnis: 0 Fehler

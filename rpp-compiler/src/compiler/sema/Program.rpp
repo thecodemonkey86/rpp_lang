@@ -1,0 +1,1652 @@
+// Deklarationen: Typen sammeln, Namen auflösen, Membertabellen bauen und die Regeln auf
+// Ebene von Dateien, Klassen, Mixins und Enums prüfen (Kapitel 4 Abschnitt 7, Kapitel 7,
+// Kapitel 11). Gleichwertig zu Program::build in rppc/crates/rpp-sema/src/defs.rs.
+// Der Arbeitsbereich mit den Syntaxbäumen wird jeder Phase geliehen übergeben.
+package compiler.sema;
+
+using rpp.collections.Map;
+using compiler.syntax.Node;
+using compiler.project.Workspace;
+using compiler.project.Project;
+using compiler.project.ProjectKind;
+using compiler.project.SourceFile;
+using compiler.project.Diag;
+
+export class Program {
+public:
+    TypeDef[] defs = [];
+    TParam[] tparams = [];
+    Diag[] diags = [];
+    // Pfad je Datei des Arbeitsbereichs
+    string[] paths = [];
+
+    // je Datei: Projekt, Paket, using-Einträge (einfacher Name und voller Name)
+    FileInfo[] fileInfos = [];
+    // je Projekt: Standardbibliothek?, direkte Abhängigkeiten
+    bool[] projStd = [];
+    ProjDeps[] projDeps = [];
+
+private:
+    Map<string, i64> byFull = new Map<string, i64>();
+    Pending[] pending = [];
+
+public:
+    static Program build(Workspace ws) {
+        Program p = new Program();
+        for (SourceFile f : ws.files) {
+            p.paths.push(f.path);
+            FileInfo fi = new FileInfo(f.project, f.packageName());
+            for (Node u : f.unit.kids) {
+                if (u.kind != "using") {
+                    continue;
+                }
+                i64 ti = 0;
+                if (u.text == "alias") {
+                    ti = 1;
+                }
+                ref Node target = u.kids[ti];
+                string simple = target.kids[target.kids.length - 1].text;
+                if (ti == 1) {
+                    simple = u.kids[0].text;
+                }
+                fi.usingSimple.push(simple);
+                fi.usingFull.push(dotted(target));
+            }
+            p.fileInfos.push(fi);
+        }
+        for (Project pr : ws.projects) {
+            p.projStd.push(pr.isStd);
+            ProjDeps d = new ProjDeps();
+            for (i64 x : pr.deps) {
+                d.deps.push(x);
+            }
+            p.projDeps.push(d);
+        }
+        for (Diag d : ws.diags) {
+            p.diags.push(new Diag(d.file, d.line, d.col, d.rule, d.message));
+        }
+        p.collect(ws);
+        p.resolveHeaders(ws);
+        p.resolveMembers(ws);
+        p.checkPending();
+        p.checkFiles(ws);
+        p.checkDefs(ws);
+        return p;
+    }
+
+    i64 lookupFull(string full) {
+        return byFull.get(full) ?? -1;
+    }
+
+    string show(Ty t) {
+        if (t.kind == TK::Error) {
+            return "?";
+        }
+        if (t.kind == TK::Void) {
+            return "void";
+        }
+        if (t.kind == TK::Null) {
+            return "null";
+        }
+        if (t.kind == TK::Prim) {
+            return t.prim;
+        }
+        if (t.kind == TK::Named) {
+            string s = defs[t.id].name;
+            if (t.args.length > 0) {
+                s = s + "<" + showList(t.args, 0, t.args.length) + ">";
+            }
+            return s;
+        }
+        if (t.kind == TK::Param) {
+            return tparams[t.id].name;
+        }
+        if (t.kind == TK::Vector) {
+            return show(t.args[0]) + "[]";
+        }
+        if (t.kind == TK::Array) {
+            string n = "N";
+            if (t.size >= 0) {
+                n = t.size.toString();
+            }
+            return show(t.args[0]) + "[" + n + "]";
+        }
+        if (t.kind == TK::Slice) {
+            return "Slice<" + show(t.args[0]) + ">";
+        }
+        if (t.kind == TK::Tuple) {
+            return "(" + showList(t.args, 0, t.args.length) + ")";
+        }
+        if (t.kind == TK::Func) {
+            string[] parts = [];
+            for (i64 i = 0; i < t.modes.length; i++) {
+                string p = show(t.args[i]);
+                if (t.modes[i] == Mode::Mut) {
+                    p = p + "&";
+                } else if (t.modes[i] == Mode::Own) {
+                    p = "own " + p;
+                }
+                parts.push(p);
+            }
+            parts.push(show(t.args[t.args.length - 1]));
+            return "Func<" + string::join(", ", parts) + ">";
+        }
+        if (t.kind == TK::Nullable) {
+            return show(t.args[0]) + "?";
+        }
+        if (t.kind == TK::Shared) {
+            return "shared " + show(t.args[0]);
+        }
+        return "weak " + show(t.args[0]);
+    }
+
+    string showList(shared Ty[] ts, i64 from, i64 to) {
+        string[] parts = [];
+        for (i64 i = from; i < to; i++) {
+            parts.push(show(ts[i]));
+        }
+        return string::join(", ", parts);
+    }
+
+    // Löst einen Typnamen (Knoten "typename") auf, wie ein Typ ohne Besitzform und Suffixe
+    shared Ty resolveTypeName(i64 file, i64[] scope, Node tn, i32 line, i32 col) & {
+        return resolveNamed(file, scope, tn, line, col);
+    }
+
+    // Verwirft noch nicht geprüfte Verwendungen (nach einer Probeprüfung)
+    void dropPending() & {
+        pending = [];
+    }
+
+    // Meldung mit weiteren begründenden Regeln oder als Warnung (R-8.1)
+    void report(i64 file, i32 line, i32 col, string rule, string[] also, string message, bool warning) & {
+        Diag d = new Diag(paths[file], line, col, rule, message);
+        for (string a : also) {
+            if (a != rule && !hasString(d.also, a)) {
+                d.also.push(a);
+            }
+        }
+        d.warning = warning;
+        diags.push(d);
+    }
+
+    // Kürzt die Meldungen auf n (nach einer Probeprüfung)
+    void truncateDiags(i64 n) & {
+        while (diags.length > n) {
+            discard diags.pop();
+        }
+    }
+
+    // Feld eines Typs (eigenes oder geerbtes) mit eingesetzten Typargumenten
+    FieldInfo? fieldOf(shared Ty t, string name) {
+        shared Ty[] types = [];
+        types.push(t);
+        for (shared Ty s : supertypes(t)) {
+            types.push(s);
+        }
+        for (shared Ty ty : types) {
+            if (ty.kind != TK::Named) {
+                continue;
+            }
+            Subst map = substMap(ty.id, ty.args);
+            for (FieldInfo f : defs[ty.id].fields) {
+                if (f.name == name) {
+                    FieldInfo c = new FieldInfo(f.name, Ty::subst(f.ty, map), f.access, f.line, f.col);
+                    c.isStatic = f.isStatic;
+                    c.isConst = f.isConst;
+                    c.hasInit = f.hasInit;
+                    c.owner = ty.id;
+                    return c;
+                }
+            }
+        }
+        return null;
+    }
+
+    bool isSubclass(i64 sub, i64 sup) {
+        i64 cur = sub;
+        while (cur >= 0) {
+            if (cur == sup) {
+                return true;
+            }
+            shared Ty? b = defs[cur].baseType;
+            cur = -1;
+            if (b != null) {
+                cur = b.id;
+            }
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------------ Hilfen
+
+    static bool flag(Node n, string f) {
+        for (string s : n.text.split(" ")) {
+            if (s == f) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static i64 kidIndex(Node n, string kind) {
+        for (i64 i = 0; i < n.kids.length; i++) {
+            if (n.kids[i].kind == kind) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    static string dotted(Node qname) {
+        string[] parts = [];
+        for (Node id : qname.kids) {
+            parts.push(id.text);
+        }
+        return string::join(".", parts);
+    }
+
+    static bool hasString(string[] list, string s) {
+        for (string x : list) {
+            if (x == s) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static i64 indexOfInt(i64[] list, i64 x) {
+        for (i64 i = 0; i < list.length; i++) {
+            if (list[i] == x) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    static bool hasTy(shared Ty[] list, Ty t) {
+        for (shared Ty x : list) {
+            if (x.same(t)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Wert eines Ganzzahlliterals ohne Vorzeichen (ohne Trenner, auch hexadezimal)
+    static (bool, i64) intValue(string text) {
+        string clean = text.replace("_", "");
+        i64 radix = 10;
+        i64 start = 0;
+        if (clean.startsWith("0x")) {
+            radix = 16;
+            start = 2;
+        }
+        if (start >= clean.length) {
+            return (false, 0);
+        }
+        i64 v = 0;
+        for (i64 i = start; i < clean.length; i++) {
+            char c = clean[i];
+            i64 d = -1;
+            if (c >= '0' && c <= '9') {
+                d = cast<i64>(c) - cast<i64>('0');
+            } else if (radix == 16 && c >= 'a' && c <= 'f') {
+                d = cast<i64>(c) - cast<i64>('a') + 10;
+            } else if (radix == 16 && c >= 'A' && c <= 'F') {
+                d = cast<i64>(c) - cast<i64>('A') + 10;
+            }
+            if (d < 0 || v > (i64::MAX - d) / radix) {
+                return (false, 0);
+            }
+            v = v * radix + d;
+        }
+        return (true, v);
+    }
+
+    static i32 accessRank(Access a) {
+        if (a == Access::Private) {
+            return 0;
+        }
+        if (a == Access::Protected) {
+            return 1;
+        }
+        return 2;
+    }
+
+    // Gleiche Parametertypen (ohne Markierungen)
+    static bool sameParamTypes(PInfo[] a, PInfo[] b) {
+        if (a.length != b.length) {
+            return false;
+        }
+        for (i64 i = 0; i < a.length; i++) {
+            bool ok = Ty::unformed(a[i].ty).same(Ty::unformed(b[i].ty)) || a[i].ty.isError() || b[i].ty.isError();
+            if (!ok) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Gleiche Parametertypen und Markierungen
+    static bool sameParams(PInfo[] a, PInfo[] b) {
+        if (!sameParamTypes(a, b)) {
+            return false;
+        }
+        for (i64 i = 0; i < a.length; i++) {
+            if (a[i].mode != b[i].mode) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static void collectNamed(Ty t, i64[]& out) {
+        if (t.kind == TK::Named) {
+            out.push(t.id);
+        }
+        for (shared Ty a : t.args) {
+            collectNamed(a, &out);
+        }
+    }
+
+    // (Datei, Zeile, Spalte) von a nach der von b?
+    bool defAfter(i64 a, i64 b) {
+        if (defs[a].file != defs[b].file) {
+            return defs[a].file > defs[b].file;
+        }
+        if (defs[a].line != defs[b].line) {
+            return defs[a].line > defs[b].line;
+        }
+        return defs[a].col > defs[b].col;
+    }
+
+private:
+    void error(i64 file, i32 line, i32 col, string rule, string message) & {
+        diags.push(new Diag(paths[file], line, col, rule, message));
+    }
+
+    Diag mk(i64 file, i32 line, i32 col, string rule, string message) {
+        return new Diag(paths[file], line, col, rule, message);
+    }
+
+    void flush(Diag[] found) & {
+        for (Diag x : found) {
+            diags.push(new Diag(x.file, x.line, x.col, x.rule, x.message));
+        }
+    }
+
+    i64 newTParam(string name) & {
+        tparams.push(new TParam(name));
+        return tparams.length - 1;
+    }
+
+    // ------------------------------------------------------------ Phase 1
+
+    // alle Typdeklarationen mit Namen erfassen
+    void collect(Workspace ws) & {
+        for (i64 f = 0; f < ws.files.length; f++) {
+            string pkg = ws.files[f].packageName();
+            i64 project = ws.files[f].project;
+            ref Node unit = ws.files[f].unit;
+            for (i64 d = 0; d < unit.kids.length; d++) {
+                ref Node decl = unit.kids[d];
+                DefKind kind = DefKind::Class;
+                if (decl.kind == "mixin") {
+                    kind = DefKind::Mixin;
+                } else if (decl.kind == "enum") {
+                    kind = DefKind::Enum;
+                } else if (decl.kind != "class") {
+                    continue;
+                }
+                ref Node nameNode = decl.kids[0];
+                TypeDef def = new TypeDef(kind, nameNode.text, pkg, project, f, d, decl.line, decl.col);
+                def.exported = flag(decl, "export");
+                def.isAbstract = flag(decl, "abstract");
+                if (kind != DefKind::Enum) {
+                    for (Node tp : decl.kids[1].kids) {
+                        def.tparams.push(newTParam(tp.kids[0].text));
+                    }
+                }
+                string full = def.fullName();
+                i64 other = lookupFull(full);
+                if (other >= 0 && defs[other].project == project) {
+                    error(f, nameNode.line, nameNode.col, "R-11.4", "Typ " + full + " ist schon deklariert");
+                    continue;
+                }
+                byFull.put(full, defs.length);
+                defs.push(def);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ Namen
+
+    // Ist def aus Projekt from verwendbar (R-11.9, R-11.10, R-11.12)? Liefert die verletzte Regel oder "".
+    string visibility(i64 def, i64 from) {
+        if (defs[def].project == from) {
+            return "";
+        }
+        if (projStd[defs[def].project] || indexOfInt(projDeps[from].deps, defs[def].project) >= 0) {
+            if (defs[def].exported) {
+                return "";
+            }
+            return "R-11.10";
+        }
+        return "R-11.12";
+    }
+
+    // Sucht einen einfachen Typnamen in einer Datei (R-11.8): eigenes Paket, using, rpp.core
+    i64 lookupSimple(i64 file, string name, i32 line, i32 col) & {
+        i64 project = fileInfos[file].project;
+        string pkg = fileInfos[file].pkg;
+        for (i64 i = 0; i < defs.length; i++) {
+            if (defs[i].project == project && defs[i].pkg == pkg && defs[i].name == name) {
+                return i;
+            }
+        }
+        string[] found = [];
+        for (i64 k = 0; k < fileInfos[file].usingSimple.length; k++) {
+            if (fileInfos[file].usingSimple[k] == name) {
+                string full = fileInfos[file].usingFull[k];
+                if (!hasString(found, full)) {
+                    found.push(full);
+                }
+            }
+        }
+        if (found.length > 1) {
+            error(file, line, col, "R-11.8", name + " ist mehrdeutig: " + string::join(", ", found));
+            return -1;
+        }
+        if (found.length == 1) {
+            return lookupFull(found[0]);
+        }
+        return lookupFull("rpp.core." + name);
+    }
+
+    i64 lookupSimpleSilent(i64 file, string name) {
+        i64 project = fileInfos[file].project;
+        string pkg = fileInfos[file].pkg;
+        for (i64 i = 0; i < defs.length; i++) {
+            if (defs[i].project == project && defs[i].pkg == pkg && defs[i].name == name) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+public:
+    // Löst einen Typ aus dem Syntaxbaum auf (Knoten "type"). Fehler werden gemeldet;
+    // das Ergebnis ist dann der Fehlertyp.
+    shared Ty resolveType(i64 file, i64[] scope, Node t) & {
+        ref Node b = t.kids[0];
+        shared Ty ty = Ty::error();
+        if (b.kind == "prim") {
+            ty = Ty::ofPrim(b.text);
+        } else if (b.kind == "tuple") {
+            shared Ty[] items = [];
+            for (Node x : b.kids) {
+                items.push(resolveType(file, scope, x));
+            }
+            ty = Ty::list(TK::Tuple, items);
+        } else {
+            ty = resolveNamed(file, scope, b, t.line, t.col);
+        }
+        if (t.text == "shared") {
+            ty = Ty::wrap(TK::Shared, ty);
+        } else if (t.text == "weak") {
+            ty = Ty::wrap(TK::Weak, ty);
+        }
+        for (i64 i = 1; i < t.kids.length; i++) {
+            ref Node s = t.kids[i];
+            if (s.kind == "nullable") {
+                ty = Ty::nullable(ty);
+            } else if (s.kind == "vector") {
+                ty = Ty::wrap(TK::Vector, ty);
+            } else {
+                i64 size = -1;
+                if (s.kids[0].kind == "int") {
+                    (bool ok, i64 v) = intValue(s.kids[0].text);
+                    if (ok) {
+                        size = v;
+                    }
+                }
+                ty = Ty::array(ty, size);
+            }
+        }
+        return ty;
+    }
+
+private:
+    shared Ty resolveTypeArg(i64 file, i64[] scope, Node a, i32 line, i32 col) & {
+        if (a.kind == "void") {
+            error(file, line, col, "R-4.45", "void ist hier kein Typargument");
+            return Ty::error();
+        }
+        if (a.text == "mut") {
+            error(file, a.kids[0].line, a.kids[0].col, "R-10.13", "& ist nur an Parametern von Func erlaubt");
+        }
+        return resolveType(file, scope, a.kids[0]);
+    }
+
+    shared Ty resolveNamed(i64 file, i64[] scope, Node tn, i32 line, i32 col) & {
+        ref Node q = tn.kids[0];
+        ref Node targs = tn.kids[1];
+        ref Node first = q.kids[0];
+        if (q.kids.length == 1) {
+            string name = first.text;
+            for (i64 i = scope.length - 1; i >= 0; i--) {
+                if (tparams[scope[i]].name == name) {
+                    return Ty::param(scope[i]);
+                }
+            }
+            if (name == "Func" && targs.kids.length > 0 && lookupSimpleSilent(file, name) < 0) {
+                return resolveFunc(file, scope, targs, line, col);
+            }
+            if (name == "Slice" && targs.kids.length == 1 && lookupSimpleSilent(file, name) < 0) {
+                return Ty::wrap(TK::Slice, resolveTypeArg(file, scope, targs.kids[0], line, col));
+            }
+        }
+        string full = dotted(q);
+        i64 def = -1;
+        if (q.kids.length == 1) {
+            def = lookupSimple(file, first.text, first.line, first.col);
+        } else {
+            def = lookupFull(full);
+            if (def >= 0) {
+                string rule = visibility(def, fileInfos[file].project);
+                if (rule.length > 0) {
+                    error(file, first.line, first.col, rule, full + " ist hier nicht verwendbar");
+                    return Ty::error();
+                }
+            }
+        }
+        if (def < 0) {
+            bool seen = false;
+            for (Diag d : diags) {
+                if (d.line == first.line && d.col == first.col) {
+                    seen = true;
+                }
+            }
+            if (!seen) {
+                error(file, first.line, first.col, "R-11.8", "unbekannter Typ " + full);
+            }
+            return Ty::error();
+        }
+        shared Ty[] args = [];
+        for (Node a : targs.kids) {
+            args.push(resolveTypeArg(file, scope, a, line, col));
+        }
+        i64 want = defs[def].tparams.length;
+        if (args.length != want) {
+            string msg = defs[def].name + " erwartet " + want.toString() + " Typargumente, nicht " + args.length.toString();
+            error(file, first.line, first.col, "R-7.23", msg);
+            return Ty::error();
+        }
+        if (args.length > 0) {
+            Pending p = new Pending(file, first.line, first.col, def);
+            for (shared Ty a : args) {
+                p.args.push(a);
+            }
+            pending.push(p);
+        }
+        return Ty::named(def, args);
+    }
+
+    // Func<P1, …, Pn, R> (R-4.37, R-10.13)
+    shared Ty resolveFunc(i64 file, i64[] scope, Node targs, i32 line, i32 col) & {
+        i64 n = targs.kids.length;
+        shared Ty[] ps = [];
+        Mode[] modes = [];
+        for (i64 i = 0; i < n; i++) {
+            ref Node a = targs.kids[i];
+            bool last = i + 1 == n;
+            if (a.kind == "void") {
+                if (!last) {
+                    error(file, line, col, "R-4.37", "void steht in Func nur an letzter Stelle");
+                    return Ty::error();
+                }
+                return Ty::func(ps, modes, Ty::simple(TK::Void));
+            }
+            ref Node ty = a.kids[0];
+            shared Ty t = resolveType(file, scope, ty);
+            if (last) {
+                if (a.text == "mut") {
+                    error(file, ty.line, ty.col, "R-10.13", "& ist am Rückgabetyp von Func nicht erlaubt");
+                    return Ty::error();
+                }
+                return Ty::func(ps, modes, t);
+            }
+            Mode m = Mode::Read;
+            if (a.text == "mut") {
+                m = Mode::Mut;
+            } else if (ty.text == "own") {
+                m = Mode::Own;
+            }
+            ps.push(t);
+            modes.push(m);
+        }
+        return Ty::error();
+    }
+
+    // ------------------------------------------------------------ Phase 2
+
+    // Constraints der Typ-Parameter (Knoten "tparams") an die Nummern ids
+    void constraints(i64 file, i64[] scope, Node tps, i64[] ids) & {
+        for (i64 i = 0; i < tps.kids.length; i++) {
+            ref Node tp = tps.kids[i];
+            i64 id = ids[i];
+            for (i64 k = 1; k < tp.kids.length; k++) {
+                ref Node c = tp.kids[k];
+                if (c.kind == "new") {
+                    tparams[id].needsNew = true;
+                } else {
+                    shared Ty t = resolveNamed(file, scope, c, tp.kids[0].line, tp.kids[0].col);
+                    tparams[id].constraints.push(t);
+                }
+            }
+        }
+    }
+
+    // Basisklasse, Importe und Constraints
+    void resolveHeaders(Workspace ws) & {
+        for (i64 def = 0; def < defs.length; def++) {
+            i64 file = defs[def].file;
+            i64[] scope = [];
+            for (i64 p : defs[def].tparams) {
+                scope.push(p);
+            }
+            ref Node decl = ws.files[file].unit.kids[defs[def].decl];
+            if (decl.kind != "class" && decl.kind != "mixin") {
+                continue;
+            }
+            constraints(file, scope, decl.kids[1], scope);
+            i64 bi = kidIndex(decl, "base");
+            if (bi >= 0) {
+                ref Node b = decl.kids[bi].kids[0];
+                ref Node bf = b.kids[0].kids[0];
+                shared Ty t = resolveNamed(file, scope, b, bf.line, bf.col);
+                if (t.kind == TK::Named) {
+                    if (defs[t.id].kind != DefKind::Class) {
+                        string msg = defs[t.id].name + " ist keine Klasse";
+                        error(file, bf.line, bf.col, "R-7.12", msg);
+                    } else {
+                        defs[def].baseType = t;
+                    }
+                }
+            }
+            for (Node m : decl.kids[kidIndex(decl, "members")].kids) {
+                if (m.kind != "import") {
+                    continue;
+                }
+                ref Node tn = m.kids[0];
+                ref Node tf = tn.kids[0].kids[0];
+                shared Ty t = resolveNamed(file, scope, tn, tf.line, tf.col);
+                if (t.kind == TK::Named) {
+                    if (defs[t.id].kind != DefKind::Mixin) {
+                        string msg = defs[t.id].name + " ist kein Mixin";
+                        error(file, tf.line, tf.col, "R-7.20", msg);
+                        continue;
+                    }
+                    defs[def].imports.push(t);
+                    defs[def].importLines.push(tf.line);
+                    defs[def].importCols.push(tf.col);
+                }
+            }
+        }
+        // Vererbungszyklen (R-7.12): Basis auflösen, bis ein Typ doppelt vorkommt
+        for (i64 def = 0; def < defs.length; def++) {
+            i64[] seen = [def];
+            i64 cur = def;
+            while (true) {
+                shared Ty? b = defs[cur].baseType;
+                if (b == null) {
+                    break;
+                }
+                i64 bid = b.id;
+                i64 at = indexOfInt(seen, bid);
+                if (at >= 0) {
+                    i64 last = seen[at];
+                    for (i64 k = at + 1; k < seen.length; k++) {
+                        if (defAfter(seen[k], last)) {
+                            last = seen[k];
+                        }
+                    }
+                    if (last == def) {
+                        i64 df = defs[def].file;
+                        i32 dl = defs[def].line;
+                        i32 dc = defs[def].col;
+                        string msg = "Vererbungszyklus über " + defs[def].name;
+                        error(df, dl, dc, "R-7.12", msg);
+                    }
+                    break;
+                }
+                seen.push(bid);
+                cur = bid;
+            }
+        }
+        // Zyklen auflösen, damit spätere Durchläufe enden
+        for (i64 def = 0; def < defs.length; def++) {
+            i64[] seen = [];
+            i64 cur = def;
+            while (true) {
+                shared Ty? b = defs[cur].baseType;
+                if (b == null) {
+                    break;
+                }
+                if (indexOfInt(seen, cur) >= 0) {
+                    defs[cur].baseType = null;
+                    break;
+                }
+                seen.push(cur);
+                cur = b.id;
+            }
+        }
+    }
+
+    PInfo[] params(i64 file, i64[] scope, Node ps) & {
+        PInfo[] out = [];
+        for (Node p : ps.kids) {
+            ref Node t = p.kids[0];
+            shared Ty ty = resolveType(file, scope, t);
+            Mode mode = Mode::Read;
+            if (p.text == "mut") {
+                mode = Mode::Mut;
+            } else if (t.text == "own") {
+                mode = Mode::Own;
+            }
+            out.push(new PInfo(p.kids[1].text, ty, mode));
+        }
+        return out;
+    }
+
+    Ret resolveRet(i64 file, i64[] scope, Node r) & {
+        if (r.kind == "void") {
+            return new Ret(RetKind::Void, Ty::simple(TK::Void), false);
+        }
+        if (r.kind == "type") {
+            return new Ret(RetKind::Val, resolveType(file, scope, r), false);
+        }
+        return new Ret(RetKind::Ref, resolveType(file, scope, r.kids[0]), r.text == "mut");
+    }
+
+    // Felder, Methoden, Konstruktoren und Varianten
+    void resolveMembers(Workspace ws) & {
+        for (i64 def = 0; def < defs.length; def++) {
+            i64 file = defs[def].file;
+            i64[] classScope = [];
+            for (i64 p : defs[def].tparams) {
+                classScope.push(p);
+            }
+            ref Node decl = ws.files[file].unit.kids[defs[def].decl];
+            if (decl.kind == "enum") {
+                enumVariants(ws, def, file, decl.kids[1]);
+                continue;
+            }
+            bool isMixin = defs[def].kind == DefKind::Mixin;
+            Access access = Access::Private;
+            if (isMixin) {
+                access = Access::Public;
+            }
+            ref Node members = decl.kids[kidIndex(decl, "members")];
+            for (i64 mi = 0; mi < members.kids.length; mi++) {
+                ref Node m = members.kids[mi];
+                if (m.kind == "access") {
+                    if (m.text == "public") {
+                        access = Access::Public;
+                    } else if (m.text == "protected") {
+                        access = Access::Protected;
+                    } else {
+                        access = Access::Private;
+                    }
+                } else if (m.kind == "field") {
+                    ref Node nm = m.kids[1];
+                    shared Ty ty = resolveType(file, classScope, m.kids[0]);
+                    bool isStatic = flag(m, "static");
+                    if (isStatic && ty.mentionsParam()) {
+                        error(file, nm.line, nm.col, "R-7.27", "eine statische Konstante darf nicht von einem Typ-Parameter abhängen");
+                    }
+                    FieldInfo fi = new FieldInfo(nm.text, ty, access, nm.line, nm.col);
+                    fi.isStatic = isStatic;
+                    fi.isConst = flag(m, "const");
+                    fi.hasInit = m.kids.length > 2;
+                    fi.owner = def;
+                    defs[def].fields.push(fi);
+                } else if (m.kind == "method") {
+                    ref Node nm = m.kids[1];
+                    i64[] scope = [];
+                    for (i64 p : classScope) {
+                        scope.push(p);
+                    }
+                    i64[] tps = [];
+                    for (Node tp : m.kids[2].kids) {
+                        i64 id = newTParam(tp.kids[0].text);
+                        tps.push(id);
+                        scope.push(id);
+                    }
+                    constraints(file, scope, m.kids[2], tps);
+                    PInfo[] ps = params(file, scope, m.kids[3]);
+                    Ret ret = resolveRet(file, scope, m.kids[0]);
+                    string modifier = "";
+                    for (string x : ["static", "virtual", "override", "abstract"]) {
+                        if (flag(m, x)) {
+                            modifier = x;
+                        }
+                    }
+                    Access acc = access;
+                    if (isMixin) {
+                        acc = Access::Public;
+                    }
+                    MethodInfo info = new MethodInfo(nm.text, def, ret, acc, nm.line, nm.col, mi);
+                    info.params = ps;
+                    info.tparams = tps;
+                    info.isStatic = modifier == "static";
+                    info.modifier = modifier;
+                    info.isNodiscard = flag(m, "nodiscard");
+                    info.mutThis = flag(m, "mut");
+                    info.hasBody = m.kids.length > 4;
+                    defs[def].methods.push(info);
+                } else if (m.kind == "ctor") {
+                    CtorInfo c = new CtorInfo(access, m.line, m.col, mi);
+                    c.params = params(file, classScope, m.kids[0]);
+                    c.callsBase = kidIndex(m, "baseargs") >= 0;
+                    defs[def].ctors.push(c);
+                } else if (m.kind == "dtor") {
+                    defs[def].hasDtor = true;
+                } else if (m.kind == "copy") {
+                    defs[def].hasCopy = true;
+                    defs[def].copyLine = m.line;
+                    defs[def].copyCol = m.col;
+                }
+            }
+        }
+    }
+
+    void enumVariants(Workspace ws, i64 def, i64 file, Node variants) & {
+        i64 next = 0;
+        i64[] seenVals = [];
+        string[] seenNames = [];
+        bool hasData = false;
+        bool hasValue = false;
+        for (Node v : variants.kids) {
+            if (v.kids.length > 1) {
+                hasData = true;
+            }
+            if (v.text.length > 0) {
+                hasValue = true;
+            }
+        }
+        string[] names = [];
+        for (Node v : variants.kids) {
+            ref Node nm = v.kids[0];
+            if (hasString(names, nm.text)) {
+                error(file, nm.line, nm.col, "R-4.25", "Variante " + nm.text + " ist doppelt");
+            } else {
+                names.push(nm.text);
+            }
+            VariantInfo vi = new VariantInfo(nm.text);
+            if (v.kids.length > 1) {
+                if (hasValue) {
+                    error(file, nm.line, nm.col, "R-4.25", "ein Enum mit Zahlwerten hat keine Varianten mit Daten");
+                }
+                i64[] none = [];
+                vi.fields = params(file, none, v.kids[1]);
+            } else if (v.text.length > 0) {
+                // Text "= wert"
+                string s = v.text.substring(2, v.text.length);
+                i64 k = 0;
+                while (k < s.length && s[k] == '-') {
+                    k++;
+                }
+                (bool ok, i64 x) = intValue(s.substring(k, s.length));
+                if (s.startsWith("-")) {
+                    x = -x;
+                }
+                if (ok && x >= -2147483648 && x <= 2147483647) {
+                    next = x;
+                } else {
+                    error(file, nm.line, nm.col, "R-4.26", "Zahlwert außerhalb von i32");
+                }
+                vi.hasValue = true;
+                vi.value = next;
+            } else if (!hasData) {
+                vi.hasValue = true;
+                vi.value = next;
+            }
+            if (vi.hasValue) {
+                i64 x = vi.value;
+                i64 at = indexOfInt(seenVals, x);
+                if (at >= 0) {
+                    error(file, nm.line, nm.col, "R-4.26", nm.text + " hat denselben Wert " + x.toString() + " wie " + seenNames[at]);
+                    seenNames[at] = nm.text;
+                } else {
+                    seenVals.push(x);
+                    seenNames.push(nm.text);
+                }
+                next = x + 1;
+            }
+            defs[def].variants.push(vi);
+        }
+    }
+
+public:
+    // ------------------------------------------------------------ Constraints
+
+    // Erfüllt t das Mixin m (R-4.42, R-7.26)?
+    bool satisfies(shared Ty t, shared Ty m) {
+        if (m.kind != TK::Named) {
+            return true;
+        }
+        string mname = defs[m.id].fullName();
+        if (t.isError()) {
+            return true;
+        }
+        shared Ty u = Ty::unformed(t);
+        bool selfArg = m.args.length == 0 || m.args[0].isError() || m.args[0].same(u);
+        bool eqOrHash = mname == "rpp.core.Equatable" || mname == "rpp.core.Hashable";
+        if (u.kind == TK::Prim) {
+            if (eqOrHash) {
+                return selfArg;
+            }
+            if (mname == "rpp.core.Comparable") {
+                return selfArg && u.prim != "bool";
+            }
+            return false;
+        }
+        if (u.kind == TK::Named && defs[u.id].kind == DefKind::Enum) {
+            bool plain = true;
+            for (VariantInfo v : defs[u.id].variants) {
+                if (v.fields.length > 0) {
+                    plain = false;
+                }
+            }
+            return plain && selfArg && eqOrHash;
+        }
+        if (u.kind == TK::Param) {
+            for (shared Ty c : tparams[u.id].constraints) {
+                if (mixinIncludes(c, m)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (u.kind == TK::Named) {
+            return upcasts(t, m);
+        }
+        return false;
+    }
+
+    // Bringt das Mixin a (mit seinen Importen) das Mixin b mit?
+    bool mixinIncludes(shared Ty a, shared Ty b) {
+        if (a.same(b)) {
+            return true;
+        }
+        if (a.kind != TK::Named) {
+            return false;
+        }
+        Subst map = substMap(a.id, a.args);
+        for (shared Ty i : defs[a.id].imports) {
+            if (mixinIncludes(Ty::subst(i, map), b)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    Subst substMap(i64 def, shared Ty[] args) {
+        Subst s = new Subst();
+        for (i64 i = 0; i < defs[def].tparams.length && i < args.length; i++) {
+            s.keys.push(defs[def].tparams[i]);
+            s.vals.push(args[i]);
+        }
+        return s;
+    }
+
+    // Alle Obertypen (Basisklassen und Mixins) eines Klassentyps, mit eingesetzten Typargumenten
+    shared Ty[] supertypes(shared Ty t) {
+        shared Ty[] out = [];
+        shared Ty[] stack = [];
+        stack.push(t);
+        while (stack.length > 0) {
+            shared Ty cur = stack.pop();
+            if (cur.kind != TK::Named) {
+                continue;
+            }
+            Subst map = substMap(cur.id, cur.args);
+            shared Ty? b = defs[cur.id].baseType;
+            if (b != null) {
+                shared Ty bt = Ty::subst(b, map);
+                if (!hasTy(out, bt)) {
+                    out.push(bt);
+                    stack.push(bt);
+                }
+            }
+            for (shared Ty i : defs[cur.id].imports) {
+                shared Ty it = Ty::subst(i, map);
+                if (!hasTy(out, it)) {
+                    out.push(it);
+                    stack.push(it);
+                }
+            }
+        }
+        return out;
+    }
+
+    // C <: D für Klassen- und Mixin-Typen (R-4.22, R-4.43)
+    bool upcasts(shared Ty from, shared Ty to) {
+        return from.same(to) || hasTy(supertypes(from), to);
+    }
+
+    bool hasDefaultCtor(i64 def) {
+        if (defs[def].ctors.length == 0) {
+            for (FieldInfo f : defs[def].fields) {
+                if (!f.isStatic && !f.hasInit && f.ty.kind != TK::Nullable) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        for (CtorInfo c : defs[def].ctors) {
+            if (c.params.length == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool satisfiesNew(shared Ty t) {
+        if (t.kind == TK::Named) {
+            return defs[t.id].kind == DefKind::Class && !defs[t.id].isAbstract && hasDefaultCtor(t.id);
+        }
+        if (t.kind == TK::Param) {
+            return tparams[t.id].needsNew;
+        }
+        return t.kind == TK::Error;
+    }
+
+    // Prüft die Constraints aller seit dem letzten Aufruf aufgelösten generischen Typen
+    void checkPending() & {
+        Diag[] found = [];
+        for (Pending p : pending) {
+            Subst map = substMap(p.def, p.args);
+            for (i64 i = 0; i < defs[p.def].tparams.length; i++) {
+                i64 tp = defs[p.def].tparams[i];
+                shared Ty arg = p.args[i];
+                if (arg.isError() || (arg.kind == TK::Param && tparams[tp].constraints.length == 0)) {
+                    continue;
+                }
+                if (tparams[tp].needsNew && !satisfiesNew(arg)) {
+                    found.push(mk(p.file, p.line, p.col, "R-7.25",
+                        show(arg) + " hat keinen sichtbaren parameterlosen Konstruktor (new())"));
+                }
+                for (shared Ty c0 : tparams[tp].constraints) {
+                    shared Ty c = Ty::subst(c0, map);
+                    if (!satisfies(arg, c)) {
+                        found.push(mk(p.file, p.line, p.col, "R-7.26", show(arg) + " erfüllt " + show(c) + " nicht"));
+                    }
+                }
+            }
+        }
+        pending = [];
+        flush(found);
+    }
+
+private:
+    // ------------------------------------------------------------ Dateien
+
+    void checkFiles(Workspace ws) & {
+        i64[] mainProj = [];
+        i64[] mainFile = [];
+        i32[] mainLine = [];
+        i32[] mainCol = [];
+        for (i64 f = 0; f < ws.files.length; f++) {
+            i64 project = ws.files[f].project;
+            ref Project proj = ws.projects[project];
+            ref Node unit = ws.files[f].unit;
+            string pkg = ws.files[f].packageName();
+            i32 pl = 1;
+            i32 pc = 0;
+            if (unit.kids.length > 0 && unit.kids[0].kind == "package") {
+                pl = unit.kids[0].kids[0].kids[0].line;
+                pc = unit.kids[0].kids[0].kids[0].col;
+            }
+            bool lib = proj.kind == ProjectKind::Library;
+            string pname = proj.name;
+            bool prefixOk = pkg == pname || pkg.startsWith(pname + ".");
+            string? expected = ws.files[f].expected;
+            if (expected != null) {
+                if (expected != pkg) {
+                    string shown = "package " + expected + ";";
+                    if (expected.length == 0) {
+                        shown = "keine package-Zeile (Wurzelpaket)";
+                    }
+                    error(f, pl, pc, "R-11.2", "die Datei verlangt " + shown);
+                } else if (lib && !proj.isStd && !prefixOk) {
+                    error(f, pl, pc, "R-11.18", "Pakete der Bibliothek " + pname + " beginnen mit " + pname);
+                }
+            } else if (lib && !proj.singleFile && !proj.isStd && !prefixOk) {
+                error(f, pl, pc, "R-11.18", "Pakete der Bibliothek " + pname + " beginnen mit " + pname);
+            }
+            // using (R-11.7, R-11.8, R-11.12)
+            for (Node u : unit.kids) {
+                if (u.kind == "main") {
+                    mainProj.push(project);
+                    mainFile.push(f);
+                    mainLine.push(u.line);
+                    mainCol.push(u.col);
+                }
+                if (u.kind != "using") {
+                    continue;
+                }
+                bool isAlias = u.text == "alias";
+                i64 ti = 0;
+                if (isAlias) {
+                    ti = 1;
+                }
+                string full = dotted(u.kids[ti]);
+                i64 d = lookupFull(full);
+                if (d < 0) {
+                    error(f, u.line, u.col, "R-11.7", "unbekannter Typ " + full);
+                    continue;
+                }
+                string rule = visibility(d, project);
+                if (rule.length > 0) {
+                    error(f, u.line, u.col, rule, full + " ist hier nicht verwendbar");
+                }
+                if (isAlias) {
+                    string alias = u.kids[0].text;
+                    bool shadows = false;
+                    for (TypeDef x : defs) {
+                        if (x.project == project && x.pkg == pkg && x.name == alias) {
+                            shadows = true;
+                        }
+                    }
+                    if (shadows) {
+                        error(f, u.line, u.col, "R-11.8", "der Name " + alias + " verdeckt einen Typ des eigenen Pakets");
+                    }
+                }
+            }
+        }
+        // main (R-11.14)
+        for (i64 pi = 0; pi < ws.projects.length; pi++) {
+            ref Project proj = ws.projects[pi];
+            i64 k = 0;
+            for (i64 j = 0; j < mainProj.length; j++) {
+                if (mainProj[j] != pi) {
+                    continue;
+                }
+                string path = paths[mainFile[j]];
+                if (proj.kind == ProjectKind::Library) {
+                    diags.push(new Diag(path, mainLine[j], mainCol[j], "R-11.14", "eine Bibliothek hat keine main"));
+                } else if (k > 0) {
+                    diags.push(new Diag(path, mainLine[j], mainCol[j], "R-11.14", "ein Programm hat genau eine main"));
+                } else {
+                    string? mf = proj.mainFile;
+                    if (mf != null && !proj.singleFile && mf != path) {
+                        diags.push(new Diag(path, mainLine[j], mainCol[j], "R-11.14", "main steht nicht in der Datei, die rpp.yaml nennt"));
+                    }
+                }
+                k++;
+            }
+            if (proj.kind != ProjectKind::Library && k == 0 && !proj.singleFile) {
+                string? y = proj.yaml;
+                if (y != null) {
+                    diags.push(new Diag(y, 1, 0, "R-11.14", "das Programm hat keine main"));
+                }
+            }
+        }
+    }
+
+public:
+    // ------------------------------------------------------------ Klassen
+
+    // Alle Methoden mit diesem Namen, die ein Typ hat: eigene, aus Mixins, geerbte
+    // (überschriebene nur einmal), mit eingesetzten Typargumenten
+    MethodInfo[] methodsOf(shared Ty t, string name) {
+        MethodInfo[] out = [];
+        shared Ty[] types = [];
+        types.push(t);
+        for (shared Ty s : supertypes(t)) {
+            types.push(s);
+        }
+        for (shared Ty ty : types) {
+            if (ty.kind != TK::Named) {
+                continue;
+            }
+            Subst map = substMap(ty.id, ty.args);
+            for (MethodInfo m0 : defs[ty.id].methods) {
+                if (m0.name != name) {
+                    continue;
+                }
+                MethodInfo m = m0.substituted(map);
+                i64 k = -1;
+                for (i64 j = 0; j < out.length; j++) {
+                    if (sameParams(out[j].params, m.params)) {
+                        k = j;
+                        break;
+                    }
+                }
+                if (k < 0) {
+                    out.push(m);
+                } else {
+                    // nodiscard einer erfüllten Anforderung oder überschriebenen Methode gilt weiter (V-8.2)
+                    bool nd = out[k].isNodiscard || m.isNodiscard;
+                    // eine Mixin-Methode mit Rumpf erfüllt eine Anforderung
+                    if (!out[k].hasBody && m.hasBody && defs[out[k].owner].kind == DefKind::Mixin) {
+                        out[k] = m;
+                    }
+                    out[k].isNodiscard = nd;
+                }
+            }
+        }
+        return out;
+    }
+
+private:
+    void checkDefs(Workspace ws) & {
+        for (i64 def = 0; def < defs.length; def++) {
+            if (ws.projects[defs[def].project].isStd) {
+                continue;
+            }
+            Diag[] found = [];
+            if (defs[def].kind == DefKind::Class) {
+                found = classFindings(def);
+            } else if (defs[def].kind == DefKind::Mixin) {
+                found = mixinFindings(def);
+            }
+            flush(found);
+            if (defs[def].exported) {
+                Diag[] ex = exportFindings(def);
+                flush(ex);
+            }
+        }
+    }
+
+    Diag[] mixinFindings(i64 def) {
+        Diag[] out = [];
+        i64 file = defs[def].file;
+        for (MethodInfo m : defs[def].methods) {
+            if (m.isStatic) {
+                out.push(mk(file, m.line, m.col, "R-7.18", "ein Mixin hat keine statischen Methoden"));
+            }
+            if (m.isNodiscard && m.ret.kind == RetKind::Void) {
+                out.push(mk(file, m.line, m.col, "R-8.15", "nodiscard an einer void-Methode"));
+            }
+        }
+        return out;
+    }
+
+    // [t] und alle Obertypen
+    shared Ty[] withSupertypes(shared Ty t) {
+        shared Ty[] ts = [];
+        ts.push(t);
+        for (shared Ty s : supertypes(t)) {
+            ts.push(s);
+        }
+        return ts;
+    }
+
+    Diag[] classFindings(i64 def) {
+        Diag[] out = [];
+        ref TypeDef d = defs[def];
+        i64 file = d.file;
+        Subst none = new Subst();
+        shared Ty[] selfArgs = [];
+        for (i64 p : d.tparams) {
+            selfArgs.push(Ty::param(p));
+        }
+        shared Ty selfTy = Ty::named(def, selfArgs);
+        shared Ty? b = d.baseType;
+
+        // R-7.1: eindeutige Namen
+        string[] seenFields = [];
+        if (b != null) {
+            for (shared Ty t : withSupertypes(b)) {
+                if (t.kind == TK::Named) {
+                    for (FieldInfo f : defs[t.id].fields) {
+                        if (!hasString(seenFields, f.name)) {
+                            seenFields.push(f.name);
+                        }
+                    }
+                }
+            }
+        }
+        for (FieldInfo f : d.fields) {
+            if (hasString(seenFields, f.name)) {
+                out.push(mk(file, f.line, f.col, "R-7.1", "Feld " + f.name + " ist schon deklariert"));
+            } else {
+                seenFields.push(f.name);
+            }
+        }
+        for (MethodInfo m : d.methods) {
+            for (FieldInfo f : d.fields) {
+                if (f.name == m.name) {
+                    i32 l = m.line;
+                    i32 c = m.col;
+                    if (f.line > m.line || (f.line == m.line && f.col > m.col)) {
+                        l = f.line;
+                        c = f.col;
+                    }
+                    out.push(mk(file, l, c, "R-7.1", "Feld und Methode heißen beide " + m.name));
+                    break;
+                }
+            }
+        }
+
+        // V-8.2: nodiscard an void
+        for (MethodInfo m : d.methods) {
+            if (m.isNodiscard && m.ret.kind == RetKind::Void) {
+                out.push(mk(file, m.line, m.col, "R-8.15", "nodiscard an einer void-Methode"));
+            }
+        }
+
+        // R-7.16: Überladen
+        for (i64 i = 0; i < d.methods.length; i++) {
+            ref MethodInfo m = d.methods[i];
+            for (i64 j = 0; j < i; j++) {
+                ref MethodInfo o = d.methods[j];
+                if (o.name != m.name || o.isStatic != m.isStatic || !sameParamTypes(o.params, m.params)) {
+                    continue;
+                }
+                string msg = "ist doppelt deklariert";
+                if (!sameParams(o.params, m.params)) {
+                    msg = "unterscheidet sich nur in Besitzform oder Borrow-Markierung der Parameter";
+                } else if (!o.ret.same(m.ret)) {
+                    msg = "unterscheidet sich nur im Rückgabetyp";
+                }
+                out.push(mk(file, m.line, m.col, "R-7.16", "Methode " + m.name + " " + msg));
+                break;
+            }
+        }
+        for (i64 i = 0; i < d.ctors.length; i++) {
+            for (i64 j = 0; j < i; j++) {
+                if (sameParamTypes(d.ctors[j].params, d.ctors[i].params)) {
+                    out.push(mk(file, d.ctors[i].line, d.ctors[i].col, "R-7.16", "Konstruktor mit denselben Parametertypen ist doppelt"));
+                    break;
+                }
+            }
+        }
+
+        // R-7.13: Überschreiben
+        MethodInfo[] inherited = [];
+        if (b != null) {
+            for (MethodInfo m : d.methods) {
+                for (MethodInfo x : methodsOf(b, m.name)) {
+                    inherited.push(x.substituted(none));
+                }
+            }
+        }
+        MethodInfo[] mixinMethods = [];
+        for (shared Ty it : d.imports) {
+            for (shared Ty t : withSupertypes(it)) {
+                if (t.kind == TK::Named) {
+                    Subst map = substMap(t.id, t.args);
+                    for (MethodInfo m : defs[t.id].methods) {
+                        mixinMethods.push(m.substituted(map));
+                    }
+                }
+            }
+        }
+        for (MethodInfo m : d.methods) {
+            if (m.isStatic) {
+                continue;
+            }
+            i64 bi = -1;
+            for (i64 k = 0; k < inherited.length; k++) {
+                if (inherited[k].name == m.name && sameParamTypes(inherited[k].params, m.params)) {
+                    bi = k;
+                    break;
+                }
+            }
+            i64 xi = -1;
+            for (i64 k = 0; k < mixinMethods.length; k++) {
+                if (mixinMethods[k].name == m.name && sameParamTypes(mixinMethods[k].params, m.params)) {
+                    xi = k;
+                    break;
+                }
+            }
+            bool isOverride = m.modifier == "override";
+            if (bi >= 0) {
+                ref MethodInfo bm = inherited[bi];
+                if (bm.isNodiscard && !m.isNodiscard) {
+                    out.push(mk(file, m.line, m.col, "R-8.15", m.name + " muss nodiscard übernehmen"));
+                } else if (!bm.overridable()) {
+                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " ist in der Basisklasse nicht virtual"));
+                } else if (!isOverride) {
+                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " überschreibt eine geerbte Methode und braucht override"));
+                } else if (!sameParams(bm.params, m.params) || bm.mutThis != m.mutThis) {
+                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " überschreibt mit anderer Borrow-Markierung"));
+                } else if (accessRank(m.access) < accessRank(bm.access)) {
+                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " darf beim Überschreiben nicht weniger sichtbar werden"));
+                }
+            } else if (xi >= 0) {
+                if (mixinMethods[xi].hasBody && !isOverride) {
+                    out.push(mk(file, m.line, m.col, "R-7.21", m.name + " kommt auch aus einem Mixin; nötig ist override"));
+                }
+            } else if (isOverride) {
+                out.push(mk(file, m.line, m.col, "R-7.13", m.name + " überschreibt nichts"));
+            }
+        }
+
+        // R-7.21: Konflikte zwischen Mixins; R-7.20: Anforderungen
+        MethodInfo[] bodies = [];
+        for (i64 ii = 0; ii < d.imports.length; ii++) {
+            for (shared Ty t : withSupertypes(d.imports[ii])) {
+                if (t.kind != TK::Named) {
+                    continue;
+                }
+                Subst map = substMap(t.id, t.args);
+                for (MethodInfo m0 : defs[t.id].methods) {
+                    if (!m0.hasBody) {
+                        continue;
+                    }
+                    MethodInfo m = m0.substituted(map);
+                    bool conflict = false;
+                    bool known = false;
+                    for (MethodInfo o : bodies) {
+                        if (o.name == m.name && sameParamTypes(o.params, m.params)) {
+                            if (o.owner != m.owner) {
+                                conflict = true;
+                            } else {
+                                known = true;
+                            }
+                        }
+                    }
+                    bool resolved = false;
+                    for (MethodInfo c : d.methods) {
+                        if (c.name == m.name && sameParamTypes(c.params, m.params) && c.modifier == "override") {
+                            resolved = true;
+                        }
+                    }
+                    if (conflict && !resolved) {
+                        out.push(mk(file, d.importLines[ii], d.importCols[ii], "R-7.21", m.name + " kommt aus zwei Mixins"));
+                    }
+                    if (!known) {
+                        bodies.push(m);
+                    }
+                }
+            }
+        }
+        for (i64 ii = 0; ii < d.imports.length; ii++) {
+            for (shared Ty t : withSupertypes(d.imports[ii])) {
+                if (t.kind != TK::Named) {
+                    continue;
+                }
+                Subst map = substMap(t.id, t.args);
+                for (MethodInfo r0 : defs[t.id].methods) {
+                    if (r0.hasBody) {
+                        continue;
+                    }
+                    MethodInfo r = r0.substituted(map);
+                    bool ok = d.isAbstract;
+                    for (MethodInfo c : methodsOf(selfTy, r.name)) {
+                        if (c.hasBody && sameParamTypes(c.params, r.params) && (c.ret.same(r.ret) || c.ret.ty.isError())) {
+                            ok = true;
+                        }
+                    }
+                    if (!ok) {
+                        out.push(mk(file, d.importLines[ii], d.importCols[ii], "R-7.20",
+                            "die Anforderung " + r.name + " von " + defs[t.id].name + " ist nicht erfüllt"));
+                    }
+                }
+            }
+        }
+
+        // R-7.14: abstrakte Methoden nur in abstrakten Klassen
+        if (!d.isAbstract) {
+            i64 ai = -1;
+            for (i64 k = 0; k < d.methods.length; k++) {
+                if (ai < 0 && d.methods[k].modifier == "abstract") {
+                    ai = k;
+                }
+            }
+            if (ai >= 0) {
+                out.push(mk(file, d.methods[ai].line, d.methods[ai].col, "R-7.14", d.methods[ai].name + " ist abstrakt, die Klasse aber nicht"));
+            } else if (b != null) {
+                string[] names = [];
+                for (shared Ty t : withSupertypes(b)) {
+                    if (t.kind == TK::Named) {
+                        for (MethodInfo m : defs[t.id].methods) {
+                            if (m.modifier == "abstract") {
+                                names.push(m.name);
+                            }
+                        }
+                    }
+                }
+                for (string n : names) {
+                    bool implemented = true;
+                    for (MethodInfo m : methodsOf(selfTy, n)) {
+                        if (!m.hasBody) {
+                            implemented = false;
+                        }
+                    }
+                    if (!implemented) {
+                        out.push(mk(file, d.line, d.col, "R-7.14", n + " ist abstrakt; die Klasse muss abstract sein"));
+                        break;
+                    }
+                }
+            }
+        }
+
+        // R-7.10, R-7.11: copy
+        i64 baseDef = -1;
+        if (b != null) {
+            baseDef = b.id;
+        }
+        bool ancestorCopy = false;
+        i64 cur = baseDef;
+        while (cur >= 0) {
+            if (defs[cur].hasCopy) {
+                ancestorCopy = true;
+                break;
+            }
+            shared Ty? cb = defs[cur].baseType;
+            cur = -1;
+            if (cb != null) {
+                cur = cb.id;
+            }
+        }
+        if (ancestorCopy && !d.hasCopy) {
+            out.push(mk(file, d.line, d.col, "R-7.11", d.name + " braucht ein eigenes copy, weil die Basisklasse eines hat"));
+        }
+        if (d.hasCopy && baseDef >= 0 && !defs[baseDef].hasCopy) {
+            out.push(mk(file, d.copyLine, d.copyCol, "R-7.10", "copy in der Unterklasse verlangt copy in der Basisklasse"));
+        }
+
+        // R-7.5, R-7.6: Konstruktoren und Basiskonstruktor
+        if (baseDef >= 0 && !hasDefaultCtor(baseDef)) {
+            for (CtorInfo c : d.ctors) {
+                if (!c.callsBase) {
+                    out.push(mk(file, c.line, c.col, "R-7.6",
+                        defs[baseDef].name + " hat keinen parameterlosen Konstruktor; nötig ist : base(…)"));
+                }
+            }
+            if (d.ctors.length == 0) {
+                out.push(mk(file, d.line, d.col, "R-7.6",
+                    defs[baseDef].name + " hat keinen parameterlosen Konstruktor; nötig ist ein Konstruktor mit : base(…)"));
+            }
+        }
+        return out;
+    }
+
+    // R-11.11: Die öffentliche Schnittstelle eines exportierten Typs nennt nur exportierte Typen
+    Diag[] exportFindings(i64 def) {
+        Diag[] out = [];
+        ref TypeDef d = defs[def];
+        shared Ty[] uses = [];
+        i32[] lines = [];
+        i32[] cols = [];
+        shared Ty? b = d.baseType;
+        if (b != null) {
+            uses.push(b);
+            lines.push(d.line);
+            cols.push(d.col);
+        }
+        for (FieldInfo f : d.fields) {
+            if (f.access != Access::Private) {
+                uses.push(f.ty);
+                lines.push(f.line);
+                cols.push(f.col);
+            }
+        }
+        for (MethodInfo m : d.methods) {
+            if (m.access != Access::Private) {
+                uses.push(m.ret.ty);
+                lines.push(m.line);
+                cols.push(m.col);
+                for (PInfo p : m.params) {
+                    uses.push(p.ty);
+                    lines.push(m.line);
+                    cols.push(m.col);
+                }
+            }
+        }
+        for (CtorInfo c : d.ctors) {
+            if (c.access != Access::Private) {
+                for (PInfo p : c.params) {
+                    uses.push(p.ty);
+                    lines.push(c.line);
+                    cols.push(c.col);
+                }
+            }
+        }
+        for (VariantInfo v : d.variants) {
+            for (PInfo p : v.fields) {
+                uses.push(p.ty);
+                lines.push(d.line);
+                cols.push(d.col);
+            }
+        }
+        string[] reported = [];
+        for (i64 k = 0; k < uses.length; k++) {
+            i64[] named = [];
+            collectNamed(uses[k], &named);
+            for (i64 n : named) {
+                string key = lines[k].toString() + ":" + cols[k].toString();
+                if (defs[n].project == d.project && !defs[n].exported && !hasString(reported, key)) {
+                    reported.push(key);
+                    out.push(mk(d.file, lines[k], cols[k], "R-11.11",
+                        defs[n].name + " ist nicht exportiert, steht aber in der Schnittstelle von " + d.name));
+                }
+            }
+        }
+        return out;
+    }
+}
+
+export class FileInfo {
+public:
+    i64 project;
+    string pkg;
+    string[] usingSimple = [];
+    string[] usingFull = [];
+    constructor(i64 project, string pkg) {
+        this.project = project;
+        this.pkg = pkg;
+    }
+}
+
+export class ProjDeps {
+public:
+    i64[] deps = [];
+}

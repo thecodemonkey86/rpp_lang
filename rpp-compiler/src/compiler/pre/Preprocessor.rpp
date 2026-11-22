@@ -1,0 +1,280 @@
+// Bedingte Kompilierung (Kapitel 11, R-11.23 bis R-11.25), gleichwertig zu
+// rppc/crates/rpp-syntax/src/preprocess.rs: Direktiven und die Zeilen inaktiver Zweige
+// werden durch Leerzeilen ersetzt, damit Zeilennummern erhalten bleiben. Inaktive Zweige
+// werden nicht geprüft, die Bedingungen von Direktiven dagegen immer.
+package compiler.pre;
+
+using rpp.collections.Set;
+
+export class DirectiveError : Exception {
+public:
+    i32 line;
+    constructor(i32 line, string message) : base(message) {
+        this.line = line;
+    }
+}
+
+export enum CondToken {
+    And,
+    Or,
+    Not,
+    Open,
+    Close,
+    Symbol(string name),
+}
+
+class Level {
+public:
+    bool outer;
+    bool active;
+    bool taken;
+    bool seenElse = false;
+    i32 line;
+    constructor(bool outer, bool active, bool taken, i32 line) {
+        this.outer = outer;
+        this.active = active;
+        this.taken = taken;
+        this.line = line;
+    }
+}
+
+// Auswertung einer Bedingung; && bindet stärker als ||.
+class Eval {
+private:
+    CondToken[] tokens;
+    i64 pos = 0;
+    i32 line;
+
+    bool at(i64 kind) {
+        if (pos >= tokens.length) {
+            return false;
+        }
+        switch (tokens[pos]) {
+            case And: return kind == 1;
+            case Or: return kind == 2;
+            case Close: return kind == 5;
+            default: return false;
+        }
+    }
+
+public:
+    constructor(own CondToken[] tokens, i32 line) {
+        this.tokens = tokens;
+        this.line = line;
+    }
+
+    bool done() {
+        return pos == tokens.length;
+    }
+
+    string current() {
+        switch (tokens[pos]) {
+            case And: return "'&&'";
+            case Or: return "'||'";
+            case Not: return "'!'";
+            case Open: return "'('";
+            case Close: return "')'";
+            case Symbol(s): return "'" + s + "'";
+        }
+    }
+
+    bool orExpr(Set<string> symbols) & {
+        bool value = andExpr(symbols);
+        while (at(2)) {
+            pos++;
+            bool right = andExpr(symbols);
+            value = value || right;
+        }
+        return value;
+    }
+
+    bool andExpr(Set<string> symbols) & {
+        bool value = unary(symbols);
+        while (at(1)) {
+            pos++;
+            bool right = unary(symbols);
+            value = value && right;
+        }
+        return value;
+    }
+
+    bool unary(Set<string> symbols) & {
+        if (pos >= tokens.length) {
+            pos++;
+            throw new DirectiveError(line, "Symbol erwartet");
+        }
+        i64 here = pos;
+        pos++;
+        switch (tokens[here]) {
+            case Not: return !unary(symbols);
+            case Open: {
+                bool value = orExpr(symbols);
+                bool closed = at(5);
+                pos++;
+                if (!closed) {
+                    throw new DirectiveError(line, "')' fehlt");
+                }
+                return value;
+            }
+            case Symbol(s): return symbols.contains(s);
+            default: throw new DirectiveError(line, "Symbol erwartet");
+        }
+    }
+}
+
+export class Preprocessor {
+public:
+    static bool letter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    static string trimEnd(string s) {
+        i64 n = s.length;
+        while (n > 0 && s[n - 1].isWhitespace()) {
+            n--;
+        }
+        return s.substring(0, n);
+    }
+
+    static string trimStart(string s) {
+        i64 i = 0;
+        while (i < s.length && s[i].isWhitespace()) {
+            i++;
+        }
+        return s.substring(i, s.length);
+    }
+
+    static CondToken[] tokenize(string text, i32 line) {
+        string t = trimEnd(text);
+        CondToken[] tokens = [];
+        i64 i = 0;
+        while (i < t.length) {
+            char c = t[i];
+            bool more = i + 1 < t.length;
+            if (c.isWhitespace()) {
+                i++;
+            } else if (c == '&' && more && t[i + 1] == '&') {
+                tokens.push(CondToken::And);
+                i = i + 2;
+            } else if (c == '|' && more && t[i + 1] == '|') {
+                tokens.push(CondToken::Or);
+                i = i + 2;
+            } else if (c == '!') {
+                tokens.push(CondToken::Not);
+                i++;
+            } else if (c == '(') {
+                tokens.push(CondToken::Open);
+                i++;
+            } else if (c == ')') {
+                tokens.push(CondToken::Close);
+                i++;
+            } else if (letter(c) || c == '_') {
+                i64 start = i;
+                while (i < t.length && (letter(t[i]) || (t[i] >= '0' && t[i] <= '9') || t[i] == '_')) {
+                    i++;
+                }
+                tokens.push(CondToken::Symbol(t.substring(start, i)));
+            } else {
+                throw new DirectiveError(line, "ungültige Bedingung \"" + t + "\"");
+            }
+        }
+        return tokens;
+    }
+
+    // Wertet eine Bedingung aus.
+    static bool evaluate(string text, Set<string> symbols, i32 line) {
+        CondToken[] tokens = tokenize(text, line);
+        if (tokens.length == 0) {
+            throw new DirectiveError(line, "Bedingung fehlt");
+        }
+        Eval e = new Eval(tokens, line);
+        bool value = e.orExpr(symbols);
+        if (!e.done()) {
+            throw new DirectiveError(line, "unerwartetes " + e.current());
+        }
+        return value;
+    }
+
+private:
+    static bool allActive(Level[] stack) {
+        for (Level l : stack) {
+            if (!l.active) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+public:
+    // Wendet die Direktiven mit den gesetzten Symbolen an (R-11.24); wirft DirectiveError.
+    static string run(string source, Set<string> symbols) {
+        string[] out = [];
+        Level[] stack = [];
+        i32 number = 0;
+        for (string line : source.split("\n")) {
+            number++;
+            string stripped = line.trim();
+            if (!stripped.startsWith("#")) {
+                if (allActive(stack)) {
+                    out.push(line);
+                } else {
+                    out.push("");
+                }
+                continue;
+            }
+            string body = stripped.substring(1, stripped.length);
+            i64 nameLen = 0;
+            while (nameLen < body.length && letter(body[nameLen])) {
+                nameLen++;
+            }
+            string directive = stripped;
+            string rest = "";
+            if (nameLen > 0) {
+                directive = body.substring(0, nameLen);
+                rest = trimStart(body.substring(nameLen, body.length));
+            }
+            // Zeilenkommentar nach einer Direktive (R-11.23)
+            i64? comment = rest.indexOf("//");
+            if (comment != null) {
+                rest = trimEnd(rest.substring(0, comment));
+            }
+            if (directive == "if") {
+                bool outer = allActive(stack);
+                bool value = evaluate(rest, symbols, number);
+                stack.push(new Level(outer, outer && value, value, number));
+            } else if (directive == "elif") {
+                if (stack.length == 0 || stack[stack.length - 1].seenElse) {
+                    throw new DirectiveError(number, "#elif ohne passendes #if");
+                }
+                bool value = evaluate(rest, symbols, number);
+                i64 top = stack.length - 1;
+                stack[top].active = stack[top].outer && !stack[top].taken && value;
+                stack[top].taken = stack[top].taken || value;
+            } else if (directive == "else") {
+                if (stack.length == 0 || stack[stack.length - 1].seenElse || rest.length > 0) {
+                    throw new DirectiveError(number, "#else ohne passendes #if");
+                }
+                i64 top = stack.length - 1;
+                stack[top].active = stack[top].outer && !stack[top].taken;
+                stack[top].taken = true;
+                stack[top].seenElse = true;
+            } else if (directive == "endif") {
+                if (stack.length == 0 || rest.length > 0) {
+                    throw new DirectiveError(number, "#endif ohne passendes #if");
+                }
+                Level gone = stack.pop();
+            } else {
+                string shown = directive;
+                if (nameLen == 0) {
+                    shown = stripped.substring(1, stripped.length);
+                }
+                throw new DirectiveError(number, "unbekannte Direktive #" + shown);
+            }
+            out.push("");
+        }
+        if (stack.length > 0) {
+            throw new DirectiveError(stack[stack.length - 1].line, "#if ohne #endif");
+        }
+        return string::join("\n", out);
+    }
+}

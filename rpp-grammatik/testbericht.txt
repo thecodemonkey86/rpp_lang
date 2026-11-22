@@ -432,8 +432,8 @@
   ok    kap10_lambdas/akzeptiert/a03_funktionstypen.rpp
   ok    kap10_lambdas/akzeptiert/a04_ueberladen.rpp
   ok    kap10_lambdas/laufzeit/l01_erfassen.rpp
-  ok    kap11_projekte/abgelehnt/n01_using_konflikt.rpp
-  ok    kap11_projekte/abgelehnt/n02_alias_verdeckt.rpp
+  ok    kap11_projekte/abgelehnt/n01_using_konflikt/
+  ok    kap11_projekte/abgelehnt/n02_alias_verdeckt/
   ok    kap11_projekte/abgelehnt/n03_export_mit_internem_typ.rpp
   ok    kap11_projekte/abgelehnt/n04_zwei_main.rpp
   ok    kap11_projekte/abgelehnt/n05_paket_passt_nicht/

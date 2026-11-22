@@ -15,16 +15,6 @@ mixin Describable {
     string describe() { return "beschreibbar"; }
 }
 
-mixin Equatable<T> {
-    bool equals(T other);
-}
-
-mixin Comparable<T> {
-    import Equatable<T>;
-    i32 compareTo(T other);
-    bool less(T other) { return compareTo(other) < 0; }
-}
-
 class Person {
     import Named;
     import Printable;

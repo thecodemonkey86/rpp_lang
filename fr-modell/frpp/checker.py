@@ -282,6 +282,30 @@ class Checker:
         if isinstance(s, A.ExprStmt):                                   # R-5.14
             _, env = self.expr(env, loans, s.expr)
             return env
+        if isinstance(s, A.Unpack):                                     # R-5.25
+            if s.var not in env:
+                raise CheckError("O-Var", f"unbekannte Variable {s.var}", line)
+            t, avail = env[s.var]
+            if not avail:
+                raise CheckError("R-5.25", f"{s.var} ist verschoben", line)
+            if t.kind != "own":
+                raise CheckError("R-5.25", f"zerlegen lässt sich nur own, nicht {t}", line)
+            if any(self.classes[k].destructor is not None for k in self.chain(t.cls)):
+                raise CheckError("R-5.25", f"{t.cls} hat einen Destruktor", line)
+            fs = self.fields(t.cls)
+            if len(fs) != len(s.vars):
+                raise CheckError("R-5.25", f"{t.cls} hat {len(fs)} Felder", line)
+            self.require_allowed(env, loans, "mut", (s.var,), "R-5.25", line, "Zerlegen von")
+            env = dict(env)
+            for (ft, fn), (vt, x) in zip(fs, s.vars):
+                self.check_type(vt, line, storable=True)
+                if not self.subtype(ft, vt):
+                    raise CheckError("R-5.25", f"Feld {fn} hat Typ {ft}, nicht {vt}", line)
+                if x in env:
+                    raise CheckError("R-5.25", f"{x} ist schon deklariert", line)
+                env[x] = (vt, True)
+            env[s.var] = (t, False)
+            return env
         if isinstance(s, A.Print):
             t, env = self.expr(env, loans, s.expr)
             if t != A.INT:

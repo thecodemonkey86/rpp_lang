@@ -1,0 +1,26 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.19, R-13.20, V-13.8
+// Erwartet: Ausgabe "false\ntrue\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse"; Exit-Code 0
+using rpp.io.File;
+using rpp.io.Dir;
+using rpp.io.Path;
+
+// Läuft in einem frischen, leeren Arbeitsverzeichnis (V-14.3).
+i32 main(string[] args) {
+    print(File::exists("a.txt").toString());
+    File::writeText("a.txt", "x");
+    print(File::exists("a.txt").toString());
+    Dir::create("sub");
+    // ein Verzeichnis ist keine Datei
+    print(File::exists("sub").toString());
+    print(File::exists("sub/fehlt.txt").toString());
+    // absolut, mit / als Trenner, . und .. aufgelöst
+    string root = Path::absolute(".");
+    string a = Path::absolute("sub/./x/../a.txt");
+    print((a == root + "/sub/a.txt").toString());
+    print((Path::absolute("sub/..") == root).toString());
+    print((Path::absolute(a) == a).toString());
+    print((Path::parent(Path::absolute("a.txt")) == root).toString());
+    print(root.contains("\\").toString());
+    return 0;
+}

@@ -1,0 +1,290 @@
+// Der YAML-Teil, den rpp.yaml verwendet (R-11.13): Zuordnungen, Listen, einfache Werte,
+// [a, b] und Kommentare. Jeder Wert kennt seine Zeile. Gleichwertig zu
+// rppc/crates/rpp-sema/src/yaml.rs.
+package compiler.project;
+
+export class YamlError : Exception {
+public:
+    i32 line;
+    constructor(i32 line, string message) : base(message) {
+        this.line = line;
+    }
+}
+
+export enum YKind {
+    Str,
+    List,
+    Map,
+}
+
+// Ein Wert: einfacher Text, Liste (items) oder Zuordnung (keys[i] gehört zu items[i])
+export class YNode {
+public:
+    YKind kind;
+    string text;
+    // Zeile des Werts bzw. seines Schlüssels (ab 1)
+    i32 line;
+    YNode[] items = [];
+    string[] keys = [];
+
+    constructor(YKind kind, string text, i32 line) {
+        this.kind = kind;
+        this.text = text;
+        this.line = line;
+    }
+
+    // Position des Schlüssels; -1, wenn er fehlt oder der Wert keine Zuordnung ist
+    i64 indexOf(string key) {
+        if (kind != YKind::Map) {
+            return -1;
+        }
+        for (i64 i = 0; i < keys.length; i++) {
+            if (keys[i] == key) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    bool has(string key) {
+        return indexOf(key) >= 0;
+    }
+
+    // Ist der Wert zum Schlüssel ein einfacher Text?
+    bool isStrAt(string key) {
+        i64 i = indexOf(key);
+        return i >= 0 && items[i].kind == YKind::Str;
+    }
+
+    // Text zum Schlüssel; "" , wenn er fehlt oder kein einfacher Text ist
+    string strOf(string key) {
+        if (isStrAt(key)) {
+            return items[indexOf(key)].text;
+        }
+        return "";
+    }
+
+    // Zeile zum Schlüssel; 1, wenn er fehlt
+    i32 lineOf(string key) {
+        i64 i = indexOf(key);
+        if (i < 0) {
+            return 1;
+        }
+        return items[i].line;
+    }
+}
+
+class Line {
+public:
+    i64 indent;
+    string text;
+    i32 number;
+    constructor(i64 indent, string text, i32 number) {
+        this.indent = indent;
+        this.text = text;
+        this.number = number;
+    }
+}
+
+export class Yaml {
+private:
+    Line[] lines = [];
+    i64 pos = 0;
+
+    static string stripComment(string s) {
+        bool inQuote = false;
+        for (i64 i = 0; i < s.length; i++) {
+            char c = s[i];
+            if (c == '"') {
+                inQuote = !inQuote;
+            } else if (c == '#' && !inQuote && (i == 0 || s[i - 1] == ' ' || s[i - 1] == '\t')) {
+                return s.substring(0, i);
+            }
+        }
+        return s;
+    }
+
+    // Anzahl der Leerraumzeichen am Anfang
+    static i64 leading(string s) {
+        i64 i = 0;
+        while (i < s.length && s[i].isWhitespace()) {
+            i++;
+        }
+        return i;
+    }
+
+    static string trimEnd(string s) {
+        i64 e = s.length;
+        while (e > 0 && s[e - 1].isWhitespace()) {
+            e--;
+        }
+        return s.substring(0, e);
+    }
+
+    static string unquote(string raw) {
+        string s = raw.trim();
+        if (s.length >= 2 && ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'")))) {
+            return s.substring(1, s.length - 1);
+        }
+        return s;
+    }
+
+    static YNode scalar(string raw, i32 line) {
+        string s = raw.trim();
+        if (s.length >= 2 && s.startsWith("[") && s.endsWith("]")) {
+            YNode list = new YNode(YKind::List, "", line);
+            for (string x : s.substring(1, s.length - 1).split(",")) {
+                string y = x.trim();
+                if (y.length > 0) {
+                    list.items.push(new YNode(YKind::Str, unquote(y), line));
+                }
+            }
+            return list;
+        }
+        return new YNode(YKind::Str, unquote(s), line);
+    }
+
+    // "schlüssel: rest" mit einem Schlüssel ohne Leerzeichen; ok ist falsch, wenn keiner da ist
+    static (bool, string, string) splitKey(string text) {
+        i64? i = text.indexOf(":");
+        if (i == null) {
+            return (false, "", "");
+        }
+        string key = text.substring(0, i).trim();
+        if (key.length == 0 || key.contains(" ")) {
+            return (false, "", "");
+        }
+        string rest = text.substring(i + 1, text.length);
+        if (rest.length > 0 && !rest.startsWith(" ")) {
+            return (false, "", "");
+        }
+        return (true, key, rest.trim());
+    }
+
+    static bool isItem(string text) {
+        return text.startsWith("- ") || text == "-";
+    }
+
+    // Liest einen Block mit genau der Einrückung indent; null, wenn keiner beginnt
+    YNode? block(i64 indent) & {
+        if (pos >= lines.length || lines[pos].indent != indent) {
+            return null;
+        }
+        i32 line = lines[pos].number;
+        if (isItem(lines[pos].text)) {
+            YNode list = new YNode(YKind::List, "", line);
+            while (pos < lines.length) {
+                string lt = lines[pos].text;
+                if (lines[pos].indent != indent || !isItem(lt)) {
+                    break;
+                }
+                string rest = lt.substring(1, lt.length);
+                rest = rest.substring(leading(rest), rest.length);
+                i32 number = lines[pos].number;
+                pos++;
+                if (rest.length == 0) {
+                    i64 inner = indent + 2;
+                    if (pos < lines.length) {
+                        inner = lines[pos].indent;
+                    }
+                    if (inner < indent + 1) {
+                        inner = indent + 1;
+                    }
+                    YNode? sub = block(inner);
+                    if (sub == null) {
+                        list.items.push(new YNode(YKind::Str, "", number));
+                    } else {
+                        list.items.push(sub);
+                    }
+                } else {
+                    (bool ok, string k, string v) = splitKey(rest);
+                    if (ok) {
+                        // Liste von Zuordnungen: "- name: x" und weitere Schlüssel darunter
+                        i64 itemIndent = indent + 2;
+                        YNode entry = new YNode(YKind::Map, "", number);
+                        entry.keys.push(k);
+                        entry.items.push(valueAfter(v, number, itemIndent));
+                        while (pos < lines.length) {
+                            string nt = lines[pos].text;
+                            if (lines[pos].indent != itemIndent || nt.startsWith("-")) {
+                                break;
+                            }
+                            (bool ok2, string k2, string v2) = splitKey(nt);
+                            if (!ok2) {
+                                throw new YamlError(lines[pos].number, "Schlüssel erwartet");
+                            }
+                            i32 nl = lines[pos].number;
+                            pos++;
+                            entry.keys.push(k2);
+                            entry.items.push(valueAfter(v2, nl, itemIndent));
+                        }
+                        list.items.push(entry);
+                    } else {
+                        list.items.push(scalar(rest, number));
+                    }
+                }
+            }
+            return list;
+        }
+        YNode result = new YNode(YKind::Map, "", line);
+        while (pos < lines.length) {
+            if (lines[pos].indent != indent) {
+                if (lines[pos].indent > indent) {
+                    throw new YamlError(lines[pos].number, "unerwartete Einrückung");
+                }
+                break;
+            }
+            (bool ok, string k, string v) = splitKey(lines[pos].text);
+            if (!ok) {
+                throw new YamlError(lines[pos].number, "Schlüssel erwartet");
+            }
+            i32 number = lines[pos].number;
+            pos++;
+            result.keys.push(k);
+            result.items.push(valueAfter(v, number, indent));
+        }
+        return result;
+    }
+
+    // Wert nach "schlüssel:" – auf derselben Zeile oder auf den folgenden, tiefer
+    // (bei Listen auch gleich) eingerückten Zeilen
+    YNode valueAfter(string v, i32 number, i64 indent) & {
+        if (v.trim().length > 0) {
+            return scalar(v, number);
+        }
+        if (pos < lines.length) {
+            i64 ni = lines[pos].indent;
+            if (ni > indent || (ni == indent && lines[pos].text.startsWith("-"))) {
+                YNode? node = block(ni);
+                if (node != null) {
+                    node.line = number;
+                    return node;
+                }
+            }
+        }
+        return new YNode(YKind::Str, "", number);
+    }
+
+public:
+    // Liest ein Dokument der eingeschränkten Form; wirft YamlError
+    static YNode parse(string text) {
+        Yaml y = new Yaml();
+        i32 number = 0;
+        for (string raw : text.split("\n")) {
+            number++;
+            string content = trimEnd(stripComment(raw));
+            i64 ind = leading(content);
+            if (ind < content.length) {
+                y.lines.push(new Line(ind, content.substring(ind, content.length), number));
+            }
+        }
+        YNode? node = y.block(0);
+        if (y.pos < y.lines.length) {
+            throw new YamlError(y.lines[y.pos].number, "unerwartete Einrückung");
+        }
+        if (node == null) {
+            return new YNode(YKind::Map, "", 1);
+        }
+        return node;
+    }
+}

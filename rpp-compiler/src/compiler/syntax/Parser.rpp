@@ -1,0 +1,1448 @@
+// Parser für R++, gleichwertig zu rppc/crates/rpp-syntax/src/parser.rs: rekursiver Abstieg,
+// Vorrangparser für Ausdrücke. Wo die Grammatik zwischen Alternativen mit unbegrenzter
+// Vorausschau entscheidet, werden die Alternativen in ihrer Reihenfolge probiert; ein
+// Fehlschlag ist eine ParseFail-Exception, danach wird die Position zurückgesetzt.
+// Gemeldet wird der Fehler, der am weitesten im Quelltext liegt.
+package compiler.syntax;
+
+using rpp.collections.Set;
+using compiler.lexer.Token;
+using compiler.lexer.Kind;
+
+export class ParseFail : Exception {
+public:
+    constructor() : base("Syntaxfehler") { }
+}
+
+export class Parser {
+private:
+    Token[] toks;
+    i64 pos = 0;
+    // weitester Fehler: Position (Token) und Meldung; -1 solange keiner
+    i64 farPos = -1;
+    string farMsg = "";
+    Set<string> prims = new Set<string>();
+
+    // ------------------------------------------------------------ Hilfen
+
+    i64 idx(i64 offset) {
+        i64 i = pos + offset;
+        if (i >= toks.length) {
+            return toks.length - 1;
+        }
+        return i;
+    }
+
+    i32 line() {
+        return toks[idx(0)].line;
+    }
+
+    i32 col() {
+        return toks[idx(0)].col;
+    }
+
+    bool isPAt(i64 offset, string p) {
+        i64 i = idx(offset);
+        return toks[i].kind == Kind::Punct && toks[i].text == p;
+    }
+
+    bool isP(string p) {
+        return isPAt(0, p);
+    }
+
+    bool isKAt(i64 offset, string k) {
+        i64 i = idx(offset);
+        return toks[i].kind == Kind::Keyword && toks[i].text == k;
+    }
+
+    bool isK(string k) {
+        return isKAt(0, k);
+    }
+
+    bool isIdent(i64 offset) {
+        return toks[idx(offset)].kind == Kind::Ident;
+    }
+
+    bool isPrim(i64 offset) {
+        i64 i = idx(offset);
+        return toks[i].kind == Kind::Keyword && prims.contains(toks[i].text);
+    }
+
+    bool atEof() {
+        return toks[idx(0)].kind == Kind::Eof;
+    }
+
+    void bump() & {
+        if (pos < toks.length - 1) {
+            pos++;
+        }
+    }
+
+    bool eatP(string p) & {
+        if (isP(p)) {
+            bump();
+            return true;
+        }
+        return false;
+    }
+
+    bool eatK(string k) & {
+        if (isK(k)) {
+            bump();
+            return true;
+        }
+        return false;
+    }
+
+    string shown() {
+        ref Token t = toks[idx(0)];
+        switch (t.kind) {
+            case Str: return "'\"" + t.text + "\"'";
+            case Char: return "''" + t.text + "''";
+            case Eof: return "Dateiende";
+            default: return "'" + t.text + "'";
+        }
+    }
+
+    // Fehlschlag festhalten und die Exception liefern, die der Aufrufer wirft.
+    ParseFail failure(string expected) & {
+        string found = "gefunden " + shown();
+        if (toks[idx(0)].kind == Kind::Error) {
+            found = toks[idx(0)].text;
+        }
+        if (farPos < pos) {
+            farPos = pos;
+            farMsg = expected + " erwartet, " + found;
+        }
+        return new ParseFail();
+    }
+
+    void expectP(string p) & {
+        if (!eatP(p)) {
+            throw failure("'" + p + "'");
+        }
+    }
+
+    void expectK(string k) & {
+        if (!eatK(k)) {
+            throw failure("'" + k + "'");
+        }
+    }
+
+    static Node node(string kind, string text) {
+        return new Node(kind, text, 0, 0);
+    }
+
+    static string flag(string acc, bool on, string word) {
+        if (!on) {
+            return acc;
+        }
+        if (acc.length == 0) {
+            return word;
+        }
+        return acc + " " + word;
+    }
+
+    Node ident() & {
+        i64 i = idx(0);
+        if (toks[i].kind == Kind::Ident) {
+            Node n = new Node("id", toks[i].text, toks[i].line, toks[i].col);
+            bump();
+            return n;
+        }
+        throw failure("Name");
+    }
+
+    Node qualifiedName() & {
+        Node q = node("qname", "");
+        q.add(ident());
+        while (isP(".") && isIdent(1)) {
+            bump();
+            q.add(ident());
+        }
+        return q;
+    }
+
+    // ------------------------------------------------------------ Dateien
+
+    Node mainDecl() & {
+        Node m = new Node("main", "", line(), col());
+        expectK("i32");
+        if (!isIdent(0) || toks[idx(0)].text != "main") {
+            throw failure("'main'");
+        }
+        bump();
+        expectP("(");
+        expectK("string");
+        expectP("[");
+        expectP("]");
+        m.add(ident());
+        expectP(")");
+        m.add(block());
+        return m;
+    }
+
+    Node typeDecl() & {
+        bool exp = eatK("export");
+        i32 l = line();
+        i32 c = col();
+        if (isK("abstract") || isK("class")) {
+            bool abs = eatK("abstract");
+            expectK("class");
+            Node n = new Node("class", flag(flag("", exp, "export"), abs, "abstract"), l, c);
+            n.add(ident());
+            n.add(typeParamsOpt());
+            if (eatP(":")) {
+                Node b = node("base", "");
+                b.add(typeName(false));
+                n.add(b);
+            }
+            expectP("{");
+            Node ms = node("members", "");
+            while (!eatP("}")) {
+                ms.add(classMember());
+            }
+            n.add(ms);
+            return n;
+        }
+        if (eatK("mixin")) {
+            Node n = new Node("mixin", flag("", exp, "export"), l, c);
+            n.add(ident());
+            n.add(typeParamsOpt());
+            expectP("{");
+            Node ms = node("members", "");
+            while (!eatP("}")) {
+                ms.add(mixinMember());
+            }
+            n.add(ms);
+            return n;
+        }
+        if (eatK("enum")) {
+            Node n = new Node("enum", flag("", exp, "export"), l, c);
+            n.add(ident());
+            expectP("{");
+            Node vs = node("variants", "");
+            vs.add(enumVariant());
+            while (true) {
+                if (eatP("}")) {
+                    break;
+                }
+                expectP(",");
+                if (eatP("}")) {
+                    break;
+                }
+                vs.add(enumVariant());
+            }
+            n.add(vs);
+            return n;
+        }
+        throw failure("Typdeklaration");
+    }
+
+    Node enumVariant() & {
+        Node name = ident();
+        if (eatP("(")) {
+            Node ps = paramList();
+            expectP(")");
+            Node v = node("variant", "");
+            v.add(name);
+            v.add(ps);
+            return v;
+        }
+        if (eatP("=")) {
+            bool neg = eatP("-");
+            i64 i = idx(0);
+            if (toks[i].kind != Kind::Int) {
+                throw failure("Ganzzahl");
+            }
+            string value = toks[i].text;
+            if (neg) {
+                value = "-" + value;
+            }
+            bump();
+            Node v = node("variant", "= " + value);
+            v.add(name);
+            return v;
+        }
+        Node v = node("variant", "");
+        v.add(name);
+        return v;
+    }
+
+    Node typeParamsOpt() & {
+        Node ps = node("tparams", "");
+        if (eatP("<")) {
+            while (true) {
+                Node p = node("tparam", "");
+                p.add(ident());
+                if (eatP(":")) {
+                    while (true) {
+                        if (eatK("new")) {
+                            expectP("(");
+                            expectP(")");
+                            p.add(node("new", ""));
+                        } else {
+                            p.add(typeName(false));
+                        }
+                        if (!eatP("&")) {
+                            break;
+                        }
+                    }
+                }
+                ps.add(p);
+                if (!eatP(",")) {
+                    break;
+                }
+            }
+            expectP(">");
+        }
+        return ps;
+    }
+
+    // ------------------------------------------------------------ Member
+
+    Node classMember() & {
+        i32 l = line();
+        i32 c = col();
+        if (isK("public") || isK("private") || isK("protected")) {
+            string word = toks[idx(0)].text;
+            bump();
+            expectP(":");
+            return new Node("access", word, l, c);
+        }
+        if (eatK("constructor")) {
+            Node n = new Node("ctor", "", l, c);
+            n.add(params());
+            if (eatP(":")) {
+                expectK("base");
+                Node b = node("baseargs", "");
+                b.add(args());
+                n.add(b);
+            }
+            n.add(block());
+            return n;
+        }
+        if (eatK("destructor")) {
+            expectP("(");
+            expectP(")");
+            Node n = new Node("dtor", "", l, c);
+            n.add(block());
+            return n;
+        }
+        if (eatK("copy")) {
+            expectP("(");
+            Node p = param();
+            expectP(")");
+            Node n = new Node("copy", "", l, c);
+            n.add(p);
+            n.add(block());
+            return n;
+        }
+        if (eatK("import")) {
+            Node n = node("import", "");
+            n.add(typeName(false));
+            expectP(";");
+            return n;
+        }
+        i64 save = pos;
+        try {
+            return fieldDecl();
+        } catch (ParseFail e) {
+            pos = save;
+        }
+        return methodDecl(false);
+    }
+
+    Node mixinMember() & {
+        if (eatK("import")) {
+            Node n = node("import", "");
+            n.add(typeName(false));
+            expectP(";");
+            return n;
+        }
+        return methodDecl(true);
+    }
+
+    Node fieldDecl() & {
+        bool isStatic = false;
+        bool isConst = false;
+        if (eatK("static")) {
+            isStatic = true;
+            expectK("const");
+            isConst = true;
+        } else if (eatK("const")) {
+            isConst = true;
+        }
+        Node f = node("field", flag(flag("", isStatic, "static"), isConst, "const"));
+        f.add(ty(false));
+        f.add(ident());
+        if (eatP("=")) {
+            f.add(expression());
+        }
+        expectP(";");
+        return f;
+    }
+
+    // methodDecl und abstractMethodDecl, im Mixin auch requirement
+    Node methodDecl(bool inMixin) & {
+        bool nd = eatK("nodiscard");
+        string modifier = "";
+        if (!inMixin && eatK("abstract")) {
+            modifier = "abstract";
+        } else if (eatK("static")) {
+            modifier = "static";
+        } else if (eatK("virtual")) {
+            modifier = "virtual";
+        } else if (eatK("override")) {
+            modifier = "override";
+        }
+        Node ret = returnType();
+        Node name = ident();
+        Node tps = typeParamsOpt();
+        Node ps = params();
+        bool mutThis = eatP("&");
+        bool without = modifier == "abstract" || (inMixin && modifier.length == 0);
+        Node m = node("method", flag(flag(flag("", nd, "nodiscard"), modifier.length > 0, modifier), mutThis, "mut"));
+        m.add(ret);
+        m.add(name);
+        m.add(tps);
+        m.add(ps);
+        bool noBody = without && eatP(";");
+        if (!noBody) {
+            if (modifier == "abstract") {
+                throw failure("';'");
+            }
+            m.add(block());
+        }
+        return m;
+    }
+
+    Node params() & {
+        expectP("(");
+        if (eatP(")")) {
+            return node("params", "");
+        }
+        Node ps = paramList();
+        expectP(")");
+        return ps;
+    }
+
+    Node paramList() & {
+        Node ps = node("params", "");
+        ps.add(param());
+        while (eatP(",")) {
+            ps.add(param());
+        }
+        return ps;
+    }
+
+    Node param() & {
+        Node t = ty(false);
+        bool mutable = eatP("&");
+        Node p = node("param", flag("", mutable, "mut"));
+        p.add(t);
+        p.add(ident());
+        return p;
+    }
+
+    // ------------------------------------------------------------ Typen
+
+    Node returnType() & {
+        if (eatK("void")) {
+            return node("void", "");
+        }
+        if (eatK("ref")) {
+            Node t = new Node("type", "", line(), col());
+            t.add(baseType(false));
+            typeSuffixes(&t, false);
+            bool mutable = eatP("&");
+            Node r = node("refret", flag("", mutable, "mut"));
+            r.add(t);
+            return r;
+        }
+        return ty(false);
+    }
+
+    Node ty(bool afterAs) & {
+        Node t = new Node("type", "", line(), col());
+        if (eatK("own")) {
+            t.text = "own";
+        } else if (eatK("shared")) {
+            t.text = "shared";
+        } else if (eatK("weak")) {
+            t.text = "weak";
+        }
+        t.add(baseType(afterAs));
+        typeSuffixes(&t, afterAs);
+        return t;
+    }
+
+    Node baseType(bool afterAs) & {
+        if (isPrim(0)) {
+            Node p = node("prim", toks[idx(0)].text);
+            bump();
+            return p;
+        }
+        if (eatP("(")) {
+            Node tu = node("tuple", "");
+            tu.add(ty(false));
+            expectP(",");
+            tu.add(ty(false));
+            while (eatP(",")) {
+                tu.add(ty(false));
+            }
+            expectP(")");
+            return tu;
+        }
+        if (isIdent(0)) {
+            return typeName(afterAs);
+        }
+        throw failure("Typ");
+    }
+
+    Node typeName(bool afterAs) & {
+        Node n = node("typename", "");
+        n.add(qualifiedName());
+        if (!isP("<")) {
+            n.add(node("targs", ""));
+        } else if (afterAs) {
+            i64 save = pos;
+            try {
+                n.add(typeArgs());
+            } catch (ParseFail e) {
+                pos = save;
+                n.add(node("targs", ""));
+            }
+        } else {
+            n.add(typeArgs());
+        }
+        return n;
+    }
+
+    Node typeArgs() & {
+        expectP("<");
+        Node a = node("targs", "");
+        while (true) {
+            if (eatK("void")) {
+                a.add(node("void", ""));
+            } else {
+                Node t = ty(false);
+                bool mutable = eatP("&");
+                Node x = node("targ", flag("", mutable, "mut"));
+                x.add(t);
+                a.add(x);
+            }
+            if (!eatP(",")) {
+                break;
+            }
+        }
+        expectP(">");
+        return a;
+    }
+
+    void typeSuffixes(Node& t, bool afterAs) & {
+        while (true) {
+            if (isP("?")) {
+                // Nach as gehört ? zum Bedingungsausdruck, wenn danach ein Ausdruck beginnt.
+                if (afterAs && startsExpression(1)) {
+                    break;
+                }
+                bump();
+                t.add(node("nullable", ""));
+            } else if (eatP("[")) {
+                if (eatP("]")) {
+                    t.add(node("vector", ""));
+                    continue;
+                }
+                Node size = arraySize();
+                expectP("]");
+                Node a = node("array", "");
+                a.add(size);
+                t.add(a);
+            } else {
+                break;
+            }
+        }
+    }
+
+    Node arraySize() & {
+        i64 i = idx(0);
+        if (toks[i].kind == Kind::Int) {
+            Node n = node("int", toks[i].text);
+            bump();
+            return n;
+        }
+        i64 save = pos;
+        try {
+            return staticRef();
+        } catch (ParseFail e) {
+            pos = save;
+        }
+        return ident();
+    }
+
+    // Kann an offset ein Ausdruck beginnen?
+    bool startsExpression(i64 offset) {
+        i64 i = idx(offset);
+        ref Token t = toks[i];
+        switch (t.kind) {
+            case Ident: return true;
+            case Int: return true;
+            case Float: return true;
+            case Str: return true;
+            case Char: return true;
+            case Keyword: {
+                string w = t.text;
+                return w == "this" || w == "base" || w == "new" || w == "cast" || w == "copy" || w == "true"
+                    || w == "false" || w == "null" || w == "own" || prims.contains(w);
+            }
+            case Punct: {
+                string p = t.text;
+                return p == "(" || p == "[" || p == "!" || p == "~" || p == "-" || p == "++" || p == "--";
+            }
+            default: return false;
+        }
+    }
+
+    // ------------------------------------------------------------ Anweisungen
+
+    Node block() & {
+        Node b = new Node("block", "", line(), col());
+        expectP("{");
+        while (!isP("}")) {
+            b.add(statement());
+        }
+        b.text = "end=" + line().toString() + ":" + col().toString();
+        bump();
+        return b;
+    }
+
+    Node statement() & {
+        i32 l = line();
+        i32 c = col();
+        if (isP("{")) {
+            return block();
+        }
+        if (eatK("if")) {
+            Node n = new Node("if", "", l, c);
+            n.add(parenExpr());
+            n.add(statement());
+            if (eatK("else")) {
+                n.add(statement());
+            }
+            return n;
+        }
+        if (eatK("while")) {
+            Node n = new Node("while", "", l, c);
+            n.add(parenExpr());
+            n.add(statement());
+            return n;
+        }
+        if (eatK("do")) {
+            Node n = new Node("dowhile", "", l, c);
+            n.add(statement());
+            expectK("while");
+            n.add(parenExpr());
+            expectP(";");
+            return n;
+        }
+        if (isK("for")) {
+            return forStmt(l, c);
+        }
+        if (isK("switch")) {
+            return switchStmt(l, c);
+        }
+        if (eatK("return")) {
+            Node n = new Node("return", "", l, c);
+            if (eatP(";")) {
+                return n;
+            }
+            if (eatP("&")) {
+                n.text = "mut";
+            }
+            n.add(expression());
+            expectP(";");
+            return n;
+        }
+        if (eatK("break")) {
+            expectP(";");
+            return new Node("break", "", l, c);
+        }
+        if (eatK("continue")) {
+            expectP(";");
+            return new Node("continue", "", l, c);
+        }
+        if (eatK("throw")) {
+            Node n = new Node("throw", "", l, c);
+            n.add(expression());
+            expectP(";");
+            return n;
+        }
+        if (isK("try")) {
+            return tryStmt(l, c);
+        }
+        if (eatK("discard")) {
+            Node n = new Node("discard", "", l, c);
+            n.add(expression());
+            expectP(";");
+            return n;
+        }
+        if (isK("ref")) {
+            Node n = refDecl(l, c);
+            expectP(";");
+            return n;
+        }
+        // localVarDecl, tupleDecl und exprStatement: die erste Alternative, die die
+        // ganze Anweisung liest, gewinnt.
+        i64 save = pos;
+        try {
+            Node d = localVarDecl(l, c);
+            expectP(";");
+            return d;
+        } catch (ParseFail e) {
+            pos = save;
+        }
+        if (isP("(")) {
+            try {
+                Node d = tupleDecl(l, c);
+                expectP(";");
+                return d;
+            } catch (ParseFail e) {
+                pos = save;
+            }
+        }
+        Node s = new Node("exprstmt", "", l, c);
+        s.add(exprStatement());
+        expectP(";");
+        return s;
+    }
+
+    Node parenExpr() & {
+        expectP("(");
+        Node e = expression();
+        expectP(")");
+        return e;
+    }
+
+    Node localVarDecl(i32 l, i32 c) & {
+        Node d = new Node("local", "", l, c);
+        if (eatK("const")) {
+            d.text = "const";
+        }
+        if (eatK("var")) {
+            d.add(node("var", ""));
+        } else {
+            d.add(ty(false));
+        }
+        d.add(ident());
+        if (eatP("=")) {
+            d.add(expression());
+        }
+        return d;
+    }
+
+    Node refDecl(i32 l, i32 c) & {
+        expectK("ref");
+        Node t = new Node("type", "", line(), col());
+        t.add(baseType(false));
+        typeSuffixes(&t, false);
+        bool mutable = eatP("&");
+        Node name = ident();
+        expectP("=");
+        if (mutable) {
+            expectP("&");
+        }
+        Node r = new Node("ref", flag("", mutable, "mut"), l, c);
+        r.add(t);
+        r.add(name);
+        r.add(expression());
+        return r;
+    }
+
+    Node tupleDecl(i32 l, i32 c) & {
+        expectP("(");
+        Node vars = node("vars", "");
+        while (true) {
+            Node v = node("tvar", "");
+            v.add(ty(false));
+            v.add(ident());
+            vars.add(v);
+            if (!eatP(",")) {
+                break;
+            }
+        }
+        if (vars.kids.length < 2) {
+            throw failure("','");
+        }
+        expectP(")");
+        expectP("=");
+        Node d = new Node("tupledecl", "", l, c);
+        d.add(vars);
+        d.add(expression());
+        return d;
+    }
+
+    string assignOp() {
+        if (toks[idx(0)].kind != Kind::Punct) {
+            return "";
+        }
+        string p = toks[idx(0)].text;
+        if (p == "=" || p == "+=" || p == "-=" || p == "*=" || p == "/=" || p == "%=") {
+            return p;
+        }
+        return "";
+    }
+
+    // exprStatement : unaryExpr assignOp expression | ('++'|'--') unaryExpr | postfixExpr
+    Node exprStatement() & {
+        Node target = unary();
+        string op = assignOp();
+        if (op.length > 0) {
+            bump();
+            Node a = node("assign", op);
+            a.add(target);
+            a.add(expression());
+            return a;
+        }
+        if (target.kind == "unary" && target.text != "++" && target.text != "--") {
+            throw failure("Zuweisung");
+        }
+        Node e = node("eval", "");
+        e.add(target);
+        return e;
+    }
+
+    // forEachStmt : FOR '(' (type | VAR) '&'? identifier ':' '&'? expression ')' statement
+    Node? forEachHead(i32 l, i32 c) & {
+        i64 save = pos;
+        try {
+            Node f = new Node("foreach", "", l, c);
+            if (eatK("var")) {
+                f.add(node("var", ""));
+            } else {
+                f.add(ty(false));
+            }
+            if (eatP("&")) {
+                f.text = "mut";
+            }
+            f.add(ident());
+            expectP(":");
+            return f;
+        } catch (ParseFail e) {
+            pos = save;
+            return null;
+        }
+    }
+
+    Node forStmt(i32 l, i32 c) & {
+        expectK("for");
+        expectP("(");
+        Node? head = forEachHead(l, c);
+        if (head != null) {
+            bool mutable = head.text == "mut";
+            bool borrow = eatP("&");
+            head.text = flag(flag("", mutable, "mut"), borrow, "borrow");
+            head.add(expression());
+            expectP(")");
+            head.add(statement());
+            return head;
+        }
+        Node f = new Node("for", "", l, c);
+        if (isP(";")) {
+            f.add(node("noinit", ""));
+        } else {
+            f.add(forInit());
+        }
+        expectP(";");
+        if (isP(";")) {
+            f.add(node("nocond", ""));
+        } else {
+            f.add(expression());
+        }
+        expectP(";");
+        if (isP(")")) {
+            f.add(node("exprs", ""));
+        } else {
+            f.add(exprStatementList());
+        }
+        expectP(")");
+        f.add(statement());
+        return f;
+    }
+
+    Node forInit() & {
+        i64 save = pos;
+        try {
+            Node d = localVarDecl(0, 0);
+            if (!isP(";")) {
+                throw failure("';'");
+            }
+            return d;
+        } catch (ParseFail e) {
+            pos = save;
+        }
+        try {
+            Node d = tupleDecl(0, 0);
+            if (!isP(";")) {
+                throw failure("';'");
+            }
+            return d;
+        } catch (ParseFail e) {
+            pos = save;
+        }
+        return exprStatementList();
+    }
+
+    Node exprStatementList() & {
+        Node list = node("exprs", "");
+        list.add(exprStatement());
+        while (eatP(",")) {
+            list.add(exprStatement());
+        }
+        return list;
+    }
+
+    Node switchStmt(i32 l, i32 c) & {
+        expectK("switch");
+        Node s = new Node("switch", "", l, c);
+        s.add(parenExpr());
+        expectP("{");
+        while (!eatP("}")) {
+            Node cl = new Node("case", "", line(), col());
+            Node pats = node("patterns", "");
+            if (eatK("default")) {
+                cl.text = "default";
+            } else {
+                expectK("case");
+                pats.add(pattern());
+                while (eatP(",")) {
+                    pats.add(pattern());
+                }
+            }
+            expectP(":");
+            Node body = node("body", "");
+            while (!(isK("case") || isK("default") || isP("}"))) {
+                body.add(statement());
+            }
+            cl.add(pats);
+            cl.add(body);
+            s.add(cl);
+        }
+        return s;
+    }
+
+    Node? literalAt(i64 offset) {
+        i64 i = idx(offset);
+        ref Token t = toks[i];
+        switch (t.kind) {
+            case Int: return node("int", t.text);
+            case Float: return node("float", t.text);
+            case Str: return node("str", t.text);
+            case Char: return node("char", t.text);
+            case Keyword: {
+                if (t.text == "true" || t.text == "false") {
+                    return node("bool", t.text);
+                }
+                if (t.text == "null") {
+                    return node("null", "");
+                }
+                return null;
+            }
+            default: return null;
+        }
+    }
+
+    Node pattern() & {
+        bool negative = isP("-");
+        i64 litAt = 0;
+        if (negative) {
+            litAt = 1;
+        }
+        Node? lit = literalAt(litAt);
+        if (lit != null) {
+            if (negative) {
+                bump();
+            }
+            bump();
+            Node p = node("plit", flag("", negative, "-"));
+            p.add(lit);
+            return p;
+        }
+        if (negative) {
+            bump();
+            throw failure("Literal");
+        }
+        Node p = node("pname", "");
+        i64 save = pos;
+        try {
+            p.add(staticRef());
+        } catch (ParseFail e) {
+            pos = save;
+            p.add(ident());
+        }
+        if (eatP("(")) {
+            Node bs = node("bindings", "");
+            bs.add(ident());
+            while (eatP(",")) {
+                bs.add(ident());
+            }
+            expectP(")");
+            p.add(bs);
+        }
+        return p;
+    }
+
+    Node tryStmt(i32 l, i32 c) & {
+        expectK("try");
+        Node t = new Node("try", "", l, c);
+        t.add(block());
+        i32 catches = 0;
+        while (eatK("catch")) {
+            expectP("(");
+            Node cl = node("catch", "");
+            cl.add(ty(false));
+            cl.add(ident());
+            expectP(")");
+            cl.add(block());
+            t.add(cl);
+            catches++;
+        }
+        if (eatK("finally")) {
+            Node f = node("finally", "");
+            f.add(block());
+            t.add(f);
+        } else if (catches == 0) {
+            throw failure("'catch' oder 'finally'");
+        }
+        return t;
+    }
+
+    // ------------------------------------------------------------ Ausdrücke
+
+    // expression : lambda | conditionalExpr
+    Node expression() & {
+        if (isK("own") || isP("(")) {
+            Node? lambda = lambdaHead(line(), col());
+            if (lambda != null) {
+                if (isP("{")) {
+                    lambda.add(block());
+                } else {
+                    lambda.add(expression());
+                }
+                return lambda;
+            }
+        }
+        return conditional();
+    }
+
+    // OWN? '(' paramList? ')' '=>'
+    Node? lambdaHead(i32 l, i32 c) & {
+        i64 save = pos;
+        try {
+            bool isOwn = eatK("own");
+            Node ps = params();
+            expectP("=>");
+            Node n = new Node("lambda", flag("", isOwn, "own"), l, c);
+            n.add(ps);
+            return n;
+        } catch (ParseFail e) {
+            pos = save;
+            return null;
+        }
+    }
+
+    Node conditional() & {
+        Node c = coalesce();
+        if (isP("?")) {
+            Node n = new Node("cond", "", c.line, c.col);
+            bump();
+            n.add(c);
+            n.add(expression());
+            expectP(":");
+            n.add(expression());
+            return n;
+        }
+        return c;
+    }
+
+    Node coalesce() & {
+        Node left = binary(0);
+        if (eatP("??")) {
+            Node n = new Node("coalesce", "", left.line, left.col);
+            n.add(left);
+            n.add(coalesce());
+            return n;
+        }
+        return left;
+    }
+
+    // Nächster zweistelliger Operator: (Operator, Anzahl Tokens, Vorrang × 2); "" wenn keiner.
+    // as hat Stufe 10a, also 21.
+    (string, i64, i32) binaryOp() {
+        if (isK("as")) {
+            return ("as", 1, 21);
+        }
+        if (isP("<") && isPAt(1, "<")) {
+            return ("<<", 2, 22);
+        }
+        if (isP(">") && isPAt(1, ">")) {
+            return (">>", 2, 22);
+        }
+        if (toks[idx(0)].kind != Kind::Punct) {
+            return ("", 0, 0);
+        }
+        string p = toks[idx(0)].text;
+        i32 prec = 0;
+        if (p == "*" || p == "/" || p == "%") {
+            prec = 26;
+        } else if (p == "+" || p == "-") {
+            prec = 24;
+        } else if (p == "<" || p == ">" || p == "<=" || p == ">=") {
+            prec = 20;
+        } else if (p == "==" || p == "!=") {
+            prec = 18;
+        } else if (p == "&") {
+            prec = 16;
+        } else if (p == "^") {
+            prec = 14;
+        } else if (p == "|") {
+            prec = 12;
+        } else if (p == "&&") {
+            prec = 10;
+        } else if (p == "||") {
+            prec = 8;
+        } else {
+            return ("", 0, 0);
+        }
+        return (p, 1, prec);
+    }
+
+    Node binary(i32 minPrec) & {
+        Node left = unary();
+        while (true) {
+            (string op, i64 width, i32 prec) = binaryOp();
+            if (op.length == 0 || prec < minPrec) {
+                break;
+            }
+            i32 l = left.line;
+            i32 c = left.col;
+            for (i64 i = 0; i < width; i++) {
+                bump();
+            }
+            if (op == "as") {
+                Node n = new Node("as", "", l, c);
+                n.add(left);
+                n.add(ty(true));
+                left = n;
+            } else {
+                Node n = new Node("binary", op, l, c);
+                n.add(left);
+                n.add(binary(prec + 1));
+                left = n;
+            }
+        }
+        return left;
+    }
+
+    Node unary() & {
+        i32 l = line();
+        i32 c = col();
+        string op = "";
+        if (isP("!") || isP("~") || isP("-") || isP("++") || isP("--")) {
+            op = toks[idx(0)].text;
+        } else {
+            return postfix();
+        }
+        bump();
+        Node n = new Node("unary", op, l, c);
+        n.add(unary());
+        return n;
+    }
+
+    Node postfix() & {
+        Node e = primary();
+        while (true) {
+            i32 l = e.line;
+            i32 c = e.col;
+            if (isP(".") || isP("?.")) {
+                bool safe = isP("?.");
+                bump();
+                Node n = new Node("member", flag("", safe, "safe"), l, c);
+                n.add(e);
+                n.add(ident());
+                e = n;
+            } else if (isP("(")) {
+                Node n = new Node("call", "", l, c);
+                n.add(e);
+                n.add(args());
+                e = n;
+            } else if (eatP("[")) {
+                Node? from = null;
+                if (!isP("..")) {
+                    from = expression();
+                }
+                if (eatP("..")) {
+                    Node? to = null;
+                    if (!isP("]")) {
+                        to = expression();
+                    }
+                    expectP("]");
+                    Node n = new Node("slice", "", l, c);
+                    n.add(e);
+                    n.add(from ?? node("none", ""));
+                    n.add(to ?? node("none", ""));
+                    e = n;
+                } else {
+                    expectP("]");
+                    Node n = new Node("index", "", l, c);
+                    n.add(e);
+                    n.add(from ?? node("none", ""));
+                    e = n;
+                }
+            } else if (eatP("++")) {
+                Node n = new Node("postinc", "", l, c);
+                n.add(e);
+                e = n;
+            } else if (eatP("--")) {
+                Node n = new Node("postdec", "", l, c);
+                n.add(e);
+                e = n;
+            } else {
+                return e;
+            }
+        }
+    }
+
+    Node args() & {
+        expectP("(");
+        Node a = node("args", "");
+        if (eatP(")")) {
+            return a;
+        }
+        while (true) {
+            bool mutable = eatP("&");
+            Node x = node("arg", flag("", mutable, "mut"));
+            x.add(expression());
+            a.add(x);
+            if (!eatP(",")) {
+                break;
+            }
+        }
+        expectP(")");
+        return a;
+    }
+
+    // staticRef : (qualifiedName typeArgs? | primitiveType) '::' identifier
+    Node staticRef() & {
+        Node s = new Node("sref", "", line(), col());
+        if (isPrim(0)) {
+            s.add(node("prim", toks[idx(0)].text));
+            bump();
+        } else {
+            Node owner = node("typename", "");
+            owner.add(qualifiedName());
+            if (isP("<")) {
+                i64 save = pos;
+                try {
+                    owner.add(typeArgs());
+                } catch (ParseFail e) {
+                    pos = save;
+                    owner.add(node("targs", ""));
+                }
+            } else {
+                owner.add(node("targs", ""));
+            }
+            s.add(owner);
+        }
+        expectP("::");
+        s.add(ident());
+        return s;
+    }
+
+    Node primary() & {
+        i32 l = line();
+        i32 c = col();
+        Node? lit = literalAt(0);
+        if (lit != null) {
+            lit.line = l;
+            lit.col = c;
+            bump();
+            return lit;
+        }
+        if (eatK("this")) {
+            return new Node("this", "", l, c);
+        }
+        if (eatK("base")) {
+            return new Node("base", "", l, c);
+        }
+        if (eatP("(")) {
+            Node first = expression();
+            if (eatP(",")) {
+                Node t = new Node("tuple", "", l, c);
+                t.add(first);
+                t.add(expression());
+                while (eatP(",")) {
+                    t.add(expression());
+                }
+                expectP(")");
+                return t;
+            }
+            expectP(")");
+            Node p = new Node("paren", "", l, c);
+            p.add(first);
+            return p;
+        }
+        if (eatP("[")) {
+            Node a = new Node("array", "", l, c);
+            if (!eatP("]")) {
+                a.add(expression());
+                while (eatP(",")) {
+                    a.add(expression());
+                }
+                expectP("]");
+            }
+            return a;
+        }
+        if (eatK("new")) {
+            Node n = new Node("new", "", l, c);
+            n.add(typeName(false));
+            n.add(args());
+            return n;
+        }
+        if (eatK("cast")) {
+            expectP("<");
+            Node t = ty(false);
+            expectP(">");
+            Node n = new Node("cast", "", l, c);
+            n.add(t);
+            n.add(parenExpr());
+            return n;
+        }
+        if (eatK("copy")) {
+            Node n = new Node("copy", "", l, c);
+            n.add(parenExpr());
+            return n;
+        }
+        if (isIdent(0)) {
+            i64 save = pos;
+            try {
+                Node s = new Node("static", "", l, c);
+                s.add(staticRef());
+                return s;
+            } catch (ParseFail e) {
+                pos = save;
+            }
+            Node id = ident();
+            return new Node("name", id.text, l, c);
+        }
+        if (isPrim(0)) {
+            Node s = new Node("static", "", l, c);
+            s.add(staticRef());
+            return s;
+        }
+        throw failure("Ausdruck");
+    }
+
+public:
+    constructor(own Token[] toks) {
+        this.toks = toks;
+        string[] words = ["bool", "char", "byte", "string", "i8", "i16", "i32", "i64",
+            "ui8", "ui16", "ui32", "ui64", "f32", "f64"];
+        for (string w : words) {
+            prims.add(w);
+        }
+    }
+
+    // compilationUnit; wirft ParseFail, die Meldung liefert errorText()
+    Node compilationUnit() & {
+        Node unit = node("unit", "");
+        if (eatK("package")) {
+            Node p = node("package", "");
+            p.add(qualifiedName());
+            expectP(";");
+            unit.add(p);
+        }
+        while (isK("using")) {
+            Node u = new Node("using", "", line(), col());
+            bump();
+            if (isIdent(0) && isPAt(1, "=")) {
+                u.text = "alias";
+                u.add(ident());
+                bump();
+            }
+            u.add(qualifiedName());
+            expectP(";");
+            unit.add(u);
+        }
+        while (!atEof()) {
+            if (isK("i32")) {
+                unit.add(mainDecl());
+            } else {
+                unit.add(typeDecl());
+            }
+        }
+        return unit;
+    }
+
+    // Position und Meldung des Fehlers nach einer ParseFail (wie Parser::error in rppc)
+    (i32, i32, string) error() {
+        i64 p = pos;
+        string msg = "Syntaxfehler";
+        if (farPos >= 0) {
+            p = farPos;
+            msg = farMsg;
+        }
+        if (p > toks.length - 1) {
+            p = toks.length - 1;
+        }
+        return (toks[p].line, toks[p].col, msg);
+    }
+
+    // Wie Display von SyntaxError: "Zeile l:c Meldung"
+    string errorText() {
+        (i32 l, i32 c, string msg) = error();
+        return "Zeile " + l.toString() + ":" + c.toString() + " " + msg;
+    }
+
+    static string badStatement() {
+        return "Ausdruck ist keine gültige Anweisung (nur Zuweisung, Aufruf, ++ und --)";
+    }
+
+    // Erlaubte Formen von Ausdrucksanweisungen (Kapitel 8, R-8.12): der erste Verstoß
+    // als "Zeile l:c Meldung", sonst "".
+    static string check(Node unit) {
+        (i32 l, i32 c) = firstBad(unit, 0, 0);
+        if (l == 0) {
+            return "";
+        }
+        return "Zeile " + l.toString() + ":" + c.toString() + " " + badStatement();
+    }
+
+    static (i32, i32) firstBad(Node n, i32 sl, i32 sc) {
+        i32 l = sl;
+        i32 c = sc;
+        if (n.kind == "exprstmt" || n.kind == "for") {
+            l = n.line;
+            c = n.col;
+        }
+        i32 bl = 0;
+        i32 bc = 0;
+        if (n.kind == "eval") {
+            ref Node e = n.kids[0];
+            bool ok = e.kind == "call" || e.kind == "postinc" || e.kind == "postdec"
+                || (e.kind == "unary" && (e.text == "++" || e.text == "--"));
+            if (!ok) {
+                bl = l;
+                bc = c;
+            }
+        }
+        for (Node k : n.kids) {
+            (i32 kl, i32 kc) = firstBad(k, l, c);
+            if (kl > 0 && (bl == 0 || kl < bl || (kl == bl && kc < bc))) {
+                bl = kl;
+                bc = kc;
+            }
+        }
+        return (bl, bc);
+    }
+}

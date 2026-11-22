@@ -1,0 +1,6 @@
+package acme.geo;
+
+class Point {
+public:
+    f64 x = 0.0;
+}

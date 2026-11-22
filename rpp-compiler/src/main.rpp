@@ -1,0 +1,397 @@
+// rppcc – der R++-Compiler in R++ (Meilenstein M6).
+//   rppcc tokens DATEI            eine Zeile je Token (wie `rppc tokens`)
+//   rppcc pre SYMBOLE DATEI       bedingte Kompilierung, Symbole mit Komma getrennt (wie `rppc pre`)
+//   rppcc ast SYMBOLE DATEI       Syntaxbaum in Textform oder der erste Fehler (wie `rppc ast`)
+//   rppcc projekt [--release] STD PFAD
+//   rppcc defs [--release] STD PFAD
+//                                 Deklarationstabellen und Meldungen der Deklarationsphase (wie `rppc defs`)
+//   rppcc pruefe STD PFAD         alle Meldungen der Prüfung, auch der Rümpfe (wie `rppc pruefe`)
+//                                 Deklarationstabellen und Meldungen der Deklarationsphase (wie `rppc defs`)
+//                                 geladene Projekte, Dateien und Meldungen (wie `rppc projekt`)
+using rpp.io.File;
+using rpp.io.Console;
+using rpp.collections.Set;
+using compiler.lexer.Lexer;
+using compiler.lexer.Token;
+using compiler.pre.Preprocessor;
+using compiler.pre.DirectiveError;
+using compiler.syntax.Node;
+using compiler.syntax.Source;
+using compiler.syntax.SyntaxError;
+using rpp.text.StringBuilder;
+using compiler.project.Workspace;
+using compiler.project.Project;
+using compiler.project.ProjectKind;
+using compiler.project.SourceFile;
+using compiler.project.Diag;
+using compiler.sema.Program;
+using compiler.sema.Checker;
+using compiler.sema.Ty;
+using compiler.sema.TypeDef;
+using compiler.sema.DefKind;
+using compiler.sema.TParam;
+using compiler.sema.PInfo;
+using compiler.sema.Mode;
+using compiler.sema.Access;
+using compiler.sema.RetKind;
+using compiler.sema.FieldInfo;
+using compiler.sema.MethodInfo;
+using compiler.sema.CtorInfo;
+using compiler.sema.VariantInfo;
+
+class Main {
+public:
+    static i32 tokens(string path) {
+        File f = File::open(path);
+        string text = f.readAllText();
+        Lexer lx = new Lexer(text);
+        Token[] tokens = lx.lex();
+        for (Token t : tokens) {
+            print(t.describe());
+        }
+        return 0;
+    }
+
+    static i32 pre(string symbolList, string path) {
+        Set<string> symbols = new Set<string>();
+        for (string s : symbolList.split(",")) {
+            if (s.length > 0) {
+                symbols.add(s);
+            }
+        }
+        File f = File::open(path);
+        string text = f.readAllText();
+        try {
+            print(Preprocessor::run(text, symbols));
+        } catch (DirectiveError e) {
+            print("Zeile " + e.line.toString() + ": " + e.message);
+        }
+        return 0;
+    }
+
+    static string accessName(Access a) {
+        if (a == Access::Public) {
+            return "public";
+        }
+        if (a == Access::Protected) {
+            return "protected";
+        }
+        return "private";
+    }
+
+    static string paramList(Program p, PInfo[] ps) {
+        string[] parts = [];
+        for (PInfo x : ps) {
+            if (x.mode == Mode::Mut) {
+                parts.push(p.show(x.ty) + "& " + x.name);
+            } else if (x.mode == Mode::Own) {
+                parts.push("own " + p.show(x.ty) + " " + x.name);
+            } else {
+                parts.push(p.show(x.ty) + " " + x.name);
+            }
+        }
+        return string::join(", ", parts);
+    }
+
+    static string tparamList(Program p, i64[] ids) {
+        string[] parts = [];
+        for (i64 id : ids) {
+            string s = p.tparams[id].name;
+            if (p.tparams[id].needsNew) {
+                s = s + " new";
+            }
+            if (p.tparams[id].constraints.length > 0) {
+                s = s + " : " + p.showList(p.tparams[id].constraints, 0, p.tparams[id].constraints.length);
+            }
+            parts.push(s);
+        }
+        return string::join("; ", parts);
+    }
+
+    static string pos(i32 line, i32 col) {
+        return " @" + line.toString() + ":" + col.toString();
+    }
+
+    // Vergleich von Pfaden wie Path in Rust: Komponente für Komponente
+    static i32 comparePaths(string a, string b) {
+        string[] pa = a.split("/");
+        string[] pb = b.split("/");
+        for (i64 i = 0; i < pa.length && i < pb.length; i++) {
+            if (pa[i] != pb[i]) {
+                if (pa[i] < pb[i]) {
+                    return -1;
+                }
+                return 1;
+            }
+        }
+        if (pa.length < pb.length) {
+            return -1;
+        }
+        if (pa.length > pb.length) {
+            return 1;
+        }
+        return 0;
+    }
+
+    static bool diagBefore(Diag a, Diag b) {
+        i32 c = comparePaths(a.file, b.file);
+        if (c != 0) {
+            return c < 0;
+        }
+        if (a.line != b.line) {
+            return a.line < b.line;
+        }
+        return a.col < b.col;
+    }
+
+    // Meldungen in der Reihenfolge von rppc: nach Datei und Position, stabil, ohne Duplikate
+    static string[] sortedDiags(Diag[] ds) {
+        i64[] order = [];
+        for (i64 i = 0; i < ds.length; i++) {
+            i64 at = order.length;
+            while (at > 0 && diagBefore(ds[i], ds[order[at - 1]])) {
+                at--;
+            }
+            order.push(0);
+            for (i64 k = order.length - 1; k > at; k--) {
+                order[k] = order[k - 1];
+            }
+            order[at] = i;
+        }
+        string[] out = [];
+        string last = "";
+        for (i64 i : order) {
+            ref Diag d = ds[i];
+            string kind = "fehler";
+            if (d.warning) {
+                kind = "warnung";
+            }
+            string rules = d.rule;
+            for (string a : d.also) {
+                rules = rules + ", " + a;
+            }
+            string line = kind + " " + d.file + ":" + d.line.toString() + ":" + d.col.toString() + " [" + rules + "] " + d.message;
+            if (out.length == 0 || line != last) {
+                out.push(line);
+            }
+            last = line;
+        }
+        return out;
+    }
+
+    // Deklarationsphase; Ausgabe wie `rppc defs`
+    static i32 defs(string stdDir, string input, bool release) {
+        Workspace ws = Workspace::load(input, stdDir, release);
+        Program p = Program::build(ws);
+        for (i64 i = 0; i < p.defs.length; i++) {
+            ref TypeDef d = p.defs[i];
+            string kind = "klasse";
+            if (d.kind == DefKind::Mixin) {
+                kind = "mixin";
+            } else if (d.kind == DefKind::Enum) {
+                kind = "enum";
+            }
+            string flags = "";
+            if (d.exported) {
+                flags = flags + " export";
+            }
+            if (d.isAbstract) {
+                flags = flags + " abstract";
+            }
+            print("typ " + i.toString() + " " + d.fullName() + " " + kind + flags + " projekt=" + d.project.toString());
+            if (d.tparams.length > 0) {
+                print("  tparams " + tparamList(p, d.tparams));
+            }
+            shared Ty? b = d.baseType;
+            if (b != null) {
+                print("  basis " + p.show(b));
+            }
+            for (i64 k = 0; k < d.imports.length; k++) {
+                print("  import " + p.show(d.imports[k]) + pos(d.importLines[k], d.importCols[k]));
+            }
+            for (FieldInfo f : d.fields) {
+                string fl = "";
+                if (f.isStatic) {
+                    fl = fl + " static";
+                }
+                if (f.isConst) {
+                    fl = fl + " const";
+                }
+                if (f.hasInit) {
+                    fl = fl + " init";
+                }
+                print("  feld " + accessName(f.access) + fl + " " + f.name + ": " + p.show(f.ty) + pos(f.line, f.col));
+            }
+            for (MethodInfo m : d.methods) {
+                string fl = "";
+                if (m.modifier.length > 0) {
+                    fl = " " + m.modifier;
+                }
+                if (m.isNodiscard) {
+                    fl = fl + " nodiscard";
+                }
+                if (m.mutThis) {
+                    fl = fl + " mut";
+                }
+                if (!m.hasBody) {
+                    fl = fl + " ohne-rumpf";
+                }
+                string ret = "void";
+                if (m.ret.kind == RetKind::Val) {
+                    ret = p.show(m.ret.ty);
+                } else if (m.ret.kind == RetKind::Ref) {
+                    ret = "ref " + p.show(m.ret.ty);
+                    if (m.ret.mutable) {
+                        ret = ret + "&";
+                    }
+                }
+                string tps = "";
+                if (m.tparams.length > 0) {
+                    tps = "<" + tparamList(p, m.tparams) + ">";
+                }
+                print("  methode " + accessName(m.access) + fl + " " + m.name + tps + "(" + paramList(p, m.params) + ") -> " + ret + pos(m.line, m.col));
+            }
+            for (CtorInfo c : d.ctors) {
+                string bs = "";
+                if (c.callsBase) {
+                    bs = " base";
+                }
+                print("  konstruktor " + accessName(c.access) + "(" + paramList(p, c.params) + ")" + bs + pos(c.line, c.col));
+            }
+            if (d.hasDtor) {
+                print("  destruktor");
+            }
+            if (d.hasCopy) {
+                print("  copy" + pos(d.copyLine, d.copyCol));
+            }
+            for (VariantInfo v : d.variants) {
+                string value = "";
+                if (v.hasValue) {
+                    value = " = " + v.value.toString();
+                }
+                print("  variante " + v.name + "(" + paramList(p, v.fields) + ")" + value);
+            }
+        }
+        for (string line : sortedDiags(p.diags)) {
+            print(line);
+        }
+        return 0;
+    }
+
+    // Ganze Prüfung; Ausgabe wie `rppc pruefe`
+    static i32 pruefe(string stdDir, string input) {
+        Workspace ws = Workspace::load(input, stdDir, false);
+        Program p = Program::build(ws);
+        Checker c = new Checker(p);
+        c.run(ws);
+        for (string line : sortedDiags(c.p.diags)) {
+            print(line);
+        }
+        return 0;
+    }
+
+    // Projekt laden; Ausgabe wie `rppc projekt`
+    static i32 projekt(string stdDir, string input, bool release) {
+        Workspace ws = Workspace::load(input, stdDir, release);
+        i64 i = 0;
+        for (Project p : ws.projects) {
+            string kind = "bibliothek";
+            if (p.kind == ProjectKind::Executable) {
+                kind = "programm";
+            }
+            string flags = "";
+            if (p.isStd) {
+                flags = flags + " std";
+            }
+            if (p.singleFile) {
+                flags = flags + " einzeldatei";
+            }
+            print("projekt " + i.toString() + " " + p.name + " " + kind + flags + " " + p.dir);
+            string? m = p.mainFile;
+            if (m != null) {
+                print("  main " + m);
+            }
+            if (p.deps.length > 0) {
+                string[] deps = [];
+                for (i64 d : p.deps) {
+                    deps.push(d.toString());
+                }
+                print("  abhängig " + string::join(" ", deps));
+            }
+            i++;
+        }
+        for (SourceFile f : ws.files) {
+            string pkg = f.packageName();
+            if (pkg.length == 0) {
+                pkg = "-";
+            }
+            string exp = "-";
+            string? e = f.expected;
+            if (e != null) {
+                exp = e;
+                if (exp.length == 0) {
+                    exp = ".";
+                }
+            }
+            string mainMark = "";
+            if (f.hasMain()) {
+                mainMark = " main";
+            }
+            print("datei " + f.path + " projekt=" + f.project.toString() + " paket=" + pkg + " erwartet=" + exp + " typen=" + f.typeNames() + mainMark);
+        }
+        for (Diag d : ws.diags) {
+            print("fehler " + d.file + ":" + d.line.toString() + ":" + d.col.toString() + " [" + d.rule + "] " + d.message);
+        }
+        return 0;
+    }
+
+    // Präprozessor, Lexer, Parser, Prüfung R-8.12; Ausgabe wie `rppc ast`
+    static i32 ast(string symbolList, string path) {
+        Set<string> symbols = new Set<string>();
+        for (string s : symbolList.split(",")) {
+            if (s.length > 0) {
+                symbols.add(s);
+            }
+        }
+        File f = File::open(path);
+        string source = f.readAllText();
+        try {
+            Node unit = Source::parse(source, symbols);
+            StringBuilder out = new StringBuilder();
+            unit.dump(&out, 0);
+            Console::write(out.toString());
+        } catch (SyntaxError e) {
+            print("Zeile " + e.line.toString() + ":" + e.col.toString() + " " + e.message);
+        }
+        return 0;
+    }
+}
+
+i32 main(string[] args) {
+    if (args.length == 3 && args[0] == "ast") {
+        return Main::ast(args[1], args[2]);
+    }
+    if (args.length == 2 && args[0] == "tokens") {
+        return Main::tokens(args[1]);
+    }
+    if (args.length == 3 && args[0] == "pre") {
+        return Main::pre(args[1], args[2]);
+    }
+    if (args.length == 4 && args[0] == "projekt" && args[1] == "--release") {
+        return Main::projekt(args[2], args[3], true);
+    }
+    if (args.length == 3 && args[0] == "pruefe") {
+        return Main::pruefe(args[1], args[2]);
+    }
+    if (args.length == 4 && args[0] == "defs" && args[1] == "--release") {
+        return Main::defs(args[2], args[3], true);
+    }
+    if (args.length == 3 && args[0] == "defs") {
+        return Main::defs(args[1], args[2], false);
+    }
+    if (args.length == 3 && args[0] == "projekt") {
+        return Main::projekt(args[1], args[2], false);
+    }
+    Console::error("Aufruf: rppcc tokens DATEI | rppcc pre SYMBOLE DATEI");
+    return 2;
+}
