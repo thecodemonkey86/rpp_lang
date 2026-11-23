@@ -14,7 +14,7 @@ Rust-Workspace der ersten R++-Implementierung (siehe „R++ Implementierungsplan
 | `crates/rpp-sema/src/` | Projekte (`project.rs`, `yaml.rs`), Deklarationen und Klassenregeln (`defs.rs`), Typen (`ty.rs`), Rümpfe mit Flussanalyse (`body.rs`), Flusszustand, Orte und Loans (`flow.rs`) |
 | `crates/rpp-sema/src/rt.rs` | Angaben der Prüfung für die Ausführung (`Program::rt`) |
 | `crates/rpp-interp/src/` | Debug-Interpreter: Werte und Besitzformen (`value.rs`), Ausführung, Freigabe, Exceptions, Sperren (`lib.rs`) |
-| `std/rpp/…` | Standardbibliothek als R++-Quelltext (Signaturen nach Kapitel 13, Rümpfe noch Platzhalter) |
+| `std/rpp/…` | Standardbibliothek als R++-Quelltext (Kapitel 13); eingebaute Teile führen die Methoden mit `fail("eingebaut")` im Interpreter aus (`crates/rpp-interp/src/stdlib.rs`), `rpp.random`, `rpp.collections.Vectors`, `rpp.collections.Deque`, `rpp.text.Text` und der Rundungs-Teil von `rpp.math` sind reiner R++-Quelltext |
 | `crates/rppc/src/conftest.rs` | semantischer Konformitätstestlauf `rppc test` |
 | `crates/rppc/src/main.rs` | Kommandozeile |
 | `crates/rppc/src/syntaxtest.rs` | Syntax-Testlauf mit denselben Fällen wie `rpp-grammatik/tools/run_tests.py` |
@@ -51,7 +51,7 @@ Konformitätstests semantisch prüfen (übersetzen oder ablehnen, Warnungen nur 
 cargo run -- test ..
 ```
 
-Laufzeittests werden dabei in beiden Modi und im Prüfmodus ausgeführt (Ausgabe, Exit-Code, Fehlerausgabe). Jeder Laufzeittest läuft in einem frischen, leeren Arbeitsverzeichnis (V-14.3). Stand 22.11.2026: 258 bestanden, 0 fehlgeschlagen.
+Laufzeittests werden dabei in beiden Modi und im Prüfmodus ausgeführt (Ausgabe, Exit-Code, Fehlerausgabe). Jeder Laufzeittest läuft in einem frischen, leeren Arbeitsverzeichnis (V-14.3). Stand 23.11.2026: 293 bestanden, 0 fehlgeschlagen.
 
 Ein Programm ausführen (Standardeingabe wird gelesen; Argumente nach `--`):
 

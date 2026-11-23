@@ -1,0 +1,9 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.29
+// Erwartet: Exit-Code 2; Fehlerausgabe enthält "FailError"
+using rpp.math.Math;
+
+i32 main(string[] args) {
+    print(Math::clamp(1.0, 3.0, 0.0).toString());
+    return 0;
+}

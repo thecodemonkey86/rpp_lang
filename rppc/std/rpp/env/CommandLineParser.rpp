@@ -1,0 +1,72 @@
+package rpp.env;
+
+export class CommandLineResult {
+public:
+    bool helpRequested = false;
+    string? error = null;
+    string[] positional = [];
+    string[] flags = [];
+
+    bool isSet(string flag) { return flags.contains(flag); }
+}
+
+export class CommandLineParser {
+private:
+    string command;
+    string description;
+    string[] arguments = [];
+    string[] options = [];
+    string[] optionHelp = [];
+
+public:
+    constructor(string command, string description) {
+        this.command = command;
+        this.description = description;
+    }
+
+    void addPositional(string name) mut { arguments.push(name); }
+
+    void addFlag(string option, string help) mut {
+        options.push(option);
+        optionHelp.push(help);
+    }
+
+    string helpText() {
+        string usage = "Aufruf: " + command;
+        for (string option : options) { usage += " [" + option + "]"; }
+        for (string name : arguments) { usage += " " + name; }
+        string help = usage + "\n" + description + "\n  -h, --help  Hilfe anzeigen";
+        for (i64 i = 0; i < options.length; i++) {
+            help += "\n  " + options[i] + "  " + optionHelp[i];
+        }
+        return help;
+    }
+
+    CommandLineResult parse(Slice<string> args) {
+        CommandLineResult result = new CommandLineResult();
+        bool readOptions = true;
+        for (string arg : args) {
+            if (readOptions && arg == "--") {
+                readOptions = false;
+            } else if (readOptions && (arg == "--help" || arg == "-h")) {
+                result.helpRequested = true;
+                return result;
+            } else if (readOptions && arg.length > 1 && arg.startsWith("-")) {
+                if (!options.contains(arg)) {
+                    result.error = command + ": unbekannte Option " + arg;
+                    return result;
+                }
+                result.flags.push(arg);
+            } else if (result.positional.length == arguments.length) {
+                result.error = command + ": unerwartetes Argument " + arg;
+                return result;
+            } else {
+                result.positional.push(arg);
+            }
+        }
+        if (result.positional.length < arguments.length) {
+            result.error = command + ": " + arguments[result.positional.length] + " fehlt";
+        }
+        return result;
+    }
+}

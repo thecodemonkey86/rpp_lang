@@ -25,7 +25,7 @@ Stand: 22.11.2026, Entwurf 0.47. Grundlage ist das Dokument „R++ Designentsche
 | 10 | Lambdas | Erfassen per Borrow und per Wert, Funktionstypen | Entwurf 0.1 („R++ Lambdas“), Regeln R-10.1 bis R-10.18, alles entschieden |
 | 11 | Pakete und Projekte | `package`, `using`, `export`, Projektdatei, Abhängigkeiten, zentrales Verzeichnis, bedingte Kompilierung | Entwurf 0.1 („R++ Pakete und Projekte“), Regeln R-11.1 bis R-11.25 |
 | 12 | Ausführungsmodell | Debug- und Releasemodus, zulässige Unterschiede | Entwurf 0.1 („R++ Ausführungsmodell“), Regeln R-12.1 bis R-12.12 |
-| 13 | Standardbibliothek | Mindestumfang: `string`, Arrays, Exceptions, `Func` | Entwurf 0.1 („R++ Standardbibliothek“), erster Schnitt für Selbstübersetzung, alles entschieden |
+| 13 | Standardbibliothek | Mindestumfang: `string`, Arrays, Exceptions, `Func` | Entwurf 0.8 („R++ Standardbibliothek“), erster Schnitt für Selbstübersetzung, alles entschieden; Ausbau mit `rpp.random`, `Vectors`, `rpp.math`, `Text`, Datei-Operationen, `Deque`/`getOrPut` (Abschnitte 9–15) |
 | 14 | Konformitätstests | Aufbau der Testsuite, Zuordnung zu Regeln | Entwurf 0.2 („R++ Konformitätstests“), alle Regeln genannt oder begründet |
 
 ## 2. Lexikalische Struktur

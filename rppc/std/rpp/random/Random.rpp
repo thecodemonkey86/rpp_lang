@@ -1,0 +1,100 @@
+// Standardbibliothek: rpp.random (Kapitel 13, R-13.23 bis R-13.25)
+// xoshiro256** mit SplitMix64-Seeding. Die Arithmetik modulo 2^64 wird ohne
+// Überlauf gerechnet (R-4.14), damit Debug- und Releasemodus gleich laufen.
+package rpp.random;
+
+export class Random {
+private:
+    ui64 s0;
+    ui64 s1;
+    ui64 s2;
+    ui64 s3;
+
+    static const ui64 MASK32 = 0xFFFFFFFF;
+
+    // Addition modulo 2^64, in 32-Bit-Hälften ohne Überlauf.
+    static ui64 add64(ui64 a, ui64 b) {
+        ui64 lo = (a & MASK32) + (b & MASK32);
+        ui64 hi = (a >> 32) + (b >> 32) + (lo >> 32);
+        return ((hi & MASK32) << 32) | (lo & MASK32);
+    }
+
+    // Multiplikation modulo 2^64: nur die unteren 64 Bit, ohne Überlauf.
+    static ui64 mul64(ui64 a, ui64 b) {
+        ui64 a0 = a & MASK32;
+        ui64 a1 = a >> 32;
+        ui64 b0 = b & MASK32;
+        ui64 b1 = b >> 32;
+        ui64 p0 = a0 * b0;
+        ui64 cross = ((a0 * b1) & MASK32) + ((a1 * b0) & MASK32);
+        ui64 hi = (p0 >> 32) + (cross & MASK32);
+        return ((hi & MASK32) << 32) | (p0 & MASK32);
+    }
+
+    static ui64 rotl(ui64 x, i32 k) {
+        return (x << k) | (x >> (64 - k));
+    }
+
+    // Ein Schritt SplitMix64, ohne das Addieren der Konstante.
+    static ui64 mix(ui64 z) {
+        z = mul64(z ^ (z >> 30), 0xBF58476D1CE4E5B9);
+        z = mul64(z ^ (z >> 27), 0x94D049BB133111EB);
+        return z ^ (z >> 31);
+    }
+
+public:
+    constructor(ui64 seed) {
+        ui64 z = add64(seed, 0x9E3779B97F4A7C15);
+        s0 = mix(z);
+        z = add64(z, 0x9E3779B97F4A7C15);
+        s1 = mix(z);
+        z = add64(z, 0x9E3779B97F4A7C15);
+        s2 = mix(z);
+        z = add64(z, 0x9E3779B97F4A7C15);
+        s3 = mix(z);
+    }
+
+    nodiscard ui64 nextUi64() mut {
+        ui64 result = mul64(rotl(mul64(s1, 5), 7), 9);
+        ui64 t = s1 << 17;
+        s2 = s2 ^ s0;
+        s3 = s3 ^ s1;
+        s1 = s1 ^ s2;
+        s0 = s0 ^ s3;
+        s2 = s2 ^ t;
+        s3 = rotl(s3, 45);
+        return result;
+    }
+
+    nodiscard i64 nextInt(i64 bound) mut {
+        if (bound <= 0) { fail("bound muss positiv sein"); }
+        ui64 b = cast<ui64>(bound);
+        ui64 threshold = (ui64::MAX % b + 1) % b;
+        ui64 x = nextUi64();
+        while (x < threshold) { x = nextUi64(); }
+        return cast<i64>(x % b);
+    }
+
+    nodiscard f64 nextFloat() mut {
+        return cast<f64>(nextUi64() >> 11) / 9007199254740992.0;
+    }
+
+    nodiscard bool nextBool() mut {
+        return (nextUi64() >> 63) == 1;
+    }
+
+    // Fisher-Yates, von hinten nach vorn. Herausnehmen und Einsetzen statt
+    // Tausch: Aus Elementen wird nicht herausbewegt (V-3), und `swap` auf
+    // zwei Indizes gilt immer als überlappend (Kapitel 5, Abschnitt 7).
+    void shuffle<T>(mut T[] v) mut {
+        for (i64 i = v.length - 1; i > 0; i--) {
+            i64 j = nextInt(i + 1);
+            if (i != j) {
+                own T a = v.remove(i);
+                own T b = v.remove(j);
+                v.insert(j, a);
+                v.insert(i, b);
+            }
+        }
+    }
+}

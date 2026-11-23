@@ -353,6 +353,27 @@ Entschieden am 21.11.2026; Einzelheiten in „R++ Standardbibliothek“.
 - [E] V-13.6: Eine Borrow-Methode darf auch über `ref`-Variablen, Schleifenelemente und weitere Borrow-Aufrufe zurückgeben, die von `this` ausgehen (im FR++-Modell noch nicht abgebildet).
 - [E] V-13.7: `<`, `<=`, `>`, `>=` für Typen mit `Comparable` rufen `compareTo` auf.
 
+## 24a. Ausbau der Standardbibliothek und rpp.random
+
+Entschieden am 23.11.2026; Einzelheiten in „R++ Standardbibliothek“, Abschnitte 9 und 10.
+
+- [E] V-13.9: Neue Pakete unter `rpp` ergänzen die Bibliothek, ohne den ersten Schnitt zu ändern; sie bleiben bis zur Selbstübersetzung auf 0.x. Beim Portieren aus anderen Sprachen: kein `Optional`/`Result` (`T?`, `try…`, Exceptions leisten das), Leihen vor Verbrauchen, Determinismus, gleiches Verhalten in beiden Modi (kein Verlass auf das Überlaufverhalten des Releasemodus). Neue Pakete werden, wo möglich, in R++ selbst geschrieben und dienen als Lasttest für M6.
+- [E] Der Ausbau folgt einer Roadmap in drei Phasen (Arbeitsstand): A neben M6 (Vektor-Algorithmen, `Deque`, `rpp.math`, `rpp.random`, Text- und IO-Ausbau), B nach der Selbstübersetzung (`rpp.iter`, `rpp.regex` nach RE2-Art, `rpp.json`, `rpp.time`, `rpp.encoding`, `rpp.hash` mit SHA-256 für `rpp.lock`), C mit den Threads (`rpp.sync` mit Channels per `own`, `rpp.process`, `rpp.net`).
+- [E] R-13.23: `rpp.random.Random` ist ein seedbarer Generator mit festgelegtem Algorithmus: Seeding durch SplitMix64, Schritt durch `xoshiro256**`; gleicher Seed liefert auf jeder Plattform und in beiden Modi dieselbe Folge. Die Arithmetik modulo 2⁶⁴ wird ohne Überlauf gerechnet.
+- [E] R-13.24: `nextUi64()`, `nextInt(bound)` (gleichverteilt ohne Modulo-Bias durch Verwerfen; `bound ≤ 0` ist ein `FailError`), `nextFloat()` in `[0, 1)` mit 53 Bit, `nextBool()` als oberstes Bit.
+- [E] R-13.25: `shuffle<T>(mut T[] v)` mischt mit Fisher-Yates über `remove`/`insert`; ein Tausch zweier Indizes ist nicht möglich (V-3, Überlappung unbekannter Indizes). Feste Arrays lassen sich in Version 1 nicht mischen.
+- [E] V-13.10: Vektor-Algorithmen, die in R++ schreibbar sind, kommen als statische generische Methoden der Hilfsklasse `Vectors`, nicht als eingebaute Methoden auf `T[]` (eingebaute Methoden erzeugen bis zum Nachziehen in M6 eine Divergenz). Eingebaute Methoden bleiben, was R++ nicht effizient ausdrücken kann (`sort`). Veränderbare Algorithmen nutzen `remove`/`insert` und sind quadratisch; das genügt für die Referenz.
+- [E] R-13.26: `Vectors.binarySearch` (Comparable, aufsteigend sortierter Slice, Position oder `null`) und `Vectors.equals` (Equatable, elementweiser Vergleich; füllt die Lücke, dass Arrays kein `==` haben).
+- [E] R-13.27: `Vectors.reverse`, `retain` (Prädikat) und `dedup` (aufeinanderfolgende Duplikate) verändern `mut T[]` über `remove`/`insert`; funktionieren für jeden Elementtyp, auch `own`-Objekte.
+- [E] R-7.26 auch für Methodenaufrufe durchgesetzt: Bisher prüfte `rppc` Constraints nur bei Klassen-Instanziierung, nicht bei generischen Methoden; ein Aufruf wie `binarySearch` mit einem Typ ohne `Comparable` wurde angenommen und scheiterte erst zur Laufzeit. Beim Schreiben von `Vectors` aufgefallen und in `rppc` (`body.rs`) und im Compiler in R++ (`Checker.rpp`) behoben; neuer Test `n08_vectors_ohne_comparable`. Die Spezifikation (R-7.26) verlangte die Prüfung bereits.
+- [E] V-13.11: `rpp.math` liefert `f64`-Funktionen. Runden und `clamp` sind reiner R++-Quelltext; `sqrt` ist eingebaut (korrekt gerundet nach IEEE 754, Muster `fail("eingebaut")` ohne M6-Divergenz). Transzendente Funktionen folgen später (plattformabhängig, nicht bitgleich).
+- [E] R-13.28: `Math.PI`/`Math.E`, `sqrt` (korrekt gerundet, `x < 0` → NaN), `floor`/`ceil`/`trunc`/`round` (exakt ganzzahlig, `round` bei .5 von null weg); NaN/±∞/±0 bleiben erhalten.
+- [E] R-13.29: `Math.clamp(x, lo, hi)` begrenzt auf `[lo, hi]`; `lo > hi` ist ein `FailError`, NaN bleibt NaN.
+- [E] R-13.30: `rpp.text.Text` (reiner R++-Quelltext nach dem Muster von `Fmt`) ergänzt die String-Methoden um `lines` (CRLF-fähig, kein abschließendes Leerzeilen-Element), `removePrefix`/`removeSuffix`, `repeat` (`n < 0` → `FailError`) und `splitLimit` (höchstens limit Teile, letzter Teil ist der Rest; `limit < 1` oder leerer sep → `FailError`).
+- [E] R-13.31: `File` erhält `appendText`, `copyFile`, `moveFile`, `delete`, `size` (eingebaut, Dateisystemzugriff; `IOException` bei Fehlern). `copy` ist ein Schlüsselwort, daher `copyFile`/`moveFile`. `copyFile`/`moveFile` ersetzen ein vorhandenes Ziel. Mtime und gepuffertes Lesen folgen später (Mtime braucht `rpp.time`).
+- [E] R-13.32: `Deque<T>` (reiner R++-Quelltext, vektorbasiert, `Iterable<T, i64>`) mit `pushFront`/`pushBack`, `popFront`/`popBack` (leer → `IndexError`), `front`/`back` (`ref T?`), `length`/`isEmpty`/`clear`. Operationen am Anfang sind linear; ein Ringpuffer wäre eine spätere eingebaute Variante.
+- [E] R-13.33: `Map.getOrPut(own K key, Func<V> factory)` liefert `ref mut V`; fehlt der Schlüssel, wird `factory()` eingesetzt (nur dann aufgerufen). Eingebaut, damit auch `own`-Schlüssel gehen (eine reine R++-Fassung müsste den verschobenen Schlüssel nach `put` erneut verwenden).
+
 ## 25. Festlegungen aus Kapitel 1, 11, 12 und 14
 
 Entschieden am 21.11.2026; Einzelheiten in „R++ Einleitung“, „R++ Pakete und Projekte“, „R++ Ausführungsmodell“ und „R++ Konformitätstests“.

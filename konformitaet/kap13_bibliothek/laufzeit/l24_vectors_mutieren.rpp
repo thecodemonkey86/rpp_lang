@@ -1,0 +1,48 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.27
+// Erwartet: Ausgabe "4\n3\n2\n1\n3\n2\n1\n0\n7\n2\n4\n6\n1\n2\n3\n1\n30\n20\n10\n2\n1\n3"; Exit-Code 0
+using rpp.collections.Vectors;
+
+class Item {
+public:
+    i32 value;
+    constructor(i32 v) { value = v; }
+}
+
+i32 main(string[] args) {
+    // reverse: gerade und ungerade Länge, leer, ein Element.
+    i32[] r = [1, 2, 3, 4];
+    Vectors::reverse(mut r);
+    for (i32 x : r) { print(x.toString()); }
+    i32[] r2 = [1, 2, 3];
+    Vectors::reverse(mut r2);
+    for (i32 x : r2) { print(x.toString()); }
+    i32[] e = [];
+    Vectors::reverse(mut e);
+    print(e.length.toString());
+    i32[] one = [7];
+    Vectors::reverse(mut one);
+    print(one[0].toString());
+
+    // retain: nur gerade Zahlen behalten.
+    i32[] k = [1, 2, 3, 4, 5, 6];
+    Vectors::retain(mut k, (i32 x) => x % 2 == 0);
+    for (i32 x : k) { print(x.toString()); }
+
+    // dedup: nur aufeinanderfolgende Duplikate entfernen.
+    i32[] d = [1, 1, 2, 2, 2, 3, 1];
+    Vectors::dedup(mut d);
+    for (i32 x : d) { print(x.toString()); }
+
+    // own-Objekte werden verschoben, nicht kopiert.
+    Item[] items = [new Item(10), new Item(20), new Item(30)];
+    Vectors::reverse(mut items);
+    for (Item it : items) { print(it.value.toString()); }
+
+    // retain auf own-Objekten: ungerade Werte behalten, gerade freigeben.
+    Item[] it2 = [new Item(1), new Item(2), new Item(3)];
+    Vectors::retain(mut it2, (Item x) => x.value % 2 == 1);
+    print(it2.length.toString());
+    for (Item it : it2) { print(it.value.toString()); }
+    return 0;
+}

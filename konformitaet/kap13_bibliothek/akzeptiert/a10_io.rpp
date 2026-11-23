@@ -1,0 +1,13 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.31
+using rpp.io.File;
+
+i32 main(string[] args) {
+    File::appendText("a.txt", "x");
+    i64 n = File::copyFile("a.txt", "b.txt");
+    File::moveFile("b.txt", "c.txt");
+    File::delete("c.txt");
+    i64 s = File::size("a.txt");
+    print(n.toString() + " " + s.toString());
+    return 0;
+}

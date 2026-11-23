@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.26, R-13.27
+using rpp.collections.Vectors;
+
+class Box {
+public:
+    string label;
+    constructor(string l) { label = l; }
+}
+
+i32 main(string[] args) {
+    i32[] s = [1, 3, 5];
+    i64? f = Vectors::binarySearch(s, 3);
+    if (f != null) { print(f.toString()); }
+    print(Vectors::equals(s, s) ? "ja" : "nein");
+
+    Box[] boxes = [new Box("a"), new Box("b"), new Box("c")];
+    Vectors::reverse(mut boxes);
+    Vectors::retain(mut boxes, (Box b) => b.label != "b");
+
+    i32[] nums = [3, 1, 2];
+    Vectors::reverse(mut nums);
+    Vectors::dedup(mut nums);
+    return 0;
+}

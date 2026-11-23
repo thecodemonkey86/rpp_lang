@@ -1,0 +1,24 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.31
+// Erwartet: Ausgabe "IOException\nIOException\nIOException"; Exit-Code 0
+using rpp.io.File;
+
+i32 main(string[] args) {
+    // Fehlende Datei: size, delete und copyFile werfen IOException.
+    try {
+        print(File::size("fehlt.txt").toString());
+    } catch (IOException e) {
+        print("IOException");
+    }
+    try {
+        File::delete("fehlt.txt");
+    } catch (IOException e) {
+        print("IOException");
+    }
+    try {
+        print(File::copyFile("fehlt.txt", "ziel.txt").toString());
+    } catch (IOException e) {
+        print("IOException");
+    }
+    return 0;
+}

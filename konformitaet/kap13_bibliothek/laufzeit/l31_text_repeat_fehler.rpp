@@ -1,0 +1,9 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.30
+// Erwartet: Exit-Code 2; Fehlerausgabe enthält "FailError"
+using rpp.text.Text;
+
+i32 main(string[] args) {
+    print(Text::repeat("ab", -1));
+    return 0;
+}

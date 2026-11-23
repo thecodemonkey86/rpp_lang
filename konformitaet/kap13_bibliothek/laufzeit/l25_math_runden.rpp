@@ -1,0 +1,37 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.28, R-13.29
+// Erwartet: Ausgabe "2\n-3\n2\n-2\n3\n-2\n2\n-2\n3\n-3\n2\n1\n-1\n3\n0\n2\nNaN\nInfinity"; Exit-Code 0
+using rpp.math.Math;
+
+i32 main(string[] args) {
+    // floor: Richtung minus unendlich.
+    print(cast<i64>(Math::floor(2.7)).toString());
+    print(cast<i64>(Math::floor(-2.7)).toString());
+    print(cast<i64>(Math::floor(2.0)).toString());
+    print(cast<i64>(Math::floor(-2.0)).toString());
+
+    // ceil: Richtung plus unendlich.
+    print(cast<i64>(Math::ceil(2.1)).toString());
+    print(cast<i64>(Math::ceil(-2.1)).toString());
+
+    // trunc: Richtung null.
+    print(cast<i64>(Math::trunc(2.9)).toString());
+    print(cast<i64>(Math::trunc(-2.9)).toString());
+
+    // round: bei .5 von null weg.
+    print(cast<i64>(Math::round(2.5)).toString());
+    print(cast<i64>(Math::round(-2.5)).toString());
+    print(cast<i64>(Math::round(2.4)).toString());
+    print(cast<i64>(Math::round(0.5)).toString());
+    print(cast<i64>(Math::round(-0.5)).toString());
+
+    // clamp: begrenzen auf [lo, hi].
+    print(cast<i64>(Math::clamp(5.0, 0.0, 3.0)).toString());
+    print(cast<i64>(Math::clamp(-1.0, 0.0, 3.0)).toString());
+    print(cast<i64>(Math::clamp(2.0, 0.0, 3.0)).toString());
+
+    // NaN und unendlich bleiben erhalten.
+    print(Math::floor(Math::sqrt(-1.0)).toString());
+    print(Math::ceil(1.0 / 0.0).toString());
+    return 0;
+}

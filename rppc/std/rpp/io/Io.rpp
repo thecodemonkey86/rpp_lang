@@ -10,18 +10,52 @@ public:
     static void writeBytes(string path, Slice<byte> data) { fail("eingebaut"); }
     // V-13.8: gibt es eine gewöhnliche Datei unter path?
     static bool exists(string path) { fail("eingebaut"); }
+    // Ausbau (R-13.31): Datei-Operationen auf Pfaden.
+    static void appendText(string path, string text) { fail("eingebaut"); }
+    static i64 copyFile(string from, string to) { fail("eingebaut"); }
+    static void moveFile(string from, string to) { fail("eingebaut"); }
+    static void delete(string path) { fail("eingebaut"); }
+    static i64 size(string path) { fail("eingebaut"); }
     destructor() { }
+}
+
+export enum FileType { File, Directory, Symlink, Other }
+
+export class DirEntry {
+public:
+    string name;
+    string path;
+    FileType kind;
+    constructor(string name, string path, FileType kind) {
+        this.name = name;
+        this.path = path;
+        this.kind = kind;
+    }
 }
 
 export class Dir {
 public:
     static string[] list(string path) { fail("eingebaut"); }
+    static DirEntry[] entries(string path) { fail("eingebaut"); }
     static bool exists(string path) { fail("eingebaut"); }
     static void create(string path) { fail("eingebaut"); }
 }
 
 export class Path {
+private:
+    string value;
+    static string normalizedText(string p) { fail("eingebaut"); }
+    static string? relativeText(string target, string baseDir) { fail("eingebaut"); }
 public:
+    constructor() { value = "."; }
+    constructor(string p) { value = normalizedText(p); }
+    nodiscard string toString() { return value; }
+    nodiscard Path? relativeTo(Path baseDir) {
+        string? suffix = relativeText(value, baseDir.value);
+        if (suffix == null) { return null; }
+        return new Path(suffix);
+    }
+
     static string join(string a, string b) { fail("eingebaut"); }
     static string fileName(string p) { fail("eingebaut"); }
     static string extension(string p) { fail("eingebaut"); }

@@ -100,9 +100,7 @@ fn run() -> ExitCode {
                     ExitCode::from(o.exit as u8)
                 }
                 Err(diags) => {
-                    for d in diags {
-                        println!("{d}");
-                    }
+                    print_diags(&input, diags);
                     ExitCode::from(1)
                 }
             }
@@ -223,6 +221,29 @@ fn main() -> ExitCode {
         .unwrap_or(ExitCode::from(101))
 }
 
+fn input_dir(input: &std::path::Path) -> std::path::PathBuf {
+    let mut dir = rpp_sema::project::normalize(input);
+    if !input.is_dir() {
+        dir.pop();
+    }
+    dir
+}
+
+fn display_path(file: &std::path::Path, base: &std::path::Path) -> String {
+    use rpp_sema::project::{normalize, relative_to, slash_path};
+    let file = slash_path(&normalize(file));
+    let base = if base.as_os_str().is_empty() { std::path::Path::new(".") } else { base };
+    relative_to(&file, &slash_path(&normalize(base))).unwrap_or(file)
+}
+
+fn print_diags(input: &std::path::Path, diags: Vec<rpp_sema::Diag>) {
+    let base = input_dir(input);
+    for mut diag in diags {
+        diag.file = PathBuf::from(display_path(&diag.file, &base));
+        println!("{diag}");
+    }
+}
+
 /// Textform eines geladenen Arbeitsbereichs (Vergleich mit `rppcc projekt`, Meilenstein M6).
 fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) -> String {
     use rpp_sema::project::{slash_path, ProjectKind, Workspace};
@@ -238,9 +259,10 @@ fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) ->
         if p.single_file {
             flags.push_str(" einzeldatei");
         }
-        let _ = writeln!(out, "projekt {i} {} {kind}{flags} {}", p.name, slash_path(&p.dir));
+        let dir = if p.single_file { input_dir(input) } else { p.dir.clone() };
+        let _ = writeln!(out, "projekt {i} {} {kind}{flags} {}", p.name, slash_path(&dir));
         if let Some(m) = &p.main_file {
-            let _ = writeln!(out, "  main {}", slash_path(m));
+            let _ = writeln!(out, "  main {}", display_path(m, &dir));
         }
         if !p.deps.is_empty() {
             let deps: Vec<String> = p.deps.iter().map(|d| d.to_string()).collect();
@@ -265,7 +287,7 @@ fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) ->
         let _ = writeln!(
             out,
             "datei {} projekt={} paket={} erwartet={} typen={}{}",
-            slash_path(&f.path),
+            display_path(&f.path, &ws.projects[f.project].dir),
             f.project,
             if pkg.is_empty() { "-" } else { &pkg },
             f.expected_package.as_deref().map_or("-", |e| if e.is_empty() { "." } else { e }),
@@ -273,8 +295,9 @@ fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) ->
             if has_main { " main" } else { "" }
         );
     }
+    let base = input_dir(input);
     for d in &ws.diags {
-        let _ = writeln!(out, "fehler {}:{}:{} [{}] {}", slash_path(&d.file), d.span.line, d.span.col, d.rule, d.message);
+        let _ = writeln!(out, "fehler {}:{}:{} [{}] {}", display_path(&d.file, &base), d.span.line, d.span.col, d.rule, d.message);
     }
     out
 }

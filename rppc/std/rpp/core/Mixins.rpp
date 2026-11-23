@@ -20,6 +20,38 @@ export mixin Iterable<T, C> {
     nodiscard bool done(C cursor);
     nodiscard C next(C cursor);
     ref T at(C cursor);
+
+    nodiscard bool any(Func<T, bool> predicate) {
+        for (T item : this) {
+            if (predicate(item)) { return true; }
+        }
+        return false;
+    }
+
+    nodiscard bool all(Func<T, bool> predicate) {
+        for (T item : this) {
+            if (!predicate(item)) { return false; }
+        }
+        return true;
+    }
+
+    nodiscard A fold<A>(own A acc, Func<own A, T, A> step) {
+        for (T item : this) {
+            acc = step(acc, item);
+        }
+        return acc;
+    }
+
+    nodiscard U[] mapNotNull<U>(Func<T, U?> transform) {
+        U[] result = [];
+        for (T item : this) {
+            U? value = transform(item);
+            if (value != null) {
+                result.push(value);
+            }
+        }
+        return result;
+    }
 }
 
 export mixin MutIterable<T, C> {

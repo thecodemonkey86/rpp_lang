@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.30
+// Erwartet: Ausgabe "[llo]\n[hello]\n[hello]\n[]\n[hel]\n[hello]\n[hello]\n[]\n[ababab]\n[ab]\n[]\n[]"; Exit-Code 0
+using rpp.text.Text;
+
+i32 main(string[] args) {
+    // removePrefix: vorhanden, nicht vorhanden, leer, ganzer String.
+    print("[" + Text::removePrefix("hello", "he") + "]");
+    print("[" + Text::removePrefix("hello", "xx") + "]");
+    print("[" + Text::removePrefix("hello", "") + "]");
+    print("[" + Text::removePrefix("hello", "hello") + "]");
+
+    // removeSuffix: vorhanden, nicht vorhanden, leer, ganzer String.
+    print("[" + Text::removeSuffix("hello", "lo") + "]");
+    print("[" + Text::removeSuffix("hello", "xx") + "]");
+    print("[" + Text::removeSuffix("hello", "") + "]");
+    print("[" + Text::removeSuffix("hello", "hello") + "]");
+
+    // repeat: mehrfach, einmal, null-mal, leerer String.
+    print("[" + Text::repeat("ab", 3) + "]");
+    print("[" + Text::repeat("ab", 1) + "]");
+    print("[" + Text::repeat("ab", 0) + "]");
+    print("[" + Text::repeat("", 5) + "]");
+    return 0;
+}

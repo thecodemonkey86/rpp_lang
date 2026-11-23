@@ -5,7 +5,13 @@ package compiler.syntax;
 using rpp.text.StringBuilder;
 
 export class Node {
+    import Iterable<Node, i64>;
 public:
+    i64 begin() { return 0; }
+    bool done(i64 cursor) { return cursor >= kids.length; }
+    i64 next(i64 cursor) { return cursor + 1; }
+    ref Node at(i64 cursor) { return this.kids[cursor]; }
+
     string kind;
     string text;
     // 0: ohne Position

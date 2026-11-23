@@ -1,0 +1,29 @@
+// Standardbibliothek: rpp.collections, Deque (Kapitel 13, R-13.32)
+// Reiner R++-Quelltext (V-13.9): vektorbasiert. Operationen am Anfang sind
+// linear (insert/remove an Index 0); für die Referenz genügt das (V-13.10).
+package rpp.collections;
+
+export class Deque<T> {
+    import Iterable<T, i64>;
+private:
+    T[] items;
+public:
+    constructor() { items = []; }
+
+    nodiscard i64 length() { return items.length; }
+    nodiscard bool isEmpty() { return items.length == 0; }
+
+    void pushBack(own T x) mut { items.push(x); }
+    void pushFront(own T x) mut { items.insert(0, x); }
+    own T popBack() mut { return items.pop(); }
+    own T popFront() mut { return items.remove(0); }
+
+    ref T? front() { return items.first(); }
+    ref T? back() { return items.last(); }
+    void clear() mut { items.clear(); }
+
+    nodiscard i64 begin() { return 0; }
+    nodiscard bool done(i64 cursor) { return cursor >= items.length; }
+    nodiscard i64 next(i64 cursor) { return cursor + 1; }
+    ref T at(i64 cursor) { return items[cursor]; }
+}

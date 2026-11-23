@@ -1,0 +1,61 @@
+// Standardbibliothek: rpp.collections, Vektor-Algorithmen (Kapitel 13, R-13.26, R-13.27)
+// Reiner R++-Quelltext (V-13.9, V-13.10): statische generische Methoden statt
+// eingebauter Methoden auf T[], damit beide Compiler sie gleich behandeln.
+package rpp.collections;
+
+export class Vectors {
+public:
+    // Binäre Suche im aufsteigend sortierten Slice; Position eines Treffers
+    // oder null. Comparables vorausgesetzt (R-13.26).
+    static i64? binarySearch<T : Comparable<T>>(Slice<T> s, T x) {
+        i64 lo = 0;
+        i64 hi = s.length;
+        while (lo < hi) {
+            i64 mid = lo + (hi - lo) / 2;
+            i32 c = s[mid].compareTo(x);
+            if (c == 0) { return mid; }
+            if (c < 0) { lo = mid + 1; } else { hi = mid; }
+        }
+        return null;
+    }
+
+    // Elementweiser Vergleich zweier Slices (Arrays haben kein ==, V-4.8).
+    static bool equals<T : Equatable<T>>(Slice<T> a, Slice<T> b) {
+        if (a.length != b.length) { return false; }
+        for (i64 i = 0; i < a.length; i++) {
+            if (a[i] != b[i]) { return false; }
+        }
+        return true;
+    }
+
+    // Umkehren an Ort und Stelle. Tausch über remove/insert wie bei shuffle:
+    // Aus Elementen wird nicht herausbewegt (V-3), swap auf Indizes überlappt.
+    static void reverse<T>(mut T[] v) {
+        i64 n = v.length;
+        for (i64 i = 0; i < n / 2; i++) {
+            i64 j = n - 1 - i;
+            own T a = v.remove(i);
+            own T b = v.remove(j - 1);
+            v.insert(i, b);
+            v.insert(j, a);
+        }
+    }
+
+    // Behält nur die Elemente, für die keep wahr ist; die anderen werden
+    // freigegeben. Die Reihenfolge der behaltenen bleibt erhalten.
+    static void retain<T>(mut T[] v, Func<T, bool> keep) {
+        i64 i = 0;
+        while (i < v.length) {
+            if (keep(v[i])) { i++; } else { discard v.remove(i); }
+        }
+    }
+
+    // Entfernt aufeinanderfolgende Duplikate (Equatable); nicht aufeinander-
+    // folgende gleiche Elemente bleiben erhalten.
+    static void dedup<T : Equatable<T>>(mut T[] v) {
+        i64 i = 1;
+        while (i < v.length) {
+            if (v[i] == v[i - 1]) { discard v.remove(i); } else { i++; }
+        }
+    }
+}

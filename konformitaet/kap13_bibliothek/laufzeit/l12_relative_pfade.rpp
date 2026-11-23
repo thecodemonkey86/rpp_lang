@@ -1,0 +1,37 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.20
+// Erwartet: Ausgabe "lib/F.rpp\n.\n-\n-\n-\napp/src/lib/F.rpp\napp/src\nF.rpp\n-\n-\nplatform-ok"; Exit-Code 0
+using rpp.io.Path;
+
+class Paths {
+public:
+    static string relative(Path target, Path baseDir) {
+        Path? result = target.relativeTo(baseDir);
+        if (result == null) { return "-"; }
+        return result.toString();
+    }
+}
+
+i32 main(string[] args) {
+    Path file = new Path("app/src/./tmp/../lib\\F.rpp");
+    Path baseDir = new Path("app//src/");
+    print(Paths::relative(file, baseDir));
+    print(Paths::relative(baseDir, baseDir));
+    print(Paths::relative(new Path("app/src2/F.rpp"), baseDir));
+    print(Paths::relative(new Path("app/src/../F.rpp"), baseDir));
+    print(Paths::relative(new Path("../F.rpp"), new Path(".")));
+    print(file.toString());
+    print(baseDir.toString());
+    print(Paths::relative(new Path("F.rpp"), new Path()));
+    print(Paths::relative(new Path("/F.rpp"), new Path(".")));
+    print(Paths::relative(new Path("F.rpp"), new Path("/")));
+#if windows
+    if (Paths::relative(new Path("C:/src/a"), new Path("C:/")) != "src/a") { fail("Laufwerkswurzel"); }
+    if (Paths::relative(new Path("D:/src"), new Path("C:/")) != "-") { fail("Laufwerkswechsel"); }
+    if (Paths::relative(new Path("//host/share/src/a"), new Path("//host/share")) != "src/a") { fail("UNC"); }
+#else
+    if (Paths::relative(new Path("/src/a"), new Path("/")) != "src/a") { fail("Wurzel"); }
+#endif
+    print("platform-ok");
+    return 0;
+}

@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.23, R-13.24, R-13.25
+using rpp.random.Random;
+
+class Box {
+public:
+    string label;
+    constructor(string l) { label = l; }
+}
+
+i32 main(string[] args) {
+    Random r = new Random(123);
+    ui64 x = r.nextUi64();
+    i64 n = r.nextInt(6) + 1;
+    f64 f = r.nextFloat();
+    bool b = r.nextBool();
+    print(x.toString() + " " + n.toString() + " " + f.toString());
+    if (b) { print("ja"); }
+
+    Box[] boxes = [new Box("a"), new Box("b")];
+    r.shuffle(mut boxes);
+    i32[] nums = [3, 1, 2];
+    r.shuffle(mut nums);
+    return 0;
+}

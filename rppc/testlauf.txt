@@ -1,4 +1,4 @@
-
+﻿
 Kapitel                bestanden  fehlgeschlagen       offen
   kap04_typen                 37               0           0
   kap05_ownership             36               0           0
@@ -9,5 +9,5 @@ Kapitel                bestanden  fehlgeschlagen       offen
   kap10_lambdas               21               0           0
   kap11_projekte              18               0           0
   kap12_ausfuehrung           10               0           0
-  kap13_bibliothek            21               0           0
-  gesamt                     258               0           0
+  kap13_bibliothek            56               0           0
+  gesamt                     293               0           0

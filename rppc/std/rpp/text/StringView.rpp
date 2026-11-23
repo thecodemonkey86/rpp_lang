@@ -1,0 +1,25 @@
+package rpp.text;
+
+export class StringView {
+private:
+    string source;
+    i64 byteStart;
+    i64 byteEnd;
+public:
+    constructor(string text) {
+        source = text;
+        byteStart = 0;
+        byteEnd = text.byteLength;
+    }
+    nodiscard i64 length() { fail("eingebaut"); }
+    nodiscard char charAt(i64 index) { fail("eingebaut"); }
+    nodiscard StringView slice(i64 start, i64 end) { fail("eingebaut"); }
+    nodiscard StringView trim() { fail("eingebaut"); }
+    nodiscard StringView trimEnd() { fail("eingebaut"); }
+    nodiscard bool startsWith(string prefix) { fail("eingebaut"); }
+    nodiscard bool endsWith(string suffix) { fail("eingebaut"); }
+    nodiscard i64? indexOf(string part) { fail("eingebaut"); }
+    nodiscard (StringView, StringView)? splitOnce(string separator) { fail("eingebaut"); }
+    nodiscard StringView[] split(string separator) { fail("eingebaut"); }
+    nodiscard string toString() { fail("eingebaut"); }
+}

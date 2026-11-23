@@ -1,0 +1,10 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.30
+// Erwartet: Exit-Code 2; Fehlerausgabe enthält "FailError"
+using rpp.text.Text;
+
+i32 main(string[] args) {
+    string[] a = Text::splitLimit("a,b", ",", 0);
+    print(a.length.toString());
+    return 0;
+}

@@ -1,0 +1,36 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.30
+// Erwartet: Ausgabe "2\n[a][b,c,d]\n[a][b][c,d]\n4\n[a,b,c,d]\n[a][,b]\n1\n[abc]\n[a][b::c]"; Exit-Code 0
+using rpp.text.Text;
+
+i32 main(string[] args) {
+    // Der letzte Teil enthält den ungeteilten Rest.
+    string[] a = Text::splitLimit("a,b,c,d", ",", 2);
+    print(a.length.toString());
+    print("[" + a[0] + "][" + a[1] + "]");
+
+    string[] b = Text::splitLimit("a,b,c,d", ",", 3);
+    print("[" + b[0] + "][" + b[1] + "][" + b[2] + "]");
+
+    // limit größer als die Teilzahl: alle Teile.
+    string[] c = Text::splitLimit("a,b,c,d", ",", 10);
+    print(c.length.toString());
+
+    // limit 1: der ganze String.
+    string[] d = Text::splitLimit("a,b,c,d", ",", 1);
+    print("[" + d[0] + "]");
+
+    // Leerer Teil bleibt erhalten.
+    string[] e = Text::splitLimit("a,,b", ",", 2);
+    print("[" + e[0] + "][" + e[1] + "]");
+
+    // Kein Trenner vorhanden.
+    string[] f = Text::splitLimit("abc", ",", 2);
+    print(f.length.toString());
+    print("[" + f[0] + "]");
+
+    // Mehrzeichiger Trenner.
+    string[] g = Text::splitLimit("a::b::c", "::", 2);
+    print("[" + g[0] + "][" + g[1] + "]");
+    return 0;
+}

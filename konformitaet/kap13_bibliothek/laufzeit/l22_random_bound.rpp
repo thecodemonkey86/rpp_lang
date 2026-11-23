@@ -1,0 +1,10 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.24
+// Erwartet: Exit-Code 2; Fehlerausgabe enthält "FailError"
+using rpp.random.Random;
+
+i32 main(string[] args) {
+    Random r = new Random(1);
+    print(r.nextInt(0).toString());
+    return 0;
+}

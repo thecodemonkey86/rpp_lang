@@ -1,0 +1,13 @@
+package rpp.io;
+
+export class SaveFile {
+private:
+    constructor() { }
+public:
+    static own SaveFile open(string path) { fail("eingebaut"); }
+    void writeText(string text) mut { fail("eingebaut"); }
+    void writeBytes(Slice<byte> data) mut { fail("eingebaut"); }
+    void commit() mut { fail("eingebaut"); }
+    void cancel() mut { fail("eingebaut"); }
+    destructor() { cancel(); }
+}

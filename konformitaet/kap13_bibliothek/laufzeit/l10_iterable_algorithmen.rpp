@@ -1,0 +1,36 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.9, R-13.10
+// Erwartet: Ausgabe "false\ntrue\nstart\ntrue\nfalse\nfalse\ntrue\nstartba\nba"; Exit-Code 0
+using rpp.collections.Map;
+using rpp.collections.Entry;
+using rpp.text.StringBuilder;
+
+i32 main(string[] args) {
+    Map<i64, string> m = new Map<i64, string>();
+    print(m.any((Entry<i64, string> e) => true).toString());
+    print(m.all((Entry<i64, string> e) => false).toString());
+    var append = own (own StringBuilder acc, Entry<i64, string> e) => {
+        acc.append(e.value);
+        return acc;
+    };
+    StringBuilder seed = new StringBuilder();
+    seed.append("start");
+    StringBuilder empty = m.fold(seed, append);
+    print(empty.toString());
+    m.put(2, "b");
+    m.put(1, "a");
+    print(m.any((Entry<i64, string> e) => {
+        if (e.key == 1) { fail("any ohne Kurzschluss"); }
+        return true;
+    }).toString());
+    print(m.all((Entry<i64, string> e) => {
+        if (e.key == 1) { fail("all ohne Kurzschluss"); }
+        return false;
+    }).toString());
+    StringBuilder result = m.fold(empty, append);
+    print(m.any((Entry<i64, string> e) => e.key == 3).toString());
+    print(m.all((Entry<i64, string> e) => e.key > 0).toString());
+    print(result.toString());
+    print(m.fold("", (own string s, Entry<i64, string> e) => s + e.value));
+    return 0;
+}

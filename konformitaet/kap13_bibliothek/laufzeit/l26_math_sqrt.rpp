@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.28
+// Erwartet: Ausgabe "0\n1\n2\n3\n4\n1.4142135624\n1.5\nNaN\nInfinity\n3.14159\n2.71828"; Exit-Code 0
+using rpp.math.Math;
+using rpp.fmt.Fmt;
+
+i32 main(string[] args) {
+    // Quadratzahlen: exakt.
+    print(cast<i64>(Math::sqrt(0.0)).toString());
+    print(cast<i64>(Math::sqrt(1.0)).toString());
+    print(cast<i64>(Math::sqrt(4.0)).toString());
+    print(cast<i64>(Math::sqrt(9.0)).toString());
+    print(cast<i64>(Math::sqrt(16.0)).toString());
+
+    // sqrt(2) korrekt gerundet, auf 10 Stellen geprüft.
+    print(Fmt::fixed(Math::sqrt(2.0), 10));
+    print(Fmt::fixed(Math::sqrt(2.25), 1));
+
+    // sqrt(-1) ist NaN, sqrt(unendlich) ist unendlich.
+    print(Math::sqrt(-1.0).toString());
+    print(Math::sqrt(1.0 / 0.0).toString());
+
+    // Konstanten.
+    print(Fmt::fixed(Math::PI, 5));
+    print(Fmt::fixed(Math::E, 5));
+    return 0;
+}

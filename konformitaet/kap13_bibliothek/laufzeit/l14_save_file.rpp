@@ -1,0 +1,58 @@
+// Konformitätstest Kapitel 13 – Laufzeit im leeren Arbeitsverzeichnis.
+// Regel: R-13.19
+// Erwartet: Ausgabe "alt\nalt\nexplizit verworfen\nalt\nalt\nneu!\ngeschlossen\nfalse\ntrue\nCommit fehlgeschlagen\nblockiert,neu.txt,ziel.txt"; Exit-Code 0
+using rpp.io.File;
+using rpp.io.Dir;
+using rpp.io.SaveFile;
+
+i32 main(string[] args) {
+    Dir::create("daten");
+    string target = "daten/ziel.txt";
+    File::writeText(target, "alt");
+    try {
+        SaveFile interrupted = SaveFile::open(target);
+        interrupted.writeText("unvollständig");
+        print(File::open(target).readAllText());
+        throw new Exception("Abbruch");
+    } catch (Exception e) {
+        print(File::open(target).readAllText());
+    }
+    SaveFile cancelled = SaveFile::open(target);
+    cancelled.writeText("verworfen");
+    cancelled.cancel();
+    try {
+        cancelled.commit();
+    } catch (IOException e) {
+        print("explizit verworfen");
+    }
+    print(File::open(target).readAllText());
+    SaveFile pending = SaveFile::open(target);
+    pending.writeText("neu");
+    byte[] bytes = ["A".byteAt(0), "!".byteAt(0)];
+    pending.writeBytes(bytes[1..]);
+    print(File::open(target).readAllText());
+    pending.commit();
+    print(File::open(target).readAllText());
+    try {
+        pending.writeText("spät");
+    } catch (IOException e) {
+        print("geschlossen");
+    }
+    {
+        SaveFile forgotten = SaveFile::open("daten/neu.txt");
+        forgotten.writeText("verworfen");
+    }
+    print(File::exists("daten/neu.txt").toString());
+    SaveFile empty = SaveFile::open("daten/neu.txt");
+    empty.commit();
+    print(File::exists("daten/neu.txt").toString());
+    SaveFile conflict = SaveFile::open("daten/blockiert");
+    Dir::create("daten/blockiert");
+    try {
+        conflict.commit();
+    } catch (IOException e) {
+        print("Commit fehlgeschlagen");
+    }
+    print(string::join(",", Dir::list("daten")));
+    return 0;
+}
