@@ -150,7 +150,7 @@ private:
             bool[] nat = [];
             DefKind dk = c.p.defs[d].kind;
             string full = c.p.defs[d].fullName();
-            bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env";
+            bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env" || full == "rpp.io.SaveFile" || full == "rpp.text.StringView" || full == "rpp.math.Math" || full == "rpp.env.ElapsedTimer";
             if (dk != DefKind::Enum) {
                 i64 fileIdx = c.p.defs[d].file;
                 i64 declIdx = c.p.defs[d].decl;
@@ -970,7 +970,8 @@ private:
         shared Ty[] none = [];
         MethodInfo[] ms = c.p.methodsOf(Ty::named(d, none), m.name);
         for (MethodInfo x : ms) {
-            if (!x.hasBody || x.params.length != m.params.length) {
+            // gleiche Parameterzahl und gleicher mut-Modus (Map.at(i64) neben Map.at(K) mut)
+            if (!x.hasBody || x.params.length != m.params.length || x.mutThis != m.mutThis) {
                 continue;
             }
             bool ok = true;
@@ -1140,6 +1141,12 @@ private:
         t.append("const RClass* rt_cls_entry = " + clsRef(entry) + ";\n");
         t.append("const RClass* rt_cls_file = " + clsRef(file) + ";\n");
         t.append("int32_t rt_os_def = " + os.toString() + ";\n");
+        i64 dirEntry = c.p.lookupFull("rpp.io.DirEntry");
+        i64 saveFile = c.p.lookupFull("rpp.io.SaveFile");
+        i64 fileType = c.p.lookupFull("rpp.io.FileType");
+        t.append("const RClass* rt_cls_dir_entry = " + clsRef(dirEntry) + ";\n");
+        t.append("const RClass* rt_cls_save_file = " + clsRef(saveFile) + ";\n");
+        t.append("int32_t rt_file_type_def = " + fileType.toString() + ";\n");
         // Exceptions der Standardbibliothek (std_throw)
         t.append("int rt_std_new(rv* out, const char* full, int nargs, rv* args) {\n    int st;\n");
         for (i64 d = 0; d < n; d++) {
@@ -1600,6 +1607,11 @@ private:
         MethodInfo[] ms = c.p.methodsOf(Ty::named(d, none), name);
         for (MethodInfo m : ms) {
             if (m.params.length == nparams && !m.mutThis) {
+                // Der Interpreter nimmt die Klasse des Werts (for_iterable). Ohne Rumpf
+                // (statischer Typ ist ein Mixin, etwa this in Iterable.any) über den Verteiler.
+                if (!m.hasBody) {
+                    return dispatchName(m);
+                }
                 // call_method ohne virtuellen Aufruf (for_iterable)
                 return "M_" + m.owner.toString() + "_" + m.member.toString();
             }

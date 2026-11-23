@@ -7,6 +7,9 @@ export class Deque<T> {
     import Iterable<T, i64>;
 private:
     T[] items;
+    // bleibt null: front/back geben bei leerer Deque einen Borrow darauf zurück,
+    // denn eine Borrow-Methode gibt nur Orte zurück, die von this ausgehen (R-5.23)
+    T? none = null;
 public:
     constructor() { items = []; }
 
@@ -18,8 +21,14 @@ public:
     own T popBack() mut { return items.pop(); }
     own T popFront() mut { return items.remove(0); }
 
-    ref T? front() { return items.first(); }
-    ref T? back() { return items.last(); }
+    ref T? front() {
+        if (items.length == 0) { return this.none; }
+        return this.items[0];
+    }
+    ref T? back() {
+        if (items.length == 0) { return this.none; }
+        return this.items[items.length - 1];
+    }
     void clear() mut { items.clear(); }
 
     nodiscard i64 begin() { return 0; }

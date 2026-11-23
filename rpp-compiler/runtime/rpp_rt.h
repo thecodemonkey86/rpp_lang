@@ -145,6 +145,9 @@ extern const int32_t rt_def_count;
 extern const RClass* rt_cls_entry;           /* rpp.collections.Entry */
 extern const RClass* rt_cls_file;            /* rpp.io.File */
 extern int32_t rt_os_def;                    /* rpp.env.Os */
+extern const RClass* rt_cls_dir_entry;       /* rpp.io.DirEntry */
+extern const RClass* rt_cls_save_file;       /* rpp.io.SaveFile */
+extern int32_t rt_file_type_def;             /* rpp.io.FileType */
 extern int rt_std_new(rv* out, const char* full, int nargs, rv* args); /* Exception der Standardbibliothek */
 
 /* ---------------------------------------------------------------- Zustand */

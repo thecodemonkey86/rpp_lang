@@ -23,6 +23,7 @@
 #include <sys/stat.h>
 #else
 #include <pthread.h>
+#include <fcntl.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -2018,6 +2019,25 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
         if (!strcmp(name, "toLower")) { *out = rv_char(u_to_lower(c)); return ST_OK; }
         return rt_fatal("InternalError", "char.%s", name);
     }
+    if (!strcmp(name, "partitionPoint") && (recv.tag == RT_OBJ || recv.tag == RT_SLICE)) {
+        /* binäre Suche wie im Interpreter: erste Position, an der das Prädikat falsch ist */
+        RObj* v = (RObj*)recv.v.p;
+        int64_t start = recv.tag == RT_SLICE ? recv.x : 0, end = recv.tag == RT_SLICE ? recv.y : v->len;
+        int64_t lo = start, hi = end;
+        while (lo < hi) {
+            int64_t mid = lo + (hi - lo) / 2;
+            if (mid >= v->len) return rt_fatal("IndexError", "ungültiger Bereich bei partitionPoint");
+            rv a1[1];
+            a1[0] = rv_view(v->slots[mid]);
+            rv r;
+            int st = rt_call_value(&r, args[0], a1);
+            if (st) return st;
+            if (rv_truthy(r)) lo = mid + 1;
+            else hi = mid;
+        }
+        *out = rv_i64(lo - start);
+        return ST_OK;
+    }
     if (recv.tag == RT_OBJ && !((RObj*)recv.v.p)->cls) return vec_method(out, (RObj*)recv.v.p, name, n, args);
     if (recv.tag == RT_SLICE) return rt_fatal("InternalError", "Methode %s auf einem Bereich", name);
     if (!strcmp(name, "toString")) { *out = rt_text(recv); return ST_OK; }
@@ -2552,6 +2572,286 @@ static void normalize_path(const char* in, Buf* out) {
 
 
 
+/* ---------------------------------------------------------------- Ausbau der Bibliothek (wie stdlib.rs) */
+
+/* Pfad rein lexikalisch zerlegt (lexical_path in project.rs): Präfix (Laufwerk), Wurzel, Teile */
+typedef struct {
+    char prefix[8];
+    int rooted;
+    int n;
+    char* parts[512];
+} LexPath;
+
+static void lex_path(const char* in, LexPath* lp) {
+    memset(lp, 0, sizeof *lp);
+    const char* p = in;
+#ifdef _WIN32
+    if (((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':') {
+        lp->prefix[0] = p[0];
+        lp->prefix[1] = ':';
+        p += 2;
+    }
+#endif
+    if (*p == '/' || *p == '\\') lp->rooted = 1;
+    while (*p) {
+        while (*p == '/' || *p == '\\') p++;
+        if (!*p) break;
+        const char* s = p;
+        while (*p && *p != '/' && *p != '\\') p++;
+        int64_t l = p - s;
+        if (l == 1 && s[0] == '.') continue;
+        if (l == 2 && s[0] == '.' && s[1] == '.') {
+            if (lp->n > 0 && strcmp(lp->parts[lp->n - 1], "..") != 0) {
+                free(lp->parts[--lp->n]);
+                continue;
+            }
+            if (lp->rooted) continue;
+        }
+        if (lp->n < 512) {
+            char* c = (char*)xmalloc((size_t)l + 1);
+            memcpy(c, s, (size_t)l);
+            c[l] = 0;
+            lp->parts[lp->n++] = c;
+        }
+    }
+}
+
+static void lex_free(LexPath* lp) {
+    for (int i = 0; i < lp->n; i++) free(lp->parts[i]);
+    lp->n = 0;
+}
+
+/* Text ab Teil from; mit Präfix und Wurzel nur für from == 0 (sonst ein Rest innerhalb der Basis) */
+static rv lex_text(LexPath* lp, int from) {
+    Buf b = { 0 };
+    buf_str(&b, "");
+    if (from == 0) {
+        buf_str(&b, lp->prefix);
+        if (lp->rooted) buf_str(&b, "/");
+    }
+    for (int i = from; i < lp->n; i++) {
+        if (i > from) buf_str(&b, "/");
+        buf_str(&b, lp->parts[i]);
+    }
+    if (b.n == 0) buf_str(&b, ".");
+    return buf_take(&b);
+}
+
+static int path_io_error(const char* path) {
+    Buf m = { 0 };
+    buf_fmt(&m, "%s: %s", path, sys_err());
+    int st = io_error(m.p, path);
+    free(m.p);
+    return st;
+}
+
+/* 0 File, 1 Directory, 2 Symlink, 3 Other (Reihenfolge wie enum FileType) */
+static int file_kind(const char* path) {
+#ifdef _WIN32
+    DWORD a = GetFileAttributesA(path);
+    if (a == INVALID_FILE_ATTRIBUTES) return 3;
+    if (a & FILE_ATTRIBUTE_REPARSE_POINT) {
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA(path, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            FindClose(h);
+            if (fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT) return 2;
+        }
+    }
+    return (a & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
+#else
+    struct stat st;
+    if (lstat(path, &st) != 0) return 3;
+    if (S_ISLNK(st.st_mode)) return 2;
+    if (S_ISDIR(st.st_mode)) return 1;
+    if (S_ISREG(st.st_mode)) return 0;
+    return 3;
+#endif
+}
+
+static int64_t mono_nanos(void) {
+#ifdef _WIN32
+    static LARGE_INTEGER freq, origin;
+    LARGE_INTEGER now;
+    if (!freq.QuadPart) { QueryPerformanceFrequency(&freq); QueryPerformanceCounter(&origin); }
+    QueryPerformanceCounter(&now);
+    int64_t t = now.QuadPart - origin.QuadPart;
+    return (int64_t)((double)t * 1e9 / (double)freq.QuadPart);
+#else
+    static int64_t origin = -1;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    int64_t now = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    if (origin < 0) origin = now;
+    return now - origin;
+#endif
+}
+
+/* Zustand eines SaveFile: temporäre Datei neben dem Ziel, beim commit umbenannt */
+typedef struct {
+    FILE* f;
+    char target[4096];
+    char temp[4096];
+    int done;
+} SaveState;
+
+/* neue Datei, die es noch nicht gibt (wie create_new) */
+static FILE* create_new(const char* path) {
+#ifdef _WIN32
+    int fd = _open(path, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
+    return fd < 0 ? NULL : _fdopen(fd, "wb");
+#else
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    return fd < 0 ? NULL : fdopen(fd, "wb");
+#endif
+}
+
+static void save_cancel(SaveState* s) {
+    if (s->done) return;
+    if (s->f) fclose(s->f);
+    s->f = NULL;
+    remove(s->temp);
+    s->done = 1;
+}
+
+/* rename, das ein vorhandenes Ziel ersetzt (auf Windows schlägt rename sonst fehl) */
+static int replace_file(const char* from, const char* to) {
+    if (rename(from, to) == 0) return 0;
+    if (is_file(to)) {
+        if (remove(to) != 0) return -1;
+        return rename(from, to);
+    }
+    return -1;
+}
+
+/* StringView: Felder source, byteStart, byteEnd */
+static rv view_new(const RClass* cls, rv source, int64_t a, int64_t b) {
+    RObj* v = rt_obj_new(cls, NULL, 0);
+    v->slots[0] = rt_promote(rv_view(source));
+    v->slots[1] = rv_i64(a);
+    v->slots[2] = rv_i64(b);
+    return rv_obj(v, F_OWN);
+}
+
+static int64_t bytes_find(const char* s, int64_t n, const char* pat, int64_t pn, int64_t from) {
+    if (pn == 0) return from <= n ? from : -1;
+    for (int64_t i = from; i + pn <= n; i++)
+        if (memcmp(s + i, pat, (size_t)pn) == 0) return i;
+    return -1;
+}
+
+static int64_t utf8_count(const char* s, int64_t n) {
+    int64_t c = 0;
+    for (int64_t i = 0; i < n; i++)
+        if (((unsigned char)s[i] & 0xc0) != 0x80) c++;
+    return c;
+}
+
+/* Byteposition des k-ten Zeichens (k == Anzahl: Ende); -1, wenn außerhalb */
+static int64_t utf8_boundary(const char* s, int64_t n, int64_t k) {
+    int64_t i = 0;
+    for (int64_t j = 0; j < k; j++) {
+        if (i >= n) return -1;
+        uint32_t c;
+        i += utf8_dec(s, n, i, &c);
+    }
+    return i;
+}
+
+/* Bytelänge des UTF-8-Zeichens, das vor Position i endet */
+static int64_t utf8_back(const char* s, int64_t i) {
+    int64_t j = i - 1;
+    while (j > 0 && ((unsigned char)s[j] & 0xc0) == 0x80) j--;
+    return i - j;
+}
+
+static int string_view(rv* out, RObj* o, const char* m, rv* args) {
+    rv source = o->slots[0];
+    RStr* src = rt_s(source);
+    int64_t start = (int64_t)w_of(o->slots[1]).lo, end = (int64_t)w_of(o->slots[2]).lo;
+    const char* t = src->data + start;
+    int64_t tn = end - start;
+    if (!strcmp(m, "length")) { *out = rv_i64(utf8_count(t, tn)); return ST_OK; }
+    if (!strcmp(m, "charAt")) {
+        int64_t i = w_neg_p(w_of(args[0])) ? -1 : utf8_boundary(t, tn, argi(args, 0));
+        if (i < 0 || i >= tn) return rt_fatal("IndexError", "Index außerhalb der StringView");
+        uint32_t c;
+        utf8_dec(t, tn, i, &c);
+        *out = rv_char(c);
+        return ST_OK;
+    }
+    if (!strcmp(m, "slice")) {
+        int64_t a = w_neg_p(w_of(args[0])) ? -1 : utf8_boundary(t, tn, argi(args, 0));
+        int64_t b = w_neg_p(w_of(args[1])) ? -1 : utf8_boundary(t, tn, argi(args, 1));
+        if (a < 0 || b < 0 || a > b) return rt_fatal("IndexError", "Bereich außerhalb der StringView");
+        *out = view_new(o->cls, source, start + a, start + b);
+        return ST_OK;
+    }
+    if (!strcmp(m, "trim") || !strcmp(m, "trimEnd")) {
+        int64_t a = 0, b = tn;
+        if (!strcmp(m, "trim")) {
+            while (a < b) {
+                uint32_t c;
+                int l = utf8_dec(t, tn, a, &c);
+                if (!u_is_whitespace(c)) break;
+                a += l;
+            }
+        }
+        while (b > a) {
+            int64_t l = utf8_back(t, b);
+            uint32_t c;
+            utf8_dec(t, tn, b - l, &c);
+            if (!u_is_whitespace(c)) break;
+            b -= l;
+        }
+        *out = view_new(o->cls, source, start + a, start + b);
+        return ST_OK;
+    }
+    if (!strcmp(m, "toString")) {
+        *out = (start == 0 && end == src->len) ? rt_promote(rv_view(source)) : rt_str_from(t, tn);
+        return ST_OK;
+    }
+    RStr* part = rt_s(args[0]);
+    if (!strcmp(m, "startsWith")) { *out = rv_bool(part->len <= tn && memcmp(t, part->data, (size_t)part->len) == 0); return ST_OK; }
+    if (!strcmp(m, "endsWith")) { *out = rv_bool(part->len <= tn && memcmp(t + tn - part->len, part->data, (size_t)part->len) == 0); return ST_OK; }
+    if (!strcmp(m, "indexOf")) {
+        int64_t at = bytes_find(t, tn, part->data, part->len, 0);
+        *out = at < 0 ? rv_null() : rv_i64(utf8_count(t, at));
+        return ST_OK;
+    }
+    if (!strcmp(m, "splitOnce")) {
+        int64_t at = bytes_find(t, tn, part->data, part->len, 0);
+        if (at < 0) { *out = rv_null(); return ST_OK; }
+        rv items[2];
+        items[0] = view_new(o->cls, source, start, start + at);
+        items[1] = view_new(o->cls, source, start + at + part->len, end);
+        *out = rt_tuple(2, items);
+        return ST_OK;
+    }
+    if (!strcmp(m, "split")) {
+        RObj* v = rt_vec_new(4);
+        int64_t begin = 0, from = 0;
+        for (;;) {
+            int64_t at = bytes_find(t, tn, part->data, part->len, from);
+            if (at < 0) break;
+            rt_vec_push(v, view_new(o->cls, source, start + begin, start + at));
+            begin = at + part->len;
+            if (part->len == 0) {
+                /* leerer Trenner: ein Treffer an jeder Zeichengrenze (wie match_indices) */
+                if (at >= tn) break;
+                uint32_t c;
+                from = at + utf8_dec(t, tn, at, &c);
+            } else {
+                from = begin;
+            }
+        }
+        rt_vec_push(v, view_new(o->cls, source, start + begin, end));
+        *out = rv_obj(v, F_OWN);
+        return ST_OK;
+    }
+    return rt_fatal("InternalError", "StringView.%s", m);
+}
+
 int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this, int at_cursor) {
     (void)n;
     (void)mut_this;
@@ -2766,6 +3066,213 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         free((void*)p);
         return ST_OK;
     }
+    /* ---------------------------------------------------------------- Datei-Operationen (R-13.31) */
+    if (IS("rpp.io.File.appendText")) {
+        RStr* p = rt_s(args[0]);
+        Buf b = { 0 };
+        buf_str(&b, "");
+        text_of(&b, args[1]);
+        FILE* f = fopen(p->data, "ab");
+        if (!f) { free(b.p); return path_io_error(p->data); }
+        if (b.n) fwrite(b.p, 1, (size_t)b.n, f);
+        fclose(f);
+        free(b.p);
+        return ST_OK;
+    }
+    if (IS("rpp.io.File.copyFile")) {
+        RStr* from = rt_s(args[0]);
+        RStr* to = rt_s(args[1]);
+        FILE* f = fopen(from->data, "rb");
+        if (!f || !is_file(from->data)) {
+            if (f) fclose(f);
+            if (!f) return path_io_error(from->data);
+            errno = EISDIR;
+            return path_io_error(from->data);
+        }
+        FILE* g = fopen(to->data, "wb");
+        if (!g) { int e = errno; fclose(f); errno = e; return path_io_error(from->data); }
+        char tmp[65536];
+        size_t k;
+        int64_t total = 0;
+        while ((k = fread(tmp, 1, sizeof tmp, f)) > 0) {
+            if (fwrite(tmp, 1, k, g) != k) { int e = errno; fclose(f); fclose(g); errno = e; return path_io_error(from->data); }
+            total += (int64_t)k;
+        }
+        fclose(f);
+        if (fclose(g) != 0) return path_io_error(from->data);
+        *out = rv_i64(total);
+        return ST_OK;
+    }
+    if (IS("rpp.io.File.moveFile")) {
+        RStr* from = rt_s(args[0]);
+        RStr* to = rt_s(args[1]);
+        if (replace_file(from->data, to->data) != 0) return path_io_error(from->data);
+        return ST_OK;
+    }
+    if (IS("rpp.io.File.delete")) {
+        RStr* p = rt_s(args[0]);
+        if (remove(p->data) != 0) return path_io_error(p->data);
+        return ST_OK;
+    }
+    if (IS("rpp.io.File.size")) {
+        RStr* p = rt_s(args[0]);
+#ifdef _WIN32
+        struct _stat64 st;
+        if (_stat64(p->data, &st) != 0) return path_io_error(p->data);
+#else
+        struct stat st;
+        if (stat(p->data, &st) != 0) return path_io_error(p->data);
+#endif
+        *out = rv_i64((int64_t)st.st_size);
+        return ST_OK;
+    }
+    /* ---------------------------------------------------------------- SaveFile */
+    if (IS("rpp.io.SaveFile.open")) {
+        RStr* p = rt_s(args[0]);
+        const char* target = p->data;
+        const char* slash = strrchr(target, '/');
+        const char* bslash = strrchr(target, '\\');
+        if (bslash && (!slash || bslash > slash)) slash = bslash;
+        const char* file = slash ? slash + 1 : target;
+        if (!*file || !strcmp(file, ".") || !strcmp(file, "..")) {
+            errno = EINVAL;
+            return path_io_error(target);
+        }
+        SaveState* s = (SaveState*)xmalloc(sizeof(SaveState));
+        memset(s, 0, sizeof *s);
+        snprintf(s->target, sizeof s->target, "%s", target);
+        uint64_t seed = (uint64_t)mono_nanos() ^ ((uint64_t)(uintptr_t)s << 16);
+        for (int attempt = 0; attempt < 128 && !s->f; attempt++) {
+            seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            if (slash) snprintf(s->temp, sizeof s->temp, "%.*s/.rpp-save-%016llx.tmp", (int)(slash - target), target, (unsigned long long)seed);
+            else snprintf(s->temp, sizeof s->temp, ".rpp-save-%016llx.tmp", (unsigned long long)seed);
+            if (is_file(s->temp)) continue;
+            s->f = create_new(s->temp);
+            if (!s->f && errno != EEXIST) {
+                int e = errno;
+                free(s);
+                errno = e;
+                return path_io_error(target);
+            }
+        }
+        if (!s->f) {
+            free(s);
+            errno = EEXIST;
+            return path_io_error(target);
+        }
+        RObj* f = rt_obj_new(rt_cls_save_file, NULL, 0);
+        f->native = s;
+        *out = rv_obj(f, F_OWN);
+        return ST_OK;
+    }
+    if (!strncmp(name, "rpp.io.SaveFile.", 16)) {
+        SaveState* s = o ? (SaveState*)o->native : NULL;
+        if (!s) return rt_internal("SaveFile ohne Zustand");
+        if (IS("rpp.io.SaveFile.cancel")) { save_cancel(s); return ST_OK; }
+        if (s->done) {
+            Buf m = { 0 };
+            buf_fmt(&m, "%s: Schreibvorgang ist beendet", s->target);
+            int st = io_error(m.p, s->target);
+            free(m.p);
+            return st;
+        }
+        if (IS("rpp.io.SaveFile.commit")) {
+            int ok = fflush(s->f) == 0;
+            ok = fclose(s->f) == 0 && ok;
+            s->f = NULL;
+            int e = errno;
+            if (ok && replace_file(s->temp, s->target) == 0) { s->done = 1; return ST_OK; }
+            e = errno;
+            save_cancel(s);
+            errno = e;
+            return path_io_error(s->target);
+        }
+        Buf b = { 0 };
+        buf_str(&b, "");
+        rv d = args[0];
+        if (d.tag == RT_STR) buf_add(&b, rt_s(d)->data, rt_s(d)->len);
+        else if (d.tag == RT_OBJ || d.tag == RT_SLICE) {
+            RObj* v = (RObj*)d.v.p;
+            int64_t a = d.tag == RT_SLICE ? d.x : 0, e = d.tag == RT_SLICE ? d.y : v->len;
+            for (int64_t i = a; i < e; i++) {
+                char c = v->slots[i].tag == RT_BYTE ? (char)(uint8_t)v->slots[i].v.u : 0;
+                buf_add(&b, &c, 1);
+            }
+        }
+        if (b.n && fwrite(b.p, 1, (size_t)b.n, s->f) != (size_t)b.n) {
+            int e = errno;
+            free(b.p);
+            save_cancel(s);
+            errno = e;
+            return path_io_error(s->target);
+        }
+        free(b.p);
+        return ST_OK;
+    }
+    /* ---------------------------------------------------------------- Verzeichniseinträge, Pfade */
+    if (IS("rpp.io.Dir.entries")) {
+        RStr* p = rt_s(args[0]);
+        rv lv;
+        int st = rt_native(&lv, "rpp.io.Dir.list", self, 1, args, 0, 0);
+        if (st) return st;
+        RObj* names = (RObj*)lv.v.p;
+        const char* dir = slash_dup(p->data);
+        size_t dl = strlen(dir);
+        int sep = dl > 0 && dir[dl - 1] != '/';
+        RObj* v = rt_vec_new(names->len);
+        for (int64_t i = 0; i < names->len; i++) {
+            RStr* nm = rt_s(names->slots[i]);
+            Buf full = { 0 };
+            buf_str(&full, dir);
+            if (sep) buf_str(&full, "/");
+            buf_add(&full, nm->data, nm->len);
+            int kind = file_kind(full.p);
+            RObj* e = rt_obj_new(rt_cls_dir_entry, NULL, 0);
+            e->slots[0] = rt_promote(rv_view(names->slots[i]));
+            e->slots[1] = buf_take(&full);
+            e->slots[2] = rv_enum(rt_file_type_def, kind);
+            rt_vec_push(v, rv_obj(e, F_OWN));
+        }
+        free((void*)dir);
+        st = rt_drop(lv);
+        if (st) return st;
+        *out = rv_obj(v, F_OWN);
+        return ST_OK;
+    }
+    if (IS("rpp.io.Path.normalizedText")) {
+        LexPath lp;
+        lex_path(rt_s(args[0])->data, &lp);
+        *out = lex_text(&lp, 0);
+        lex_free(&lp);
+        return ST_OK;
+    }
+    if (IS("rpp.io.Path.relativeText")) {
+        LexPath t, b;
+        lex_path(rt_s(args[0])->data, &t);
+        lex_path(rt_s(args[1])->data, &b);
+        int ok = !strcmp(t.prefix, b.prefix) && t.rooted == b.rooted && b.n <= t.n;
+        for (int i = 0; ok && i < b.n; i++) ok = !strcmp(t.parts[i], b.parts[i]);
+        for (int i = b.n; ok && i < t.n; i++) ok = strcmp(t.parts[i], "..") != 0;
+        if (ok && b.n == 0 && (t.prefix[0] || t.rooted)) {
+            /* gleiche Wurzel ohne Teile: der Rest sind die Teile des Ziels */
+            LexPath r = t;
+            r.prefix[0] = 0;
+            r.rooted = 0;
+            *out = lex_text(&r, 0);
+        } else {
+            *out = ok ? lex_text(&t, b.n) : rv_null();
+        }
+        lex_free(&t);
+        lex_free(&b);
+        return ST_OK;
+    }
+    /* ---------------------------------------------------------------- Zeit, Mathematik, StringView */
+    if (IS("rpp.env.ElapsedTimer.monotonicNanos")) { *out = rv_i64(mono_nanos()); return ST_OK; }
+    if (IS("rpp.math.Math.sqrt")) { *out = rv_f64(sqrt(as_f64(args[0]))); return ST_OK; }
+    if (!strncmp(name, "rpp.text.StringView.", 20)) {
+        if (!o) return rt_internal("StringView ohne Objekt");
+        return string_view(out, o, name + 20, args);
+    }
     if (IS("rpp.env.Env.get")) {
         const char* v = getenv(rt_s(args[0])->data);
         *out = v ? sv(v) : rv_null();
@@ -2914,6 +3421,47 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             if (pos >= 0) return rt_drop(x);
             int64_t hv;
             st = rt_hash(&hv, x);
+            if (st) return st;
+            rt_vec_push(o, x);
+            hidx_add(o, hv, o->len - 1);
+            return ST_OK;
+        }
+        if (!strcmp(m, "getOrPut")) {
+            /* R-13.33: Wert zum Schlüssel, sonst factory() einsetzen */
+            rv key = args[0];
+            int64_t pos;
+            int st = find_key(&pos, o, key, 1);
+            if (st) return st;
+            if (pos >= 0) {
+                st = rt_drop(key);
+                if (st) return st;
+            } else {
+                rv value;
+                st = rt_call_value(&value, args[1], NULL);
+                if (st) { rt_drop(key); return st; }
+                int64_t hv;
+                st = rt_hash(&hv, key);
+                if (st) return st;
+                RObj* e = rt_obj_new(rt_cls_entry, NULL, 0);
+                e->slots[0] = key;
+                e->slots[1] = value;
+                rt_vec_push(o, rv_obj(e, F_OWN));
+                pos = o->len - 1;
+                hidx_add(o, hv, pos);
+            }
+            RObj* e = (RObj*)o->slots[pos].v.p;
+            *out = rv_view(e->slots[1]);
+            return ST_OK;
+        }
+        if (!strcmp(m, "appendEntry")) {
+            /* Eintrag einer anderen Menge übernehmen, der schon auf Eindeutigkeit geprüft ist */
+            RObj* src = (RObj*)args[0].v.p;
+            int64_t i = argi(args, 1);
+            /* own-Objekte werden wie im Interpreter (Halter) von beiden Mengen geteilt */
+            src->slots[i] = rt_to_shared(src->slots[i]);
+            rv x = rt_own_copy(rv_view(src->slots[i]));
+            int64_t hv;
+            int st = rt_hash(&hv, x);
             if (st) return st;
             rt_vec_push(o, x);
             hidx_add(o, hv, o->len - 1);
