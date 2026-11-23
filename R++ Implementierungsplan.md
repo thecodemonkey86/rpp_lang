@@ -374,3 +374,18 @@ Neue Tests: `a09_text`, `l28_text_lines`, `l29_text_hilfen`, `l30_text_split_lim
 
 `copy` ist ein Schlüsselwort (Kapitel 7), deshalb `copyFile`/`moveFile`. Neue Tests: `a10_io`, `l33_io_datei_ops` (alle Operationen im frischen Arbeitsverzeichnis, V-14.3), `l34_io_fehler` (`IOException` bei fehlender Datei). `rppc test ..`: alle 289 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Io.rpp` und die drei neuen Tests auf beiden Seiten dasselbe. Offen bleiben gepuffertes Lesen und Mtime (letzteres braucht `rpp.time`, Phase B).
 
+**Merge des Bibliotheksausbaus und C-Laufzeit nachgezogen (23.11.2026).** Der Ausbau der Standardbibliothek (oben, Zweig `temp_merge`) ist mit M6 zusammengeführt; die neuen Teile verwenden `mut` statt `&`. V-13.9 war doppelt vergeben, die Regel zum Text von `IOException` heißt jetzt V-13.12. Die C-Laufzeit (`rpp_rt.c`) kennt jetzt alle neuen eingebauten Teile wie `stdlib.rs`:
+
+| Teil | Umsetzung in C |
+|---|---|
+| Datei-Operationen, `Dir.entries`, `Path.normalizedText`/`relativeText` | wie `stdlib.rs`; Pfade rein lexikalisch wie `lexical_path`; Art des Eintrags über `lstat` bzw. die Attribute unter Windows |
+| `SaveFile` | temporäre Datei neben dem Ziel (exklusiv angelegt), `commit` benennt um und ersetzt ein vorhandenes Ziel, `cancel` und der Destruktor löschen sie |
+| `StringView`, `Math.sqrt`, `ElapsedTimer.monotonicNanos` | Sichten als Objekte mit `source`, `byteStart`, `byteEnd`; Zeichen nach UTF-8 |
+| `Map.getOrPut`, `Set.appendEntry`, `partitionPoint` | `appendEntry` teilt `own`-Objekte zwischen beiden Mengen wie die Halter im Interpreter |
+| Unicode-Pfade unter Windows | Dateizugriffe und Kommandozeilenargumente über die `wchar_t`-Fassungen (UTF-8 ↔ UTF-16) |
+
+Im Codegenerator: `for` über `Iterable` nimmt bei einer Methode ohne Rumpf (`this` in einem Mixin, etwa `Iterable.any`) den Verteiler, wie der Interpreter die Klasse des Werts; der Verteiler unterscheidet Überladungen nach `mut` (`Map.at(i64)` neben `Map.at(K) mut`).
+
+Beim Erzeugen von C (Prüfung mit den Rümpfen der Standardbibliothek) fielen zwei Fehler im neuen Bibliothekscode auf, die `rppc` nicht meldet, weil es die Rümpfe der Standardbibliothek nicht prüft: `Random.mix` wies seinem Parameter zu (R-8.19), `Deque.front`/`back` gaben `null` bzw. einen Borrow zurück, der nicht von `this` ausgeht (R-5.23). Beide sind behoben; die Ausgaben bleiben gleich.
+
+Stand: `rppc test ..` 291 bestanden; `vergleich_c.py --fr 200` 278 gleich, 0 verschieden; Fixpunkt der Selbstübersetzung (Runde 1 bis 3 Byte für Byte gleich, gut 10 s je Runde); `vergleich.py --exe` 581/1176/1154/670/540/822 gleich (tokens, pre, ast, projekt, defs, pruefe), 0 verschieden.

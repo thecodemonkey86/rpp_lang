@@ -17,6 +17,8 @@
 #include <windows.h>
 #include <timeapi.h>
 #pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "shell32.lib")
+#include <shellapi.h>
 #include <io.h>
 #include <fcntl.h>
 #include <direct.h>
@@ -2469,17 +2471,81 @@ static const char* slash_dup(const char* p) {
     return s;
 }
 
+/* Pfade sind UTF-8; Windows braucht für Nicht-ASCII-Namen die Fassungen mit wchar_t */
+#ifdef _WIN32
+static wchar_t* u8w(const char* s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+    wchar_t* w = (wchar_t*)xmalloc(sizeof(wchar_t) * (size_t)(n > 0 ? n : 1));
+    if (n <= 0 || !MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n)) w[0] = 0;
+    return w;
+}
+
+static char* w2u8(const wchar_t* w) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+    char* s = (char*)xmalloc((size_t)(n > 0 ? n : 1));
+    if (n <= 0 || !WideCharToMultiByte(CP_UTF8, 0, w, -1, s, n, NULL, NULL)) s[0] = 0;
+    return s;
+}
+
+static FILE* u_fopen(const char* path, const char* mode) {
+    wchar_t* wp = u8w(path);
+    wchar_t* wm = u8w(mode);
+    FILE* f = _wfopen(wp, wm);
+    free(wp);
+    free(wm);
+    return f;
+}
+
+static int u_stat64(const char* path, struct _stat64* st) {
+    wchar_t* wp = u8w(path);
+    int r = _wstat64(wp, st);
+    free(wp);
+    return r;
+}
+
+static int u_rename(const char* from, const char* to) {
+    wchar_t* a = u8w(from);
+    wchar_t* b = u8w(to);
+    int r = _wrename(a, b);
+    free(a);
+    free(b);
+    return r;
+}
+
+static int u_remove(const char* path) {
+    wchar_t* wp = u8w(path);
+    int r = _wremove(wp);
+    free(wp);
+    return r;
+}
+
+static int u_mkdir(const char* path) {
+    wchar_t* wp = u8w(path);
+    int r = _wmkdir(wp);
+    free(wp);
+    return r;
+}
+#else
+#define u_fopen fopen
+#define u_rename rename
+#define u_remove remove
+#endif
+
 static rv sv(const char* s) { return rt_str_c(s); }
 
-static int is_file(const char* p) {
+static int file_mode(const char* p) {
+#ifdef _WIN32
+    struct _stat64 st;
+    return u_stat64(p, &st) == 0 ? (int)(st.st_mode & S_IFMT) : -1;
+#else
     struct stat st;
-    return stat(p, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG;
+    return stat(p, &st) == 0 ? (int)(st.st_mode & S_IFMT) : -1;
+#endif
 }
 
-static int is_dir(const char* p) {
-    struct stat st;
-    return stat(p, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR;
-}
+static int is_file(const char* p) { return file_mode(p) == S_IFREG; }
+
+static int is_dir(const char* p) { return file_mode(p) == S_IFDIR; }
 
 static const char* sys_err(void) {
     static char buf[256];
@@ -2501,7 +2567,7 @@ static int make_dirs(const char* path) {
             tmp[i] = 0;
             if (!is_dir(tmp) && strlen(tmp) > 0 && !(strlen(tmp) == 2 && tmp[1] == ':')) {
 #ifdef _WIN32
-                if (_mkdir(tmp) != 0 && errno != EEXIST) return -1;
+                if (u_mkdir(tmp) != 0 && errno != EEXIST) return -1;
 #else
                 if (mkdir(tmp, 0777) != 0 && errno != EEXIST) return -1;
 #endif
@@ -2528,7 +2594,18 @@ static void read_input(void) {
 static void normalize_path(const char* in, Buf* out) {
     char abs[4096];
 #ifdef _WIN32
-    if (!_fullpath(abs, in, sizeof abs)) snprintf(abs, sizeof abs, "%s", in);
+    {
+        wchar_t* win = u8w(in);
+        wchar_t wabs[4096];
+        if (_wfullpath(wabs, win, 4096)) {
+            char* u = w2u8(wabs);
+            snprintf(abs, sizeof abs, "%s", u);
+            free(u);
+        } else {
+            snprintf(abs, sizeof abs, "%s", in);
+        }
+        free(win);
+    }
 #else
     if (in[0] == '/') snprintf(abs, sizeof abs, "%s", in);
     else {
@@ -2648,16 +2725,18 @@ static int path_io_error(const char* path) {
 /* 0 File, 1 Directory, 2 Symlink, 3 Other (Reihenfolge wie enum FileType) */
 static int file_kind(const char* path) {
 #ifdef _WIN32
-    DWORD a = GetFileAttributesA(path);
-    if (a == INVALID_FILE_ATTRIBUTES) return 3;
+    wchar_t* wp = u8w(path);
+    DWORD a = GetFileAttributesW(wp);
+    if (a == INVALID_FILE_ATTRIBUTES) { free(wp); return 3; }
     if (a & FILE_ATTRIBUTE_REPARSE_POINT) {
-        WIN32_FIND_DATAA fd;
-        HANDLE h = FindFirstFileA(path, &fd);
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW(wp, &fd);
         if (h != INVALID_HANDLE_VALUE) {
             FindClose(h);
-            if (fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT) return 2;
+            if (fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT) { free(wp); return 2; }
         }
     }
+    free(wp);
     return (a & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
 #else
     struct stat st;
@@ -2698,7 +2777,9 @@ typedef struct {
 /* neue Datei, die es noch nicht gibt (wie create_new) */
 static FILE* create_new(const char* path) {
 #ifdef _WIN32
-    int fd = _open(path, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
+    wchar_t* wp = u8w(path);
+    int fd = _wopen(wp, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
+    free(wp);
     return fd < 0 ? NULL : _fdopen(fd, "wb");
 #else
     int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -2710,16 +2791,16 @@ static void save_cancel(SaveState* s) {
     if (s->done) return;
     if (s->f) fclose(s->f);
     s->f = NULL;
-    remove(s->temp);
+    u_remove(s->temp);
     s->done = 1;
 }
 
 /* rename, das ein vorhandenes Ziel ersetzt (auf Windows schlägt rename sonst fehl) */
 static int replace_file(const char* from, const char* to) {
-    if (rename(from, to) == 0) return 0;
+    if (u_rename(from, to) == 0) return 0;
     if (is_file(to)) {
-        if (remove(to) != 0) return -1;
-        return rename(from, to);
+        if (u_remove(to) != 0) return -1;
+        return u_rename(from, to);
     }
     return -1;
 }
@@ -2906,7 +2987,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
     }
     if (IS("rpp.io.File.readAllText") || IS("rpp.io.File.readAllBytes")) {
         RStr* p = rt_s(o && o->len > 0 ? o->slots[0] : rv_null());
-        FILE* f = fopen(p->data, "rb");
+        FILE* f = u_fopen(p->data, "rb");
         if (!f) {
             Buf m = { 0 };
             buf_fmt(&m, "%s: %s", p->data, sys_err());
@@ -2952,7 +3033,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
                 buf_add(&b, &c, 1);
             }
         }
-        FILE* f = fopen(p->data, "wb");
+        FILE* f = u_fopen(p->data, "wb");
         if (!f) {
             free(b.p);
             Buf m = { 0 };
@@ -2973,8 +3054,10 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
 #ifdef _WIN32
         char pat[4096];
         snprintf(pat, sizeof pat, "%s/*", p->data);
-        WIN32_FIND_DATAA fd;
-        HANDLE h = FindFirstFileA(pat, &fd);
+        WIN32_FIND_DATAW fd;
+        wchar_t* wpat = u8w(pat);
+        HANDLE h = FindFirstFileW(wpat, &fd);
+        free(wpat);
         if (h == INVALID_HANDLE_VALUE) {
             Buf m = { 0 };
             errno = ENOENT;
@@ -2984,12 +3067,10 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             return st;
         }
         do {
-            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+            if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
             if (nn == cap) { cap = cap ? cap * 2 : 16; names = (const char**)xrealloc((void*)names, sizeof(char*) * (size_t)cap); }
-            char* s = (char*)xmalloc(strlen(fd.cFileName) + 1);
-            strcpy(s, fd.cFileName);
-            names[nn++] = s;
-        } while (FindNextFileA(h, &fd));
+            names[nn++] = w2u8(fd.cFileName);
+        } while (FindNextFileW(h, &fd));
         FindClose(h);
 #else
         DIR* d = opendir(p->data);
@@ -3072,7 +3153,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         Buf b = { 0 };
         buf_str(&b, "");
         text_of(&b, args[1]);
-        FILE* f = fopen(p->data, "ab");
+        FILE* f = u_fopen(p->data, "ab");
         if (!f) { free(b.p); return path_io_error(p->data); }
         if (b.n) fwrite(b.p, 1, (size_t)b.n, f);
         fclose(f);
@@ -3082,14 +3163,14 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
     if (IS("rpp.io.File.copyFile")) {
         RStr* from = rt_s(args[0]);
         RStr* to = rt_s(args[1]);
-        FILE* f = fopen(from->data, "rb");
+        FILE* f = u_fopen(from->data, "rb");
         if (!f || !is_file(from->data)) {
             if (f) fclose(f);
             if (!f) return path_io_error(from->data);
             errno = EISDIR;
             return path_io_error(from->data);
         }
-        FILE* g = fopen(to->data, "wb");
+        FILE* g = u_fopen(to->data, "wb");
         if (!g) { int e = errno; fclose(f); errno = e; return path_io_error(from->data); }
         char tmp[65536];
         size_t k;
@@ -3111,14 +3192,14 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
     }
     if (IS("rpp.io.File.delete")) {
         RStr* p = rt_s(args[0]);
-        if (remove(p->data) != 0) return path_io_error(p->data);
+        if (u_remove(p->data) != 0) return path_io_error(p->data);
         return ST_OK;
     }
     if (IS("rpp.io.File.size")) {
         RStr* p = rt_s(args[0]);
 #ifdef _WIN32
         struct _stat64 st;
-        if (_stat64(p->data, &st) != 0) return path_io_error(p->data);
+        if (u_stat64(p->data, &st) != 0) return path_io_error(p->data);
 #else
         struct stat st;
         if (stat(p->data, &st) != 0) return path_io_error(p->data);
@@ -3627,7 +3708,24 @@ static void print_trace(RTrace t) {
 
 static void run_main(MainArgs* m) {
     RObj* v = rt_vec_new(m->argc);
+#ifdef _WIN32
+    /* Argumente als UTF-8 (argv ist auf Windows in der ANSI-Codepage) */
+    int wn = 0;
+    wchar_t** wa = CommandLineToArgvW(GetCommandLineW(), &wn);
+    if (wa && wn == m->argc) {
+        for (int i = 1; i < wn; i++) {
+            char* u = w2u8(wa[i]);
+            rt_vec_push(v, rt_str_c(u));
+            free(u);
+        }
+        LocalFree(wa);
+    } else {
+        if (wa) LocalFree(wa);
+        for (int i = 1; i < m->argc; i++) rt_vec_push(v, rt_str_c(m->argv[i]));
+    }
+#else
     for (int i = 1; i < m->argc; i++) rt_vec_push(v, rt_str_c(m->argv[i]));
+#endif
     rv ret = rv_void();
     int st = m->body(&ret, rv_obj(v, F_OWN));
     fflush(stdout);
@@ -3659,7 +3757,7 @@ static void run_main(MainArgs* m) {
 static volatile int prof_stop = 0;
 static HANDLE prof_target;
 static DWORD WINAPI prof_thread(LPVOID p) {
-    FILE* f = fopen((const char*)p, "w");
+    FILE* f = u_fopen((const char*)p, "w");
     if (!f) return 0;
     uintptr_t base = (uintptr_t)GetModuleHandleA(NULL);
     timeBeginPeriod(1);

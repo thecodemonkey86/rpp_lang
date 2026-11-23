@@ -91,7 +91,7 @@ Die Angaben, die der Interpreter aus `Program::rt` liest, erhebt `Checker.rpp` a
 
 Vergleich: `py -X utf8 vergleich_c.py [--fr N] [--nur-fr] [--gcc] [MUSTER]` erzeugt, übersetzt (MSVC; mit `--gcc` gcc) und startet jeden Laufzeittest der Konformitätstests und jedes Programm in `tests_c/` in beiden Modi in einem frischen Arbeitsverzeichnis und vergleicht Ausgabe, Fehlerausgabe und Exit-Code mit `rppc run`; mit `--fr N` auch die nach R++ übersetzten FR++-Programme.
 
-Unicode-Tabellen (`runtime/rpp_unicode.h`, `rpp_unicode_ign.h`) entstehen mit `runtime/gen_unicode.rs` aus der Standardbibliothek von Rust und mit `gen_unicode_ignorable.py`; damit verhalten sich `char` und Strings wie im Interpreter. Texte von Betriebssystemfehlern in `IOException` kommen aus der C-Bibliothek (nach V-13.12 nicht festgelegt).
+Unicode-Tabellen (`runtime/rpp_unicode.h`, `rpp_unicode_ign.h`) entstehen mit `runtime/gen_unicode.rs` aus der Standardbibliothek von Rust und mit `gen_unicode_ignorable.py`; damit verhalten sich `char` und Strings wie im Interpreter. Texte von Betriebssystemfehlern in `IOException` kommen aus der C-Bibliothek (nach V-13.12 nicht festgelegt). Pfade und Kommandozeilenargumente sind UTF-8; unter Windows gehen Dateizugriffe über die `wchar_t`-Fassungen.
 
 Umgebungsvariablen der Laufzeit: `RPP_NOFREE=1` gibt keinen Speicher frei (zum Eingrenzen von Fehlern bei der Freigabe); `RPP_PROFILE=DATEI` schreibt jede Millisekunde den Befehlszähler als Adresse relativ zum Modul (Windows; auflösen mit der Map-Datei des Linkers, `/MAP`); `RPP_MAINTHREAD=1` läuft ohne eigenen Thread mit großem Stack.
 
