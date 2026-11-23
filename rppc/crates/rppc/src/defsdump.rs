@@ -2,7 +2,8 @@
 //! (`Program::build`), zum Vergleich mit `rppcc defs` (Meilenstein M6).
 
 use rpp_sema::defs::{DefKind, PInfo, Program, Ret};
-use rpp_sema::project::{slash_path, Workspace};
+use rpp_sema::project::Workspace;
+use crate::{display_path, input_dir};
 use rpp_sema::ty::{Mode, ParamId};
 use rpp_syntax::ast::{Access, MethodModifier};
 use std::fmt::Write;
@@ -45,6 +46,7 @@ fn tparams(p: &Program, ids: &[ParamId]) -> String {
 }
 
 pub fn defs(input: &std::path::Path, std_dir: &std::path::Path, release: bool) -> String {
+    let base = input_dir(input);
     let ws = Workspace::load_mode(input, std_dir, release);
     let mut p = Program::build(ws);
     p.diags.sort_by(|a, b| (&a.file, a.span).cmp(&(&b.file, b.span)));
@@ -137,13 +139,14 @@ pub fn defs(input: &std::path::Path, std_dir: &std::path::Path, release: bool) -
         }
     }
     for d in &p.diags {
-        let _ = writeln!(out, "fehler {}:{}:{} [{}] {}", slash_path(&d.file), d.span.line, d.span.col, d.rule, d.message);
+        let _ = writeln!(out, "fehler {}:{}:{} [{}] {}", display_path(&d.file, &base), d.span.line, d.span.col, d.rule, d.message);
     }
     out
 }
 
 /// Alle Meldungen von `analyze` (Deklarationen und Rümpfe), zum Vergleich mit `rppcc pruefe`.
 pub fn pruefe(input: &std::path::Path, std_dir: &std::path::Path) -> String {
+    let base = input_dir(input);
     let p = rpp_sema::analyze(input, std_dir, false);
     let mut out = String::new();
     for d in &p.diags {
@@ -153,7 +156,7 @@ pub fn pruefe(input: &std::path::Path, std_dir: &std::path::Path) -> String {
             rules.push_str(", ");
             rules.push_str(a);
         }
-        let _ = writeln!(out, "{kind} {}:{}:{} [{rules}] {}", slash_path(&d.file), d.span.line, d.span.col, d.message);
+        let _ = writeln!(out, "{kind} {}:{}:{} [{rules}] {}", display_path(&d.file, &base), d.span.line, d.span.col, d.message);
     }
     out
 }

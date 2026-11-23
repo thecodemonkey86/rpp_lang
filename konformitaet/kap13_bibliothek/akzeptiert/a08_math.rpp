@@ -1,0 +1,16 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.28, R-13.29
+using rpp.math.Math;
+
+i32 main(string[] args) {
+    f64 a = Math::sqrt(2.0);
+    f64 b = Math::floor(2.7);
+    f64 c = Math::ceil(2.1);
+    f64 d = Math::trunc(-2.9);
+    f64 e = Math::round(2.5);
+    f64 f = Math::clamp(5.0, 0.0, 3.0);
+    f64 p = Math::PI;
+    f64 q = Math::E;
+    print((a + b + c + d + e + f + p + q).toString());
+    return 0;
+}

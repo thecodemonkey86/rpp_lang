@@ -20,6 +20,9 @@ public:
     nodiscard bool contains(K key) { fail("eingebaut"); }
     ref V? get(K key) { fail("eingebaut"); }
     ref V& at(K key) & { fail("eingebaut"); }
+    // Ausbau (R-13.33): liefert den Wert zum Schlüssel; fehlt er, wird
+    // factory() eingesetzt. Eingebaut, damit auch own-Schlüssel gehen.
+    ref V& getOrPut(own K key, Func<V> factory) & { fail("eingebaut"); }
     void put(own K key, own V value) & { fail("eingebaut"); }
     V? remove(K key) & { fail("eingebaut"); }
     void clear() & { fail("eingebaut"); }
@@ -31,6 +34,10 @@ public:
 
 export class Set<T : Hashable & Equatable<T>> {
     import Iterable<T, i64>;
+    import Equatable<Set<T>>;
+private:
+    // Übernimmt einen bereits auf Eindeutigkeit geprüften Eintrag in die Ergebnismenge.
+    void appendEntry(Set<T> source, i64 cursor) & { fail("eingebaut"); }
 public:
     constructor() { }
     void add(own T x) & { fail("eingebaut"); }
@@ -42,4 +49,37 @@ public:
     nodiscard bool done(i64 cursor) { fail("eingebaut"); }
     nodiscard i64 next(i64 cursor) { fail("eingebaut"); }
     ref T at(i64 cursor) { fail("eingebaut"); }
+
+    nodiscard bool equals(Set<T> other) {
+        if (length() != other.length()) { return false; }
+        for (T x : this) {
+            if (!other.contains(x)) { return false; }
+        }
+        return true;
+    }
+
+    nodiscard Set<T> intersect(Set<T> other) {
+        Set<T> result = new Set<T>();
+        for (i64 i = 0; i < length(); i++) {
+            if (other.contains(at(i))) { result.appendEntry(this, i); }
+        }
+        return result;
+    }
+
+    nodiscard Set<T> unite(Set<T> other) {
+        Set<T> result = new Set<T>();
+        for (i64 i = 0; i < length(); i++) { result.appendEntry(this, i); }
+        for (i64 i = 0; i < other.length(); i++) {
+            if (!contains(other.at(i))) { result.appendEntry(other, i); }
+        }
+        return result;
+    }
+
+    nodiscard Set<T> subtract(Set<T> other) {
+        Set<T> result = new Set<T>();
+        for (i64 i = 0; i < length(); i++) {
+            if (!other.contains(at(i))) { result.appendEntry(this, i); }
+        }
+        return result;
+    }
 }

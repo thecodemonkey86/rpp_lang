@@ -1,0 +1,43 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.23, R-13.24
+// Erwartet: Ausgabe "1546998764402558742\n6990951692964543102\n12544586762248559009\n11091344671253066420\n13793997310169335082\n2\n2\n9\n0\n317476\n83862\n378980\n0\n0\n1"; Exit-Code 0
+using rpp.random.Random;
+
+i32 main(string[] args) {
+    // Feste Folge für Seed 42 (xoshiro256**, R-13.23).
+    Random r = new Random(42);
+    print(r.nextUi64().toString());
+    print(r.nextUi64().toString());
+    print(r.nextUi64().toString());
+
+    // Seed 0 ist erlaubt; die Folge ist trotzdem nicht null.
+    Random z = new Random(0);
+    print(z.nextUi64().toString());
+    print(z.nextUi64().toString());
+
+    // Gleicher Seed, gleiche Folge.
+    Random a = new Random(7);
+    Random b = new Random(7);
+    assert(a.nextUi64() == b.nextUi64(), "gleicher Seed, gleiche Folge");
+    assert(a.nextUi64() == b.nextUi64(), "gleicher Seed, gleiche Folge");
+
+    // nextInt ohne Modulo-Bias, auch für bound 1 (R-13.24).
+    Random n = new Random(42);
+    print(n.nextInt(10).toString());
+    print(n.nextInt(10).toString());
+    print(n.nextInt(10).toString());
+    print(n.nextInt(1).toString());
+    print(n.nextInt(1000000).toString());
+
+    // nextFloat in [0, 1); hier auf Millionstel genau geprüft.
+    Random f = new Random(42);
+    print(cast<i64>(f.nextFloat() * 1000000.0).toString());
+    print(cast<i64>(f.nextFloat() * 1000000.0).toString());
+
+    // nextBool: das oberste Bit der gezogenen Zahl.
+    Random g = new Random(42);
+    if (g.nextBool()) { print("1"); } else { print("0"); }
+    if (g.nextBool()) { print("1"); } else { print("0"); }
+    if (g.nextBool()) { print("1"); } else { print("0"); }
+    return 0;
+}

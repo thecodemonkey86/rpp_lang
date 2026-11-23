@@ -3890,6 +3890,48 @@ private:
         if (recv == 3) {
             builtinConstraints(recvTy, nm, line, col);
         }
+        // R-7.25/R-7.26: Constraints der Methoden-Typparameter gegen die abgeleiteten
+        // Typargumente prüfen (wie checkPending für Klassen). Die Ableitung wird aus dem
+        // ursprünglichen Kandidaten wiederholt, weil `chosen` bereits ersetzt ist.
+        if (chosen.tparams.length > 0) {
+            for (MethodInfo orig : cands) {
+                if (orig.name != chosen.name || orig.owner != chosen.owner || orig.member != chosen.member) {
+                    continue;
+                }
+                Subst map = new Subst();
+                for (i64 i = 0; i < shapes.length && i < orig.params.length; i++) {
+                    shared Ty? at = null;
+                    if (shapes[i].kind == 0) {
+                        at = shapes[i].ty;
+                    } else if (shapes[i].kind == 1) {
+                        at = Ty::ofPrim(Num::defaultInt(shapes[i].neg, shapes[i].mag));
+                    } else if (shapes[i].kind == 2) {
+                        at = Ty::ofPrim("f64");
+                    }
+                    if (at != null) {
+                        unify(orig.params[i].ty, at, orig.tparams, &map);
+                    }
+                }
+                for (i64 tp : chosen.tparams) {
+                    i64 idx = Program::indexOfInt(map.keys, tp);
+                    if (idx < 0) { continue; }
+                    shared Ty arg = map.vals[idx];
+                    if (arg.isError()) { continue; }
+                    if (p.tparams[tp].needsNew && !p.satisfiesNew(arg)) {
+                        err(line, col, "R-7.25", show(arg) + " hat keinen sichtbaren parameterlosen Konstruktor (new())");
+                    }
+                    shared Ty[] cons = [];
+                    for (shared Ty c : p.tparams[tp].constraints) { cons.push(c); }
+                    for (shared Ty c0 : cons) {
+                        shared Ty c = Ty::subst(c0, map);
+                        if (!p.satisfies(arg, c)) {
+                            err(line, col, "R-7.26", show(arg) + " erfüllt " + show(c) + " nicht");
+                        }
+                    }
+                }
+                break;
+            }
+        }
         i64 id = beginCall();
         // R-5.10: Der Empfänger ist für die Dauer des Aufrufs geliehen.
         if (chosen.isStatic) {
@@ -4430,6 +4472,11 @@ private:
                 }
             }
             return (false, empty);
+        }
+        if ((t.kind == TK::Vector || t.kind == TK::Slice) && nm == "partitionPoint") {
+            shared Ty[] elements = [t.args[0]];
+            shared Ty[] params = [Ty::func(elements, r1, b)];
+            return (true, one(nm, params, r1, i64t));
         }
         if (t.kind == TK::Vector) {
             shared Ty e = t.args[0];

@@ -1,71 +1,44 @@
 // Zustand der Flussanalyse, gleichwertig zu rppc/crates/rpp-sema/src/flow.rs: Typverengung
 // (Kapitel 6), sichere Initialisierung (R-4.46), Moves (Kapitel 5) und Loans.
-// Mengen und Zuordnungen über Variablennummern sind sortierte Listen.
 package compiler.sema;
 
-// Menge von Variablennummern (sortiert)
+using rpp.collections.Set;
+
+// Menge von Variablennummern
 export class IdSet {
 public:
-    i64[] items = [];
+    Set<i64> items = new Set<i64>();
 
     bool has(i64 x) {
-        for (i64 y : items) {
-            if (y == x) {
-                return true;
-            }
-        }
-        return false;
+        return items.contains(x);
     }
 
     void add(i64 x) & {
-        i64 at = 0;
-        while (at < items.length && items[at] < x) {
-            at++;
-        }
-        if (at < items.length && items[at] == x) {
-            return;
-        }
-        items.insert(at, x);
+        items.add(x);
     }
 
     // entfernt x; true, wenn es enthalten war
     bool remove(i64 x) & {
-        for (i64 i = 0; i < items.length; i++) {
-            if (items[i] == x) {
-                discard items.remove(i);
-                return true;
-            }
-        }
-        return false;
+        if (!items.contains(x)) { return false; }
+        items.remove(x);
+        return true;
     }
 
     IdSet dup() {
         IdSet c = new IdSet();
         for (i64 x : items) {
-            c.items.push(x);
+            c.items.add(x);
         }
         return c;
     }
 
     bool same(IdSet o) {
-        if (items.length != o.items.length) {
-            return false;
-        }
-        for (i64 i = 0; i < items.length; i++) {
-            if (items[i] != o.items[i]) {
-                return false;
-            }
-        }
-        return true;
+        return items == o.items;
     }
 
     static IdSet inter(IdSet a, IdSet b) {
         IdSet c = new IdSet();
-        for (i64 x : a.items) {
-            if (b.has(x)) {
-                c.items.push(x);
-            }
-        }
+        c.items = a.items.intersect(b.items);
         return c;
     }
 
@@ -82,7 +55,7 @@ public:
         IdSet c = new IdSet();
         for (i64 x : a.items) {
             if (!b.has(x)) {
-                c.items.push(x);
+                c.items.add(x);
             }
         }
         return c;
@@ -96,12 +69,8 @@ public:
     string[] vals = [];
 
     i64 find(i64 k) {
-        for (i64 i = 0; i < keys.length; i++) {
-            if (keys[i] == k) {
-                return i;
-            }
-        }
-        return -1;
+        i64 at = keys.partitionPoint((i64 x) => x < k);
+        return at < keys.length && keys[at] == k ? at : -1;
     }
 
     bool has(i64 k) {
@@ -109,10 +78,7 @@ public:
     }
 
     void put(i64 k, string v) & {
-        i64 at = 0;
-        while (at < keys.length && keys[at] < k) {
-            at++;
-        }
+        i64 at = keys.partitionPoint((i64 x) => x < k);
         if (at < keys.length && keys[at] == k) {
             vals[at] = v;
             return;

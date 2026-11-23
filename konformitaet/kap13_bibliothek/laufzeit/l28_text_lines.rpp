@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.30
+// Erwartet: Ausgabe "3\n[a][b][c]\n2\n[a][b]\n3\n[a][][b]\n0\n1\n1\n[]"; Exit-Code 0
+using rpp.text.Text;
+
+i32 main(string[] args) {
+    // Einfache Zeilen, CRLF, leere Zwischenzeile, abschließendes '\n'.
+    string[] a = Text::lines("a\nb\nc");
+    print(a.length.toString());
+    print("[" + a[0] + "][" + a[1] + "][" + a[2] + "]");
+
+    string[] b = Text::lines("a\r\nb\r\n");
+    print(b.length.toString());
+    print("[" + b[0] + "][" + b[1] + "]");
+
+    string[] c = Text::lines("a\n\nb\n");
+    print(c.length.toString());
+    print("[" + c[0] + "][" + c[1] + "][" + c[2] + "]");
+
+    // Leer, ein Zeichen, nur ein Umbruch.
+    print(Text::lines("").length.toString());
+    print(Text::lines("x").length.toString());
+    string[] d = Text::lines("\n");
+    print(d.length.toString());
+    print("[" + d[0] + "]");
+    return 0;
+}

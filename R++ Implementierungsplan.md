@@ -1,6 +1,6 @@
 # R++ Implementierungsplan
 
-Stand: 22.11.2026, Entwurf 0.6. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
+Stand: 23.11.2026, Entwurf 0.12. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
 Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M5 sind abgeschlossen, M6 ist begonnen (Abschnitt 6).
 
@@ -272,3 +272,56 @@ Für den Prüfer besitzt der Prüfer das Programm und leiht die Syntaxbäume; `P
 Verglichen wird `pruefe STD PFAD` (alle Meldungen mit Warnungen und Begründungsregeln, sortiert wie `rppc check`). Eingaben sind die Projekte und Einzeldateien der Konformitätstests, die Grammatiktests, die Grenzfälle der Deklarationsphase und die nach R++ übersetzten FR++-Programme (handgeschriebene und 300 Zufallsprogramme): 782 gleich, 0 verschieden. Gegenprobe: Mit R-6.9 statt R-6.8 als Begründung nach einem `if` weicht ein Konformitätstest ab. Auch `rpp-compiler` selbst prüfen beide Seiten gleich (keine Meldung); im Interpreter dauert das gut 20 Minuten, vor allem wegen des Fixpunkts an verschachtelten Schleifen.
 
 Weiter in M6: die Angaben für die Ausführung und ein Codegenerator (Zwischendarstellung oder C), dann die Selbstübersetzung.
+
+**Ausbau der Standardbibliothek: rpp.random (23.11.2026).** Erstes Paket des Ausbaus (V-13.9; Standardbibliothek, Abschnitte 9 und 10, R-13.23 bis R-13.25). `rppc/std/rpp/random/Random.rpp` ist reiner R++-Quelltext ohne eingebaute Teile: xoshiro256** mit SplitMix64-Seeding, dazu `nextUi64`, `nextInt`, `nextFloat`, `nextBool` und das generische `shuffle<T>(T[]& v)`.
+
+| Teil | Inhalt |
+|---|---|
+| Arithmetik modulo 2⁶⁴ | Addition und Multiplikation in 32-Bit-Hälften, ohne Überlauf (R-4.14); beide Modi laufen gleich. Schieben verwirft herausgeschobene Bits (R-4.16). |
+| `nextInt` | gleichverteilt ohne Modulo-Bias durch Verwerfen unterhalb einer Schwelle; `bound ≤ 0` ist ein `FailError` |
+| `shuffle` | Fisher-Yates über `remove`/`insert`: Aus Elementen wird nicht herausbewegt (V-3), und `swap` auf zwei Indizes gilt immer als überlappend (Kapitel 5, Abschnitt 7). Die Elemente werden verschoben; das funktioniert für jeden Elementtyp, auch für `own`-Objekte. |
+
+Die erwarteten Ausgaben der Laufzeittests sind mit einer unabhängigen Referenzimplementierung (Python) berechnet und in den Testköpfen festgeschrieben: `a06_random`, `l20_random_folge` (feste Folgen für die Seeds 42, 0 und 7, Reproduzierbarkeit, `nextInt`, `nextFloat`, `nextBool`), `l21_random_shuffle` (Grundwerte, `own`-Objekte, Strings, leerer Vektor; Seed 2026), `l22_random_bound` (`FailError` bei `nextInt(0)`).
+
+`rppc test ..`: alle 272 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Random.rpp` und die neuen Tests auf beiden Seiten dieselben (keine) Meldungen. Der veränderbare Vektor-Parameter `T[]&` mit `remove`/`insert` durch die Prüfung war damit erstmals in einem Bibliothekspaket im Einsatz.
+
+**Ausbau: Vektor-Algorithmen und ein Prüfungs-Fix (23.11.2026).** `rppc/std/rpp/collections/Vectors.rpp` (reiner R++-Quelltext, V-13.10) ergänzt `rpp.collections` um statische generische Methoden: `binarySearch` (Comparable), `equals` (Equatable, elementweiser Vergleich – Arrays haben kein `==`, V-4.8), `reverse`, `retain` (Prädikat) und `dedup` (aufeinanderfolgende Duplikate). Die veränderbaren Methoden arbeiten über `remove`/`insert` (V-3; `swap` auf zwei Indizes gilt immer als überlappend) und verschieben die Elemente; sie funktionieren auch für `own`-Objekte.
+
+| Teil | Inhalt |
+|---|---|
+| Hilfsklasse statt eingebaut | Als R++-Klasse geschrieben, nicht als eingebaute Methoden auf `T[]`: beide Compiler behandeln sie gleich, keine Divergenz in M6 (V-13.10). Eingebaute Methoden bleiben, was R++ nicht effizient ausdrücken kann (`sort`). |
+| Prüfungs-Fix R-7.26 | Beim Schreiben aufgefallen: Constraints generischer **Methoden** wurden am Aufruf nicht geprüft (nur Klassen-Constraints über `check_pending`). `binarySearch` mit einem Typ ohne `Comparable` wurde angenommen und scheiterte erst zur Laufzeit (`InternalError: Methode compareTo ohne Rumpf`). In `body.rs` (nach der Methodenwahl, die abgeleiteten Typargumente gegen die Constraints geprüft) und in `Checker.rpp` behoben. R-7.26 verlangte die Prüfung bereits; der Fix macht die Implementierung erst spec-konform. |
+
+Neue Tests: `a07_vectors`, `l23_vectors_suche`, `l24_vectors_mutieren`, `n08_vectors_ohne_comparable` (R-7.26). `rppc test ..`: alle 276 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Vectors.rpp` und die vier neuen Tests auf beiden Seiten dasselbe (der Negativtest wird hüben wie drüben mit R-7.26 abgelehnt).
+
+**Ausbau: rpp.math (23.11.2026).** `rppc/std/rpp/math/Math.rpp` ergänzt die Bibliothek um `f64`-Funktionen (V-13.11; Standardbibliothek, Abschnitt 12, R-13.28, R-13.29): die Konstanten `PI` und `E`, `sqrt`, `floor`, `ceil`, `trunc`, `round` und `clamp`.
+
+| Teil | Inhalt |
+|---|---|
+| Runden und clamp | reiner R++-Quelltext. `floor`/`ceil`/`trunc`/`round` runden exakt ganzzahlig über `cast<i64>` (Richtung null, R-4.10) mit Anpassung; `round` bei .5 von null weg. NaN (`x != x`), ±0 und \|x\| ≥ 2⁵² (ganzzahlig, auch ±∞) bleiben unverändert – dadurch laufen beide Modi gleich und das Vorzeichen von null bleibt erhalten. `clamp` verlangt `lo <= hi` (sonst `FailError`). |
+| sqrt | eingebaut (`fail("eingebaut")`, Dispatch in `stdlib.rs` über `rpp.math.Math`), korrekt gerundet nach IEEE 754 wie `Fmt::fixed`; `x < 0` ergibt NaN. Als R++-Klasse mit eingebautem Rumpf behandeln beide Compiler die Signatur gleich – keine M6-Divergenz (V-13.11). |
+
+Die Soll-Ausgaben sind mit einer unabhängigen Python-Referenz berechnet (u. a. `sqrt(2)` auf 10 Stellen, `PI`/`E` auf 5 Stellen). Neue Tests: `a08_math`, `l25_math_runden` (Runden, clamp, NaN/∞), `l26_math_sqrt` (Quadratzahlen, korrekt gerundetes `sqrt(2)`, NaN/∞, Konstanten), `l27_math_clamp_fehler` (`FailError` bei `lo > hi`). `rppc test ..`: alle 280 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Math.rpp` und die vier neuen Tests auf beiden Seiten dasselbe.
+
+**Ausbau: Text-Hilfen (23.11.2026).** `rppc/std/rpp/text/Text.rpp` ergänzt `rpp.text` um statische Methoden auf `string` (Standardbibliothek, Abschnitt 13, R-13.30): `lines`, `removePrefix`, `removeSuffix`, `repeat` und `splitLimit`. Das Paket ist **reiner R++-Quelltext ohne eingebaute Teile** und ohne jede Änderung am Rust-Code – es setzt nur auf vorhandenen String-Methoden (R-13.13), `StringBuilder` und `string::join` auf (V-13.9, V-13.10, Muster `Fmt`).
+
+| Teil | Inhalt |
+|---|---|
+| `lines` | über `split("\n")`, `removeSuffix(…, "\r")` für CRLF; ein abschließendes `\n` erzeugt keine zusätzliche leere Zeile, `""` ergibt einen leeren Vektor |
+| `removePrefix`/`removeSuffix` | `startsWith`/`endsWith` plus `substring`; sonst unverändert |
+| `repeat` | `StringBuilder`; `n < 0` ist ein `FailError` |
+| `splitLimit` | `split` und `string::join` für den ungeteilten Rest im letzten Teil; `limit < 1` oder leerer Trenner ist ein `FailError` |
+
+Neue Tests: `a09_text`, `l28_text_lines`, `l29_text_hilfen`, `l30_text_split_limit`, `l31_text_repeat_fehler`, `l32_text_split_limit_fehler`. String-Ergebnisse sind in den Tests in `[…]` gekapselt, damit leere Strings eindeutig prüfbar sind. `rppc test ..`: alle 286 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Text.rpp` und die sechs neuen Tests auf beiden Seiten dasselbe.
+
+**Ausbau: Datei-Operationen (23.11.2026).** `File` (in `rppc/std/rpp/io/Io.rpp`) erhält fünf weitere statische Methoden (Standardbibliothek, Abschnitt 14, R-13.31): `appendText`, `copyFile`, `moveFile`, `delete`, `size`. Sie sind eingebaut (`fail("eingebaut")`, Dispatch in `stdlib.rs`), weil sie Dateisystemzugriff brauchen – wie schon `File`/`Dir`. Als R++-Klasse behandeln beide Compiler die Signaturen gleich (keine M6-Divergenz, V-13.10).
+
+| Teil | Inhalt |
+|---|---|
+| `appendText` | hängt UTF-8 an, legt eine fehlende Datei an (`OpenOptions` append+create) |
+| `copyFile` | `std::fs::copy`, liefert die Bytezahl; ersetzt ein vorhandenes Ziel |
+| `moveFile` | `std::fs::rename`; schlägt das fehl, weil das Ziel existiert (Windows), wird es entfernt und erneut umbenannt – so ersetzen beide Plattformen ein vorhandenes Ziel gleich |
+| `delete` / `size` | `remove_file` bzw. `metadata().len()`; `IOException`, wenn die Datei fehlt |
+
+`copy` ist ein Schlüsselwort (Kapitel 7), deshalb `copyFile`/`moveFile`. Neue Tests: `a10_io`, `l33_io_datei_ops` (alle Operationen im frischen Arbeitsverzeichnis, V-14.3), `l34_io_fehler` (`IOException` bei fehlender Datei). `rppc test ..`: alle 289 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Io.rpp` und die drei neuen Tests auf beiden Seiten dasselbe. Offen bleiben gepuffertes Lesen und Mtime (letzteres braucht `rpp.time`, Phase B).
+

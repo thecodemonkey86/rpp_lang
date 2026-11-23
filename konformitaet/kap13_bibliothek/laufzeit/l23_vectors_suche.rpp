@@ -1,0 +1,34 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.26
+// Erwartet: Ausgabe "2\n0\n4\nnull\nnull\nja\nnein\nnein\nja\nja"; Exit-Code 0
+using rpp.collections.Vectors;
+
+i32 main(string[] args) {
+    i32[] s = [1, 3, 5, 7, 9];
+
+    // Treffer in der Mitte, am Anfang und am Ende.
+    i64? f1 = Vectors::binarySearch(s, 5);
+    if (f1 != null) { print(f1.toString()); } else { print("null"); }
+    i64? f3 = Vectors::binarySearch(s, 1);
+    if (f3 != null) { print(f3.toString()); } else { print("null"); }
+    i64? f4 = Vectors::binarySearch(s, 9);
+    if (f4 != null) { print(f4.toString()); } else { print("null"); }
+
+    // Kein Treffer und leerer Slice.
+    i64? f2 = Vectors::binarySearch(s, 4);
+    if (f2 != null) { print(f2.toString()); } else { print("null"); }
+    i32[] e = [];
+    i64? f5 = Vectors::binarySearch(e, 1);
+    if (f5 != null) { print(f5.toString()); } else { print("null"); }
+
+    // equals: gleich, ungleich, verschiedene Länge, leer, Strings.
+    print(Vectors::equals([1, 2, 3], [1, 2, 3]) ? "ja" : "nein");
+    print(Vectors::equals([1, 2, 3], [1, 2, 4]) ? "ja" : "nein");
+    print(Vectors::equals([1, 2], [1, 2, 3]) ? "ja" : "nein");
+    i32[] e2 = [];
+    print(Vectors::equals(e, e2) ? "ja" : "nein");
+    string[] a = ["ab", "cd"];
+    string[] b = ["ab", "cd"];
+    print(Vectors::equals(a, b) ? "ja" : "nein");
+    return 0;
+}

@@ -1,0 +1,39 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.31, R-13.19
+// Erwartet: Ausgabe "5\n10\nHallo Welt\n10\ntrue\nfalse\ntrue\nHallo Welt\nfalse\n3"; Exit-Code 0
+using rpp.io.File;
+
+// Läuft in einem frischen, leeren Arbeitsverzeichnis (V-14.3).
+i32 main(string[] args) {
+    // size und appendText (hängt an).
+    File::writeText("a.txt", "Hallo");
+    print(File::size("a.txt").toString());
+    File::appendText("a.txt", " Welt");
+    print(File::size("a.txt").toString());
+    File f = File::open("a.txt");
+    print(f.readAllText());
+
+    // copyFile liefert die Bytezahl und legt das Ziel an.
+    print(File::copyFile("a.txt", "b.txt").toString());
+    print(File::exists("b.txt").toString());
+
+    // moveFile benennt um.
+    File::moveFile("b.txt", "c.txt");
+    print(File::exists("b.txt").toString());
+    print(File::exists("c.txt").toString());
+
+    // moveFile ersetzt ein vorhandenes Ziel.
+    File::writeText("d.txt", "x");
+    File::moveFile("c.txt", "d.txt");
+    File g = File::open("d.txt");
+    print(g.readAllText());
+
+    // delete entfernt.
+    File::delete("a.txt");
+    print(File::exists("a.txt").toString());
+
+    // appendText erzeugt eine fehlende Datei.
+    File::appendText("neu.txt", "abc");
+    print(File::size("neu.txt").toString());
+    return 0;
+}

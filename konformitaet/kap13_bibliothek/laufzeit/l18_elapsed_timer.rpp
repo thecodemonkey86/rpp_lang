@@ -1,0 +1,18 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.22
+// Erwartet: Ausgabe "true\ntrue\ntrue"; Exit-Code 0
+using rpp.env.ElapsedTimer;
+
+i32 main(string[] args) {
+    ElapsedTimer total = new ElapsedTimer();
+    ElapsedTimer phase = new ElapsedTimer();
+    i64 first = phase.elapsed();
+    i64 later = phase.elapsed();
+    print((first >= 0 && later >= first).toString());
+    i64 completed = phase.restart();
+    print((completed >= later && phase.elapsed() <= total.elapsed()).toString());
+    phase.start();
+    i64 current = phase.elapsed();
+    print((current >= 0 && current <= total.elapsed()).toString());
+    return 0;
+}

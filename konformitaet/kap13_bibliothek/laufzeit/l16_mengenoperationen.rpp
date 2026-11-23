@@ -1,0 +1,56 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.18, V-13.2
+// Erwartet: Ausgabe "true\nfalse\nfalse\n3,1\n1,3\n3,1,2,4\n2\n3,1,2\n1,4,3\n0\ntrue\ntrue\n11,22"; Exit-Code 0
+using rpp.collections.Set;
+
+class Key {
+    import Hashable;
+    import Equatable<Key>;
+public:
+    i64 value;
+    constructor(i64 value) { this.value = value; }
+    i64 hash() { return 0; }
+    bool equals(Key other) { return value == other.value; }
+}
+
+class Show {
+public:
+    static string order(Set<i64> s) {
+        string[] values = [];
+        for (i64 x : s) { values.push(x.toString()); }
+        return string::join(",", values);
+    }
+}
+
+i32 main(string[] args) {
+    Set<i64> a = new Set<i64>();
+    a.add(3); a.add(1); a.add(2); a.add(3);
+    Set<i64> b = new Set<i64>();
+    b.add(1); b.add(4); b.add(3);
+    Set<i64> reversed = new Set<i64>();
+    reversed.add(2); reversed.add(1); reversed.add(3);
+    print((a == reversed).toString());
+    print((a != reversed).toString());
+    print((a == b).toString());
+    print(Show::order(a.intersect(b)));
+    print(Show::order(b.intersect(a)));
+    print(Show::order(a.unite(b)));
+    print(Show::order(a.subtract(b)));
+    print(Show::order(a));
+    print(Show::order(b));
+    print(a.subtract(a).length().toString());
+    Set<i64> empty = new Set<i64>();
+    print((a.intersect(empty) == empty).toString());
+    print((empty.unite(a) == a).toString());
+
+    Set<Key> left = new Set<Key>();
+    left.add(new Key(11));
+    Set<Key> right = new Set<Key>();
+    right.add(new Key(22)); right.add(new Key(11));
+    Set<Key> both = left.unite(right);
+    left.clear(); right.clear();
+    string[] keys = [];
+    for (Key k : both) { keys.push(k.value.toString()); }
+    print(string::join(",", keys));
+    return 0;
+}

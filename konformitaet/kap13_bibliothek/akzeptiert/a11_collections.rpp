@@ -1,0 +1,17 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.32, R-13.33
+using rpp.collections.Deque;
+using rpp.collections.Map;
+
+i32 main(string[] args) {
+    Deque<i32> d = new Deque<i32>();
+    d.pushBack(1);
+    d.pushFront(2);
+    i32 x = d.popFront();
+    i32 y = d.popBack();
+    ref i32? f = d.front();
+    Map<string, i32> m = new Map<string, i32>();
+    print(m.getOrPut("a", () => 1).toString());
+    print((x + y).toString());
+    return 0;
+}

@@ -15,17 +15,31 @@ use std::cmp::Ordering;
 const NATIVE_CLASSES: &[&str] = &[
     "rpp.io.Console",
     "rpp.io.File",
+    "rpp.io.SaveFile",
     "rpp.io.Dir",
     "rpp.io.Path",
     "rpp.text.StringBuilder",
+    "rpp.text.StringView",
     "rpp.collections.Map",
     "rpp.collections.Set",
     "rpp.fmt.Fmt",
+    "rpp.math.Math",
     "rpp.env.Env",
+    "rpp.env.ElapsedTimer",
 ];
 
 fn str_value(s: impl AsRef<str>) -> Value {
     Value::Str(Rc::from(s.as_ref()))
+}
+
+fn file_data(value: &Value) -> Vec<u8> {
+    let bytes = |xs: &[Value]| xs.iter().map(|x| if let Value::Byte(b) = x { *b } else { 0 }).collect();
+    match value {
+        Value::Str(s) => s.as_bytes().to_vec(),
+        Value::Slice(v, a, b) => bytes(&v.slots.borrow()[*a..*b]),
+        Value::Obj(v, _) => bytes(&v.slots.borrow()),
+        _ => Vec::new(),
+    }
 }
 
 /// Pfade verwenden `/` als Trenner (R-13.20).
@@ -34,6 +48,59 @@ fn slash(p: &str) -> String {
 }
 
 impl Interp {
+    fn string_view(&mut self, method: &str, class: DefId, object: &ORef, args: &[Value]) -> R<Value> {
+        let fields = object.slots.borrow();
+        let [Value::Str(source), Value::I64(start), Value::I64(end), ..] = fields.as_slice() else {
+            return Err(self.internal("ungültige StringView"));
+        };
+        let text = &source[*start as usize..*end as usize];
+        let view = |it: &mut Self, offset: usize, len: usize| {
+            let begin = *start + offset as i64;
+            let fields = vec![Value::Str(source.clone()), Value::I64(begin), Value::I64(begin + len as i64)];
+            Value::Obj(it.raw_object(class, fields), Form::Own)
+        };
+        let part = || args[0].as_str().unwrap();
+        let index = |n: usize| usize::try_from(args[n].as_i128().unwrap()).ok();
+        match method {
+            "length" => Ok(Value::I64(text.chars().count() as i64)),
+            "charAt" => index(0).and_then(|i| text.chars().nth(i)).map(Value::Char)
+                .ok_or_else(|| self.fatal("IndexError", "Index außerhalb der StringView")),
+            "slice" => {
+                let boundary = |i| text.char_indices().map(|(b, _)| b).chain(std::iter::once(text.len())).nth(i);
+                match (index(0).and_then(boundary), index(1).and_then(boundary)) {
+                    (Some(a), Some(b)) if a <= b => Ok(view(self, a, b - a)),
+                    _ => Err(self.fatal("IndexError", "Bereich außerhalb der StringView")),
+                }
+            }
+            "trim" | "trimEnd" => {
+                let left = if method == "trim" { text.trim_start() } else { text };
+                Ok(view(self, text.len() - left.len(), left.trim_end().len()))
+            }
+            "startsWith" => Ok(Value::Bool(text.starts_with(part()))),
+            "endsWith" => Ok(Value::Bool(text.ends_with(part()))),
+            "indexOf" => Ok(text.find(part()).map_or(Value::Null, |b| Value::I64(text[..b].chars().count() as i64))),
+            "splitOnce" => match text.split_once(part()) {
+                Some((left, right)) => Ok(Value::Tuple(vec![
+                    view(self, 0, left.len()),
+                    view(self, text.len() - right.len(), right.len()),
+                ])),
+                None => Ok(Value::Null),
+            },
+            "split" => {
+                let mut parts = Vec::new();
+                let mut begin = 0;
+                for (end, separator) in text.match_indices(part()) {
+                    parts.push(view(self, begin, end - begin));
+                    begin = end + separator.len();
+                }
+                parts.push(view(self, begin, text.len() - begin));
+                Ok(Value::Obj(self.new_vec(parts), Form::Own))
+            }
+            "toString" => Ok(if text.len() == source.len() { Value::Str(source.clone()) } else { str_value(text) }),
+            _ => Err(self.internal(format!("StringView.{method}"))),
+        }
+    }
+
     /// Voller Name einer eingebauten Methode, sonst `None`.
     pub(crate) fn native_name(&self, m: &MethodInfo) -> Option<String> {
         if m.owner == usize::MAX {
@@ -92,7 +159,9 @@ impl Interp {
     /// Schlüssel des Eintrags an Position `i` (Map) bzw. das Element (Set).
     fn key_at(o: &ORef, i: usize, map: bool) -> Value {
         let it = o.slots.borrow()[i].view();
-        if map {
+        // Map-Einträge und die geteilten Set-Einträge für nicht kopierbare Werte
+        // besitzen den Schlüssel im ersten Feld. Einfache Set-Werte liegen direkt im Slot.
+        if map || matches!(it, Value::Obj(..)) {
             it.obj().map(|e| e.slots.borrow()[0].view()).unwrap_or(Value::Null)
         } else {
             it
@@ -135,6 +204,9 @@ impl Interp {
         let text = |args: &Vec<Value>, i: usize| args.get(i).map(to_text).unwrap_or_default();
         let o = this.as_ref().and_then(|t| t.obj().cloned());
         let int = |args: &Vec<Value>, i: usize| args.get(i).and_then(Value::as_i128).unwrap_or(0);
+        if let Some(method) = name.strip_prefix("rpp.text.StringView.") {
+            return self.string_view(method, m.owner, &o.unwrap(), &args);
+        }
         match name {
             // ---------------------------------------------------------------- rpp.io
             "rpp.io.Console.write" => {
@@ -185,15 +257,91 @@ impl Interp {
             }
             "rpp.io.File.writeText" | "rpp.io.File.writeBytes" => {
                 let path = text(&args, 0);
-                let data: Vec<u8> = match args.get(1) {
-                    Some(Value::Str(s)) => s.as_bytes().to_vec(),
-                    Some(Value::Slice(v, a, b)) => v.slots.borrow()[*a..*b].iter().map(|x| if let Value::Byte(b) = x { *b } else { 0 }).collect(),
-                    Some(Value::Obj(v, _)) => v.slots.borrow().iter().map(|x| if let Value::Byte(b) = x { *b } else { 0 }).collect(),
-                    _ => Vec::new(),
-                };
+                let data = file_data(&args[1]);
                 match std::fs::write(&path, data) {
                     Ok(()) => Ok(Value::Void),
                     Err(e) => self.io_error(format!("{path}: {e}"), &path),
+                }
+            }
+            // ---------------------------------------------------------------- rpp.io Datei-Operationen (R-13.31)
+            "rpp.io.File.appendText" => {
+                let path = text(&args, 0);
+                let data = text(&args, 1);
+                let r = std::fs::OpenOptions::new().append(true).create(true).open(&path)
+                    .and_then(|mut f| std::io::Write::write_all(&mut f, data.as_bytes()));
+                match r {
+                    Ok(()) => Ok(Value::Void),
+                    Err(e) => self.io_error(format!("{path}: {e}"), &path),
+                }
+            }
+            "rpp.io.File.copyFile" => {
+                let from = text(&args, 0);
+                let to = text(&args, 1);
+                match std::fs::copy(&from, &to) {
+                    Ok(n) => Ok(Value::I64(n as i64)),
+                    Err(e) => self.io_error(format!("{from}: {e}"), &from),
+                }
+            }
+            "rpp.io.File.moveFile" => {
+                let from = text(&args, 0);
+                let to = text(&args, 1);
+                match std::fs::rename(&from, &to) {
+                    Ok(()) => Ok(Value::Void),
+                    // Auf Windows schlägt rename fehl, wenn das Ziel existiert: ersetzen.
+                    Err(_) if std::path::Path::new(&to).is_file() => {
+                        match std::fs::remove_file(&to).and_then(|()| std::fs::rename(&from, &to)) {
+                            Ok(()) => Ok(Value::Void),
+                            Err(e) => self.io_error(format!("{from}: {e}"), &from),
+                        }
+                    }
+                    Err(e) => self.io_error(format!("{from}: {e}"), &from),
+                }
+            }
+            "rpp.io.File.delete" => {
+                let path = text(&args, 0);
+                match std::fs::remove_file(&path) {
+                    Ok(()) => Ok(Value::Void),
+                    Err(e) => self.io_error(format!("{path}: {e}"), &path),
+                }
+            }
+            "rpp.io.File.size" => {
+                let path = text(&args, 0);
+                match std::fs::metadata(&path) {
+                    Ok(md) => Ok(Value::I64(md.len() as i64)),
+                    Err(e) => self.io_error(format!("{path}: {e}"), &path),
+                }
+            }
+            "rpp.io.SaveFile.open" => {
+                let path = text(&args, 0);
+                match save_file::SaveFile::open(std::path::Path::new(&path)) {
+                    Ok(save) => {
+                        let object = self.raw_object(m.owner, vec![str_value(&path)]);
+                        self.save_files.insert(Rc::as_ptr(&object), save);
+                        Ok(Value::Obj(object, Form::Own))
+                    }
+                    Err(e) => self.io_error(format!("{path}: {e}"), &path),
+                }
+            }
+            "rpp.io.SaveFile.writeText" | "rpp.io.SaveFile.writeBytes" | "rpp.io.SaveFile.commit" | "rpp.io.SaveFile.cancel" => {
+                let object = o.unwrap();
+                let key = Rc::as_ptr(&object);
+                if name.ends_with(".cancel") {
+                    self.save_files.remove(&key);
+                    return Ok(Value::Void);
+                }
+                let path = Self::sb_text(&object);
+                let result = if name.ends_with(".commit") {
+                    self.save_files.remove(&key).map(|save| save.commit())
+                } else {
+                    self.save_files.get_mut(&key).map(|save| save.write(&file_data(&args[0])))
+                };
+                match result {
+                    Some(Ok(())) => Ok(Value::Void),
+                    Some(Err(e)) => {
+                        self.save_files.remove(&key);
+                        self.io_error(format!("{path}: {e}"), &path)
+                    }
+                    None => self.io_error(format!("{path}: Schreibvorgang ist beendet"), &path),
                 }
             }
             "rpp.io.Dir.list" => {
@@ -208,11 +356,45 @@ impl Interp {
                 let v = names.into_iter().map(str_value).collect();
                 Ok(Value::Obj(self.new_vec(v), Form::Own))
             }
+            "rpp.io.Dir.entries" => {
+                let dir = text(&args, 0);
+                let Some(entry_class) = self.p.std_def("rpp.io.DirEntry") else { return Err(self.internal("DirEntry fehlt")) };
+                let Some(kind_enum) = self.p.std_def("rpp.io.FileType") else { return Err(self.internal("FileType fehlt")) };
+                let read = std::fs::read_dir(&dir).and_then(|rd| rd.map(|entry| {
+                    let entry = entry?;
+                    let kind = entry.file_type()?;
+                    let variant = if kind.is_dir() { "Directory" } else if kind.is_file() { "File" }
+                        else if kind.is_symlink() { "Symlink" } else { "Other" };
+                    Ok((entry.file_name().to_string_lossy().into_owned(),
+                        rpp_sema::project::slash_path(&entry.path()), variant))
+                }).collect::<std::io::Result<Vec<_>>>());
+                let mut entries = match read {
+                    Ok(entries) => entries,
+                    Err(e) => return self.io_error(format!("{dir}: {e}"), &dir),
+                };
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                let mut values = Vec::with_capacity(entries.len());
+                for (name, path, variant) in entries {
+                    let Some(i) = self.p.defs[kind_enum].variants.iter().position(|v| v.name == variant) else {
+                        return Err(self.internal(format!("FileType.{variant} fehlt")));
+                    };
+                    let fields = vec![str_value(name), str_value(path), Value::Enum(kind_enum, i, Vec::new())];
+                    values.push(Value::Obj(self.raw_object(entry_class, fields), Form::Own));
+                }
+                Ok(Value::Obj(self.new_vec(values), Form::Own))
+            }
             // V-13.8
             "rpp.io.File.exists" => Ok(Value::Bool(std::path::Path::new(&text(&args, 0)).is_file())),
             "rpp.io.Path.absolute" => {
                 let p = rpp_sema::project::normalize(std::path::Path::new(&text(&args, 0)));
                 Ok(str_value(rpp_sema::project::slash_path(&p)))
+            }
+            "rpp.io.Path.normalizedText" => {
+                let p = rpp_sema::project::lexical_path(&text(&args, 0));
+                Ok(str_value(if p.as_os_str().is_empty() { ".".into() } else { rpp_sema::project::slash_path(&p) }))
+            }
+            "rpp.io.Path.relativeText" => {
+                Ok(rpp_sema::project::relative_to(&text(&args, 0), &text(&args, 1)).map(str_value).unwrap_or(Value::Null))
             }
             "rpp.io.Dir.exists" => Ok(Value::Bool(std::path::Path::new(&text(&args, 0)).is_dir())),
             "rpp.io.Dir.create" => {
@@ -253,6 +435,11 @@ impl Interp {
             }
             // ---------------------------------------------------------------- rpp.env
             "rpp.env.Env.get" => Ok(std::env::var(text(&args, 0)).map(str_value).unwrap_or(Value::Null)),
+            "rpp.env.ElapsedTimer.monotonicNanos" => {
+                static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+                let elapsed = ORIGIN.get_or_init(std::time::Instant::now).elapsed();
+                Ok(Value::I64(i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX)))
+            }
             "rpp.env.Env.os" => {
                 let Some(d) = self.p.std_def("rpp.env.Os") else { return Err(self.internal("Os fehlt")) };
                 let name = if cfg!(windows) {
@@ -283,6 +470,11 @@ impl Interp {
                 let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
                 let d = int(&args, 1).clamp(0, 300) as usize;
                 Ok(str_value(format!("{x:.d$}")))
+            }
+            // ---------------------------------------------------------------- rpp.math
+            "rpp.math.Math.sqrt" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.sqrt()))
             }
             // ---------------------------------------------------------------- rpp.text
             "rpp.text.StringBuilder.length" => Ok(Value::I64(o.as_ref().map(|o| Self::sb_text(o).chars().count()).unwrap_or(0) as i64)),
@@ -322,9 +514,31 @@ impl Interp {
                         if i < 0 || i as usize >= len {
                             return Err(self.fatal("IndexError", format!("Cursor {i} außerhalb von 0..{len}")));
                         }
-                        Ok(o.slots.borrow()[i as usize].view())
+                        Ok(if map { o.slots.borrow()[i as usize].view() } else { Self::key_at(&o, i as usize, false) })
                     }
                     "contains" => Ok(Value::Bool(self.find(&o, &args[0], map)?.is_some())),
+                    "getOrPut" => {
+                        // R-13.33: Wert zum Schlüssel, sonst factory() einsetzen.
+                        let factory = args.pop().unwrap_or(Value::Null);
+                        let key = args.pop().unwrap_or(Value::Null);
+                        let i = match self.find(&o, &key, true)? {
+                            Some(i) => { self.drop_value(key)?; i }
+                            None => {
+                                let value = match &factory {
+                                    Value::Func(c) => self.call_closure(c, vec![])?,
+                                    _ => return Err(self.internal("getOrPut ohne Factory")),
+                                };
+                                let Some(d) = self.p.std_def("rpp.collections.Entry") else { return Err(self.internal("Entry fehlt")) };
+                                let pos = o.slots.borrow().len();
+                                self.add_to_index(&o, &key, pos)?;
+                                let e = self.raw_object(d, vec![key, value]);
+                                o.slots.borrow_mut().push(Value::Obj(e, Form::Own));
+                                pos
+                            }
+                        };
+                        let e = o.slots.borrow()[i].obj().cloned();
+                        Ok(e.map(|e| e.slots.borrow()[1].view()).unwrap_or(Value::Null))
+                    }
                     "get" | "at" => {
                         let found = self.find(&o, &args[0], true)?;
                         match found {
@@ -366,8 +580,24 @@ impl Interp {
                         } else {
                             let pos = o.slots.borrow().len();
                             self.add_to_index(&o, &x, pos)?;
-                            o.slots.borrow_mut().push(x);
+                            let entry = if self.plain_value(&x) {
+                                x
+                            } else {
+                                let holder = self.new_vec(vec![x]);
+                                holder.rc.set(1);
+                                Value::Obj(holder, Form::Shared)
+                            };
+                            o.slots.borrow_mut().push(entry);
                         }
+                        Ok(Value::Void)
+                    }
+                    "appendEntry" => {
+                        let source = args[0].obj().unwrap();
+                        let i = int(&args, 1) as usize;
+                        let key = Self::key_at(source, i, false);
+                        self.add_to_index(&o, &key, len)?;
+                        let entry = self.own_copy(source.slots.borrow()[i].clone());
+                        o.slots.borrow_mut().push(entry);
                         Ok(Value::Void)
                     }
                     "remove" => {

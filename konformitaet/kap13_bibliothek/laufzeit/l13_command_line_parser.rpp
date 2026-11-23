@@ -1,0 +1,23 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Erwartet: Ausgabe "tool: ZIEL fehlt\ntrue\n--help\ntrue\ntool: unbekannte Option --falsch\ntool: unerwartetes Argument b\nAufruf: tool [--lang] ZIEL\nTestprogramm\n  -h, --help  Hilfe anzeigen\n  --lang  Lange Ausgabe"; Exit-Code 0
+using rpp.env.CommandLineParser;
+using rpp.env.CommandLineResult;
+
+i32 main(string[] args) {
+    CommandLineParser p = new CommandLineParser("tool", "Testprogramm");
+    p.addFlag("--lang", "Lange Ausgabe");
+    p.addPositional("ZIEL");
+    print(p.parse(args).error ?? "-");
+    string[] literal = ["--lang", "--", "--help"];
+    CommandLineResult parsed = p.parse(literal);
+    print(parsed.isSet("--lang").toString());
+    print(parsed.positional[0]);
+    string[] help = ["-h"];
+    print(p.parse(help).helpRequested.toString());
+    string[] unknown = ["--falsch"];
+    print(p.parse(unknown).error ?? "-");
+    string[] extra = ["a", "b"];
+    print(p.parse(extra).error ?? "-");
+    print(p.helpText());
+    return 0;
+}

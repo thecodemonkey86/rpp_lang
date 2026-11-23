@@ -15,6 +15,7 @@
 //!   einem Programmfehler.
 
 mod stdlib;
+mod save_file;
 pub mod value;
 
 use rpp_sema::defs::{AstRef, MethodInfo, PInfo, Program, Ret};
@@ -110,6 +111,7 @@ struct Ctor {
 }
 
 struct Interp {
+    save_files: HashMap<*const Obj, save_file::SaveFile>,
     p: &'static Program,
     release: bool,
     out: String,
@@ -256,7 +258,7 @@ fn to_text(v: &Value) -> String {
 
 impl Interp {
     fn new(p: &'static Program, release: bool, input: String) -> Interp {
-        Interp { p, release, out: String::new(), err: String::new(), input, in_pos: 0, frames: Vec::new(), temps: Vec::new(), layouts: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0), binding: Cell::new(false), locked_args: Vec::new(), check: false, pending_targs: Vec::new(), heap: Vec::new(), shared_used: false }
+        Interp { p, release, out: String::new(), err: String::new(), input, in_pos: 0, frames: Vec::new(), temps: Vec::new(), layouts: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0), binding: Cell::new(false), locked_args: Vec::new(), check: false, pending_targs: Vec::new(), heap: Vec::new(), shared_used: false, save_files: HashMap::new() }
     }
 
     // ------------------------------------------------------------ Hilfen
@@ -2450,6 +2452,26 @@ impl Interp {
     }
 
     fn builtin_method(&mut self, recv: &Value, name: &str, args: Vec<Value>) -> R<Value> {
+        if name == "partitionPoint" {
+            let (items, start, end) = match recv {
+                Value::Obj(o, _) => (o, 0, o.slots.borrow().len()),
+                Value::Slice(o, start, end) => (o, *start, *end),
+                _ => return Err(self.internal("partitionPoint braucht einen Vektor oder Slice")),
+            };
+            let Some(Value::Func(predicate)) = args.first() else { return Err(self.internal("Prädikat fehlt")) };
+            let (mut lo, mut hi) = (start, end);
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                let item = items.slots.borrow().get(mid).map(Value::view)
+                    .ok_or_else(|| self.fatal("IndexError", "ungültiger Bereich bei partitionPoint"))?;
+                if self.call_closure(predicate, vec![item])?.as_bool() {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            return Ok(Value::I64((lo - start) as i64));
+        }
         let s = |x: String| Value::Str(Rc::from(x.as_str()));
         if let Value::Str(st) = recv {
             let arg_str = |i: usize| args.get(i).and_then(|a| a.as_str().map(str::to_string)).unwrap_or_default();

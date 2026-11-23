@@ -35,7 +35,7 @@ cargo run -- run ../rpp-compiler -- pre debug,linux DATEI.rpp
 cargo run -- run ../rpp-compiler -- ast debug,linux DATEI.rpp
 cargo run -- run ../rpp-compiler -- projekt [--release] STD PFAD
 cargo run -- run ../rpp-compiler -- defs STD PFAD
-cargo run -- run ../rpp-compiler -- pruefe STD PFAD
+cargo run -- run ../rpp-compiler -- pruefe [--zeiten] STD PFAD
 cargo run -- tokens DATEI.rpp          # dieselben Ausgaben von rppc
 cargo run -- pre debug,linux DATEI.rpp
 cargo run -- ast debug,linux DATEI.rpp
@@ -45,6 +45,12 @@ cargo run -- pruefe std PFAD
 ```
 
 ## Vergleich
+
+`rppcc pruefe --zeiten STD PFAD` gibt die Dauer von Projektladen, Deklarationsprüfung und Rumpfprüfung in drei Zeilen auf der Fehlerausgabe aus. Die Werte sind ganze Millisekunden. Sortierung und Ausgabe der Diagnosen liegen außerhalb der Messung. Ohne `--zeiten` erscheinen nur die regulären Diagnosen.
+
+`rppcc projekt --help` und `rppcc tokens --help` zeigen die jeweilige Hilfe auf der Standardausgabe (Exit-Code 0). Bei fehlenden oder überzähligen Argumenten und unbekannten Optionen erscheinen Meldung und Aufruf auf der Fehlerausgabe (Exit-Code 2). Mit `rppcc tokens -- -beispiel.rpp` lassen sich auch Dateinamen mit führendem Minus übergeben.
+
+`projekt` zeigt Haupt- und Quelldateien relativ zum Verzeichnis ihres jeweiligen Projekts an. Dateipositionen in Meldungen von `projekt`, `defs` und `pruefe` beziehen sich auf das Eingabeprojekt, bei Einzeldateien auf deren Verzeichnis. Für Dateien außerhalb dieser Basis erscheint der absolute Pfad.
 
 ```
 py -X utf8 vergleich.py                # alle Teile; -v zeigt jeden Fall; tokens|pre|ast|projekt|defs|pruefe wählt Teile; --fr N: Anzahl der FR++-Zufallsprogramme

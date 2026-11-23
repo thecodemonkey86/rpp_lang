@@ -79,7 +79,7 @@ Eine Implementierung, die nur einen Modus anbietet, ist für diesen Modus konfor
 | `fr-modell/vergleich.py` | dass `rppc` FR++-Programme, übersetzt nach Abschnitt 7 von Kapitel 5, genauso annimmt oder ablehnt wie das Modell (handgeschriebene und Zufallsprogramme) |
 | `rppc test` (erste Implementierung, ab Meilenstein M2) | übersetzen oder ablehnen nach R-14.7: akzeptierte und Laufzeittests ohne Fehler und mit Warnungen genau in den `WARNUNG`-Zeilen; abgelehnte nur mit Fehlern in der markierten Zeile, darunter einer der erwarteten Regel (V-14.2). Laufzeittests führt der Interpreter in beiden Modi aus und vergleicht Ausgabe, Exit-Code und Fehlerausgabe (ab M4). |
 
-Die Semantik aller Kapitel prüft `rppc test`; Stand 22.11.2026: alle 258 Tests bestehen (übersetzen bzw. ablehnen, Laufzeittests in beiden Modi ausgeführt).
+Die Semantik aller Kapitel prüft `rppc test`; Stand 23.11.2026: alle 293 Tests bestehen (übersetzen bzw. ablehnen, Laufzeittests in beiden Modi ausgeführt), darunter neue Tests für `rpp.random` (R-13.23 bis R-13.25), die Vektor-Algorithmen (R-13.26, R-13.27), `rpp.math` (R-13.28, R-13.29), die Text-Hilfen (R-13.30), die Datei-Operationen (R-13.31) sowie `Deque` und `getOrPut` (R-13.32, R-13.33).
 
 **Stand vom 21.11.2026:**
 

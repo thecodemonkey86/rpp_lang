@@ -94,6 +94,8 @@ MAIN = {"src/main.rpp": "i32 main(string[] args) {\n    return 0;\n}\n"}
 LIB_A = {"a/rpp.yaml": "name: acme.a\nversion: 1.0.0\ntype: library\nsources: [src]\n",
          "a/src/acme/a/A.rpp": "package acme.a;\nexport class A { }\n"}
 PROJEKT_FAELLE = {
+    "unicode_quellordner": ('name: app\nversion: 1\ntype: library\nsources: ["grün🙂 # eins", ,]\n',
+                            {"grün🙂 # eins/app/T.rpp": "package app;\nexport class T { }\n"}),
     "einfach": (APP, MAIN),
     "kommentare_und_anfuehrung": ("# Kopf\nname: \"app\"   # Name\nversion: '0.1.0'\ntype: executable # x\nmain: src/main.rpp\nsources: [ src , ]\n", MAIN),
     "tabs_und_crlf": (APP.replace("\n", "\r\n").replace("  - src", "\t- src"), MAIN),
@@ -102,6 +104,9 @@ PROJEKT_FAELLE = {
     "unerwartete_einrueckung": ("name: app\n  version: 1\n", {}),
     "einrueckung_am_ende": ("name:\n    - a\n  - b\n", {}),
     "schluessel_erwartet": ("name app\nversion: 1\n", {}),
+    "wert_mit_doppelpunkt": (APP.replace("type: executable", "type: executable:extra"), MAIN),
+    "leerer_wert": (APP.replace("version: 0.1.0", "version:"), MAIN),
+    "fehlender_doppelpunkt": (APP.replace("version: 0.1.0", "version"), MAIN),
     "schluessel_ohne_leerzeichen": ("name:app\n", {}),
     "schluessel_mit_leerzeichen": ("my name: app\n", {}),
     "liste_schluessel_erwartet": ("name: app\ndependencies:\n  - name: acme.a\n    nur text\n", {}),
@@ -133,8 +138,10 @@ PROJEKT_FAELLE = {
     "symbole_als_liste": (APP + "symbols: [A]\n", MAIN),
     "abhaengigkeiten_als_text": (APP + "dependencies: acme.a\n", MAIN),
     "pfad_als_liste": (APP + "dependencies:\n  - name: acme.a\n    path: [a]\n", {**MAIN, **LIB_A}),
-    "unterordner_mit_projekt": (APP, {**MAIN, "src/sub/rpp.yaml": "name: x\n", "src/sub/X.rpp": "class X { }\n",
-                                       "src/pkg/inner/Y.rpp": "package pkg.inner;\nclass Y { }\n", "src/pkg/notiz.txt": "x"}),
+    "unterordner_mit_projekt": (APP, {"src/z.rpp": "class Z { }\n", "src/sub/deep/X.rpp": "class X { }\n",
+                                       "src/sub/rpp.yaml": "name: x\n", "src/sub/Y.rpp": "class Y { }\n",
+                                       "src/pkg/inner/Y.rpp": "package pkg.inner;\nclass Y { }\n",
+                                       "src/pkg/notiz.txt": "x", **MAIN, "src/a.rpp": "class A { }\n"}),
     "syntaxfehler": (APP, {**MAIN, "src/a/Bad.rpp": "package a;\nclass Bad { i32 x = 1 # 2; }\n",
                            "src/a/Dir.rpp": "package a;\n#if debug\nclass D { }\n", "src/a/Expr.rpp": "package a;\nclass E { void m() { 1 + 2; } }\n"}),
 }
@@ -227,6 +234,14 @@ def projekt(tmp, verbose):
         for mode in ([], ["--release"]):
             args = [*mode, std, str(path)]
             a, b = both("projekt", args)
+            if name == "Grenzfall unterordner_mit_projekt":
+                files = [line.split(" projekt=", 1)[0] for line in b.splitlines()
+                         if line.startswith("datei ") and " projekt=1 " in line]
+                expected = ["datei src/a.rpp", "datei src/main.rpp", "datei src/pkg/inner/Y.rpp", "datei src/z.rpp"]
+                if files != expected:
+                    print(f"  ABWEICHUNG {name}: erwartete Quelldateien {expected}, erhalten {files}")
+                    bad += 1
+                    continue
             if report(f"{name} {' '.join(mode)}".strip(), a, b, verbose):
                 ok += 1
             else:

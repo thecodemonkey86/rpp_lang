@@ -96,7 +96,40 @@ pub fn normalize(p: &Path) -> PathBuf {
 /// Pfad in der Form der Ausgaben: `/` als Trenner, ohne das Windows-Präfix `\\?\`.
 pub fn slash_path(p: &Path) -> String {
     let s = p.display().to_string();
+    if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+        return format!("//{}", unc.replace('\\', "/"));
+    }
     s.strip_prefix(r"\\?\").unwrap_or(&s).replace('\\', "/")
+}
+
+/// Normalisiert einen R++-Pfad rein lexikalisch, ohne Arbeitsverzeichnis oder Dateizugriff.
+pub fn lexical_path(text: &str) -> PathBuf {
+    use std::path::Component;
+    let text = text.replace('\\', "/");
+    let mut path = PathBuf::new();
+    for component in Path::new(&text).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir if matches!(path.components().next_back(), Some(Component::Normal(_))) => {
+                path.pop();
+            }
+            Component::ParentDir if path.has_root() => {}
+            other => path.push(other.as_os_str()),
+        }
+    }
+    path
+}
+
+pub fn relative_to(target: &str, base: &str) -> Option<String> {
+    use std::path::Component;
+    let target = lexical_path(target);
+    let base = lexical_path(base);
+    let tail = target.strip_prefix(base).ok()?;
+    // Auch bei leerer Basis muss das Ergebnis innerhalb der Basis liegen.
+    if tail.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return None;
+    }
+    Some(if tail.as_os_str().is_empty() { ".".into() } else { slash_path(tail) })
 }
 
 impl Workspace {

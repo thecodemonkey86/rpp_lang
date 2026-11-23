@@ -1,0 +1,15 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.30
+using rpp.text.Text;
+
+i32 main(string[] args) {
+    string[] l = Text::lines("a\nb");
+    string p = Text::removePrefix("abc", "a");
+    string s = Text::removeSuffix("abc", "c");
+    string r = Text::repeat("x", 3);
+    string[] parts = Text::splitLimit("a,b,c", ",", 2);
+    print(p + s + r);
+    print(l.length.toString());
+    print(parts.length.toString());
+    return 0;
+}

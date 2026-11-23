@@ -5,6 +5,8 @@ package compiler.project;
 
 using rpp.io.File;
 using rpp.io.Dir;
+using rpp.io.DirEntry;
+using rpp.io.FileType;
 using rpp.io.Path;
 using rpp.env.Env;
 using rpp.env.Os;
@@ -69,12 +71,9 @@ public:
 
     // Namen der Klassen, Mixins und Enums, mit Komma getrennt; "-" ohne
     string typeNames() {
-        string[] names = [];
-        for (Node d : unit.kids) {
-            if (d.kind == "class" || d.kind == "mixin" || d.kind == "enum") {
-                names.push(d.kids[0].text);
-            }
-        }
+        Func<Node, string?> typeName = own (Node d) =>
+            d.kind == "class" || d.kind == "mixin" || d.kind == "enum" ? d.kids[0].text : null;
+        string[] names = unit.mapNotNull(typeName);
         if (names.length == 0) {
             return "-";
         }
@@ -82,12 +81,7 @@ public:
     }
 
     bool hasMain() {
-        for (Node d : unit.kids) {
-            if (d.kind == "main") {
-                return true;
-            }
-        }
-        return false;
+        return unit.any((Node d) => d.kind == "main");
     }
 }
 
@@ -138,7 +132,8 @@ public:
         if (ext.length > 0) {
             name = name.substring(0, name.length - ext.length - 1);
         }
-        Project p = new Project(name, ProjectKind::Library, Path::parent(path));
+        Path parent = new Path(Path::join(path, ".."));
+        Project p = new Project(name, ProjectKind::Library, parent.toString());
         p.singleFile = true;
         ws.projects.push(p);
         string[] none = [];
@@ -214,19 +209,19 @@ private:
 
     // Alle .rpp-Dateien unter dir, sortiert; Unterordner mit eigener rpp.yaml gehören nicht dazu
     static void collectRpp(string dir, string[]& out) {
-        string[] names = [];
+        DirEntry[] entries = [];
         try {
-            names = Dir::list(dir);
+            entries = Dir::entries(dir);
         } catch (Exception e) {
             return;
         }
-        for (string n : names) {
-            string p = Path::join(dir, n);
-            if (Dir::exists(p)) {
+        for (DirEntry entry : entries) {
+            string p = entry.path;
+            if (entry.kind == FileType::Directory || (entry.kind == FileType::Symlink && Dir::exists(p))) {
                 if (!File::exists(Path::join(p, "rpp.yaml"))) {
                     collectRpp(p, &out);
                 }
-            } else if (Path::extension(n) == "rpp") {
+            } else if ((entry.kind == FileType::File || entry.kind == FileType::Symlink) && Path::extension(entry.name) == "rpp") {
                 out.push(p);
             }
         }
@@ -235,11 +230,13 @@ private:
     void loadSources(string src, i64 project, string[] symbols) & {
         string[] found = [];
         collectRpp(src, &found);
+        Path sourceRoot = new Path(src);
         for (string f : found) {
-            string parent = Path::parent(f);
+            Path file = new Path(f);
+            Path? relative = file.relativeTo(sourceRoot);
             string pkg = "";
-            if (parent.startsWith(src + "/")) {
-                pkg = parent.substring(src.length + 1, parent.length).replace("/", ".");
+            if (relative != null) {
+                pkg = Path::parent(relative.toString()).replace("/", ".");
             }
             parseFile(f, project, pkg, symbols);
         }
@@ -379,21 +376,17 @@ private:
             for (i64 k = 0; k < syms.keys.length; k++) {
                 string key = syms.keys[k];
                 ref YNode list = syms.items[k];
-                bool allStr = list.kind == YKind::List;
-                for (YNode s : list.items) {
-                    if (s.kind != YKind::Str) {
-                        allStr = false;
-                    }
-                }
+                bool allStr = list.kind == YKind::List && list.all((YNode s) => s.kind == YKind::Str);
                 if (key != "debug" && key != "release") {
                     diag(yamlPath, list.line, "R-11.13", "unbekannter Modus '" + key + "'");
                 } else if (!allStr) {
                     diag(yamlPath, list.line, "R-11.13", key + " ist eine Liste von Symbolen");
                 } else if (key == mode) {
-                    symbols = [];
-                    for (YNode s : list.items) {
-                        symbols.push(s.text);
-                    }
+                    string[] empty = [];
+                    symbols = list.fold(empty, (own string[] names, YNode s) => {
+                        names.push(s.text);
+                        return names;
+                    });
                 }
             }
         }

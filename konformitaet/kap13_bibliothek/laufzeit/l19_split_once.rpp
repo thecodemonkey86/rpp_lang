@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.13
+// Erwartet: Ausgabe "[a][b:c]\n[a][]\nkein Treffer\n[][b]\n[ä][ß🙂:x]\n[][abc]"; Exit-Code 0
+using rpp.text.StringView;
+
+class Show {
+public:
+    static void split(StringView text, string separator) {
+        var parts = text.splitOnce(separator);
+        if (parts == null) {
+            print("kein Treffer");
+            return;
+        }
+        (StringView left, StringView right) = parts;
+        print("[" + left.toString() + "][" + right.toString() + "]");
+    }
+}
+
+i32 main(string[] args) {
+    Show::split(new StringView("a:b:c"), ":");
+    Show::split(new StringView("a:"), ":");
+    Show::split(new StringView("a"), ":");
+    Show::split(new StringView(":b"), ":");
+    Show::split(new StringView("xä🙂:ß🙂:xy").slice(1, 8), "🙂:");
+    Show::split(new StringView("abc"), "");
+    return 0;
+}

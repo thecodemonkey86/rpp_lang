@@ -3,6 +3,8 @@
 // rppc/crates/rpp-sema/src/yaml.rs.
 package compiler.project;
 
+using rpp.text.StringView;
+
 export class YamlError : Exception {
 public:
     i32 line;
@@ -19,7 +21,13 @@ export enum YKind {
 
 // Ein Wert: einfacher Text, Liste (items) oder Zuordnung (keys[i] gehört zu items[i])
 export class YNode {
+    import Iterable<YNode, i64>;
 public:
+    i64 begin() { return 0; }
+    bool done(i64 cursor) { return cursor >= items.length; }
+    i64 next(i64 cursor) { return cursor + 1; }
+    ref YNode at(i64 cursor) { return this.items[cursor]; }
+
     YKind kind;
     string text;
     // Zeile des Werts bzw. seines Schlüssels (ab 1)
@@ -77,9 +85,9 @@ public:
 class Line {
 public:
     i64 indent;
-    string text;
+    shared StringView text;
     i32 number;
-    constructor(i64 indent, string text, i32 number) {
+    constructor(i64 indent, own StringView text, i32 number) {
         this.indent = indent;
         this.text = text;
         this.number = number;
@@ -91,51 +99,45 @@ private:
     Line[] lines = [];
     i64 pos = 0;
 
-    static string stripComment(string s) {
+    static i64 commentStart(StringView s) {
+        i64 length = s.length();
+        if (s.indexOf("#") == null) { return length; }
         bool inQuote = false;
-        for (i64 i = 0; i < s.length; i++) {
-            char c = s[i];
+        for (i64 i = 0; i < length; i++) {
+            char c = s.charAt(i);
             if (c == '"') {
                 inQuote = !inQuote;
-            } else if (c == '#' && !inQuote && (i == 0 || s[i - 1] == ' ' || s[i - 1] == '\t')) {
-                return s.substring(0, i);
+            } else if (c == '#' && !inQuote && (i == 0 || s.charAt(i - 1) == ' ' || s.charAt(i - 1) == '\t')) {
+                return i;
             }
         }
-        return s;
+        return length;
     }
 
     // Anzahl der Leerraumzeichen am Anfang
-    static i64 leading(string s) {
+    static i64 leading(StringView s) {
         i64 i = 0;
-        while (i < s.length && s[i].isWhitespace()) {
+        i64 length = s.length();
+        while (i < length && s.charAt(i).isWhitespace()) {
             i++;
         }
         return i;
     }
 
-    static string trimEnd(string s) {
-        i64 e = s.length;
-        while (e > 0 && s[e - 1].isWhitespace()) {
-            e--;
+    static string unquote(StringView s) {
+        if (s.length() >= 2 && ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'")))) {
+            return s.slice(1, s.length() - 1).toString();
         }
-        return s.substring(0, e);
+        return s.toString();
     }
 
-    static string unquote(string raw) {
-        string s = raw.trim();
-        if (s.length >= 2 && ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'")))) {
-            return s.substring(1, s.length - 1);
-        }
-        return s;
-    }
-
-    static YNode scalar(string raw, i32 line) {
-        string s = raw.trim();
-        if (s.length >= 2 && s.startsWith("[") && s.endsWith("]")) {
+    static YNode scalar(StringView raw, i32 line) {
+        StringView s = raw.trim();
+        if (s.length() >= 2 && s.startsWith("[") && s.endsWith("]")) {
             YNode list = new YNode(YKind::List, "", line);
-            for (string x : s.substring(1, s.length - 1).split(",")) {
-                string y = x.trim();
-                if (y.length > 0) {
+            for (StringView x : s.slice(1, s.length() - 1).split(",")) {
+                StringView y = x.trim();
+                if (y.length() > 0) {
                     list.items.push(new YNode(YKind::Str, unquote(y), line));
                 }
             }
@@ -145,24 +147,24 @@ private:
     }
 
     // "schlüssel: rest" mit einem Schlüssel ohne Leerzeichen; ok ist falsch, wenn keiner da ist
-    static (bool, string, string) splitKey(string text) {
-        i64? i = text.indexOf(":");
-        if (i == null) {
-            return (false, "", "");
+    static (bool, StringView, StringView) splitKey(StringView text) {
+        var parts = text.splitOnce(":");
+        if (parts == null) {
+            return (false, text.slice(0, 0), text.slice(0, 0));
         }
-        string key = text.substring(0, i).trim();
-        if (key.length == 0 || key.contains(" ")) {
-            return (false, "", "");
+        (StringView left, StringView rest) = parts;
+        StringView key = left.trim();
+        if (key.length() == 0 || key.indexOf(" ") != null) {
+            return (false, text.slice(0, 0), text.slice(0, 0));
         }
-        string rest = text.substring(i + 1, text.length);
-        if (rest.length > 0 && !rest.startsWith(" ")) {
-            return (false, "", "");
+        if (rest.length() > 0 && !rest.startsWith(" ")) {
+            return (false, text.slice(0, 0), text.slice(0, 0));
         }
         return (true, key, rest.trim());
     }
 
-    static bool isItem(string text) {
-        return text.startsWith("- ") || text == "-";
+    static bool isItem(StringView text) {
+        return text.startsWith("- ") || (text.length() == 1 && text.startsWith("-"));
     }
 
     // Liest einen Block mit genau der Einrückung indent; null, wenn keiner beginnt
@@ -174,15 +176,14 @@ private:
         if (isItem(lines[pos].text)) {
             YNode list = new YNode(YKind::List, "", line);
             while (pos < lines.length) {
-                string lt = lines[pos].text;
+                shared StringView lt = lines[pos].text;
                 if (lines[pos].indent != indent || !isItem(lt)) {
                     break;
                 }
-                string rest = lt.substring(1, lt.length);
-                rest = rest.substring(leading(rest), rest.length);
+                StringView rest = lt.slice(1, lt.length()).trim();
                 i32 number = lines[pos].number;
                 pos++;
-                if (rest.length == 0) {
+                if (rest.length() == 0) {
                     i64 inner = indent + 2;
                     if (pos < lines.length) {
                         inner = lines[pos].indent;
@@ -197,25 +198,25 @@ private:
                         list.items.push(sub);
                     }
                 } else {
-                    (bool ok, string k, string v) = splitKey(rest);
+                    (bool ok, StringView k, StringView v) = splitKey(rest);
                     if (ok) {
                         // Liste von Zuordnungen: "- name: x" und weitere Schlüssel darunter
                         i64 itemIndent = indent + 2;
                         YNode entry = new YNode(YKind::Map, "", number);
-                        entry.keys.push(k);
+                        entry.keys.push(k.toString());
                         entry.items.push(valueAfter(v, number, itemIndent));
                         while (pos < lines.length) {
-                            string nt = lines[pos].text;
+                            shared StringView nt = lines[pos].text;
                             if (lines[pos].indent != itemIndent || nt.startsWith("-")) {
                                 break;
                             }
-                            (bool ok2, string k2, string v2) = splitKey(nt);
+                            (bool ok2, StringView k2, StringView v2) = splitKey(nt);
                             if (!ok2) {
                                 throw new YamlError(lines[pos].number, "Schlüssel erwartet");
                             }
                             i32 nl = lines[pos].number;
                             pos++;
-                            entry.keys.push(k2);
+                            entry.keys.push(k2.toString());
                             entry.items.push(valueAfter(v2, nl, itemIndent));
                         }
                         list.items.push(entry);
@@ -234,13 +235,13 @@ private:
                 }
                 break;
             }
-            (bool ok, string k, string v) = splitKey(lines[pos].text);
+            (bool ok, StringView k, StringView v) = splitKey(lines[pos].text);
             if (!ok) {
                 throw new YamlError(lines[pos].number, "Schlüssel erwartet");
             }
             i32 number = lines[pos].number;
             pos++;
-            result.keys.push(k);
+            result.keys.push(k.toString());
             result.items.push(valueAfter(v, number, indent));
         }
         return result;
@@ -248,8 +249,8 @@ private:
 
     // Wert nach "schlüssel:" – auf derselben Zeile oder auf den folgenden, tiefer
     // (bei Listen auch gleich) eingerückten Zeilen
-    YNode valueAfter(string v, i32 number, i64 indent) & {
-        if (v.trim().length > 0) {
+    YNode valueAfter(StringView v, i32 number, i64 indent) & {
+        if (v.length() > 0) {
             return scalar(v, number);
         }
         if (pos < lines.length) {
@@ -270,12 +271,13 @@ public:
     static YNode parse(string text) {
         Yaml y = new Yaml();
         i32 number = 0;
-        for (string raw : text.split("\n")) {
+        StringView document = new StringView(text);
+        for (StringView raw : document.split("\n")) {
             number++;
-            string content = trimEnd(stripComment(raw));
+            StringView content = raw.slice(0, commentStart(raw)).trimEnd();
             i64 ind = leading(content);
-            if (ind < content.length) {
-                y.lines.push(new Line(ind, content.substring(ind, content.length), number));
+            if (ind < content.length()) {
+                y.lines.push(new Line(ind, content.slice(ind, content.length()), number));
             }
         }
         YNode? node = y.block(0);

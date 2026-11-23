@@ -3031,6 +3031,36 @@ impl<'p> Checker<'p> {
                 }
             },
         };
+        // R-7.25/R-7.26: Constraints der Methoden-Typparameter gegen die abgeleiteten
+        // Typargumente prüfen (wie check_pending für Klassen). Die Ableitung wird hier
+        // aus dem ursprünglichen Kandidaten wiederholt, weil `chosen` bereits ersetzt ist.
+        if !chosen.tparams.is_empty() {
+            if let Some(orig) = cands.iter().find(|m| m.ast == chosen.ast && m.name == chosen.name) {
+                let mut map: HashMap<ParamId, Ty> = HashMap::new();
+                for (a, p) in shapes.iter().zip(&orig.params) {
+                    let at = match a {
+                        ArgShape::Ty(t) => t.clone(),
+                        ArgShape::Int(v) => Ty::Prim(default_int(*v)),
+                        ArgShape::Float => Ty::Prim(P::F64),
+                        _ => continue,
+                    };
+                    unify(self.p, &p.ty, &at, &orig.tparams, &mut map);
+                }
+                for tp in &chosen.tparams {
+                    let Some(arg) = map.get(tp) else { continue };
+                    if arg.is_error() { continue; }
+                    if self.p.tparams[*tp].needs_new && !self.p.satisfies_new(arg) {
+                        self.err(span, "R-7.25", format!("{} hat keinen sichtbaren parameterlosen Konstruktor (new())", self.show(arg)));
+                    }
+                    for c in self.p.tparams[*tp].constraints.clone() {
+                        let c = c.subst(&map);
+                        if !self.p.satisfies(arg, &c) {
+                            self.err(span, "R-7.26", format!("{} erfüllt {} nicht", self.show(arg), self.show(&c)));
+                        }
+                    }
+                }
+            }
+        }
         match recv {
             Receiver::This => {
                 if self.ctx.is_static && !chosen.is_static {
@@ -3443,6 +3473,10 @@ impl<'p> Checker<'p> {
             (Ty::Prim(P::String), "trim" | "toUpper" | "toLower") => m(name, vec![], s),
             (Ty::Prim(P::String), "replace") => m(name, vec![(s.clone(), r), (s.clone(), r)], s),
             (Ty::Prim(P::String), "bytes") => m(name, vec![], Ty::Vector(Box::new(Ty::Prim(P::Byte)))),
+            (Ty::Vector(e) | Ty::Slice(e), "partitionPoint") => {
+                let predicate = Ty::Func(vec![FParam { ty: (**e).clone(), mode: r }], Box::new(b));
+                m(name, vec![(predicate, r)], i64t)
+            }
             (Ty::Vector(e), _) => {
                 let e = (**e).clone();
                 match name {

@@ -1,0 +1,20 @@
+package rpp.env;
+
+export class ElapsedTimer {
+private:
+    i64 origin;
+    static i64 monotonicNanos() { fail("eingebaut"); }
+public:
+    constructor() { origin = monotonicNanos(); }
+
+    void start() & { origin = monotonicNanos(); }
+
+    nodiscard i64 elapsed() { return (monotonicNanos() - origin) / 1000000; }
+
+    nodiscard i64 restart() & {
+        i64 now = monotonicNanos();
+        i64 millis = (now - origin) / 1000000;
+        origin = now;
+        return millis;
+    }
+}

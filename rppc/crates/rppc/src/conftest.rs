@@ -343,10 +343,9 @@ fn run_runtime(u: &Unit) -> Outcome {
 /// `rppc check DATEI|PROJEKT`: Meldungen ausgeben.
 pub fn check(input: &Path) -> ExitCode {
     let diags = rpp_sema::check(input, &std_dir());
-    for d in &diags {
-        println!("{d}");
-    }
-    if diags.iter().any(|d| !d.warning) {
+    let failed = diags.iter().any(|d| !d.warning);
+    crate::print_diags(input, diags);
+    if failed {
         ExitCode::from(1)
     } else {
         println!("{}: ok", input.display());

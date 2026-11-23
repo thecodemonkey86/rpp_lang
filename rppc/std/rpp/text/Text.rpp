@@ -1,0 +1,54 @@
+// Standardbibliothek: rpp.text, Text-Hilfen (Kapitel 13, R-13.30)
+// Reiner R++-Quelltext (V-13.9): statische Methoden auf string nach dem Muster
+// von Fmt. Beide Compiler behandeln sie gleich (keine M6-Divergenz, V-13.10).
+package rpp.text;
+
+export class Text {
+public:
+    // Zerlegt s in Zeilen: Trenner ist '\n', ein '\r' davor entfällt (CRLF).
+    // Leere Zeilen bleiben erhalten; ein abschließendes '\n' erzeugt keine
+    // zusätzliche leere Zeile. Für "" ist das Ergebnis ein leerer Vektor.
+    static string[] lines(string s) {
+        string[] parts = s.split("\n");
+        i64 n = parts.length;
+        if (n > 0 && parts[n - 1] == "") { n = n - 1; }
+        string[] result = [];
+        for (i64 i = 0; i < n; i++) {
+            result.push(removeSuffix(parts[i], "\r"));
+        }
+        return result;
+    }
+
+    // Entfernt prefix vom Anfang, falls vorhanden; sonst bleibt s unverändert.
+    static string removePrefix(string s, string prefix) {
+        if (s.startsWith(prefix)) { return s.substring(prefix.length, s.length); }
+        return s;
+    }
+
+    // Entfernt suffix vom Ende, falls vorhanden; sonst bleibt s unverändert.
+    static string removeSuffix(string s, string suffix) {
+        if (s.endsWith(suffix)) { return s.substring(0, s.length - suffix.length); }
+        return s;
+    }
+
+    // Hängt s n-mal aneinander; n >= 0 wird verlangt, sonst Programmfehler.
+    static string repeat(string s, i64 n) {
+        if (n < 0) { fail("repeat verlangt n >= 0"); }
+        StringBuilder sb = new StringBuilder();
+        for (i64 i = 0; i < n; i++) { sb.append(s); }
+        return sb.toString();
+    }
+
+    // Teilt s an sep in höchstens limit Teile; der letzte Teil enthält den
+    // ungeteilten Rest. limit >= 1 und ein nicht leerer sep werden verlangt.
+    static string[] splitLimit(string s, string sep, i64 limit) {
+        if (limit < 1) { fail("splitLimit verlangt limit >= 1"); }
+        if (sep.length == 0) { fail("splitLimit verlangt einen nicht leeren Trenner"); }
+        string[] all = s.split(sep);
+        if (all.length <= limit) { return all; }
+        string[] result = [];
+        for (i64 i = 0; i < limit - 1; i++) { result.push(all[i]); }
+        result.push(string::join(sep, all[limit - 1..]));
+        return result;
+    }
+}

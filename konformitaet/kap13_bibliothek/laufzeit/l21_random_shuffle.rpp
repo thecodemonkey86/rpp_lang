@@ -1,0 +1,41 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.25, R-13.24
+// Erwartet: Ausgabe "7\n8\n5\n3\n2\n1\n4\n6\n30\n10\n40\n20\ngamma\nalpha\ndelta\nbeta\n0"; Exit-Code 0
+using rpp.random.Random;
+
+class Item {
+public:
+    i32 value;
+    constructor(i32 v) { value = v; }
+}
+
+i32 main(string[] args) {
+    // Grundwerte: Permutation mit fester Reihenfolge für Seed 2026.
+    i32[] v = [1, 2, 3, 4, 5, 6, 7, 8];
+    Random r = new Random(2026);
+    r.shuffle(&v);
+    i64 sum = 0;
+    for (i32 x : v) {
+        print(x.toString());
+        sum += x;
+    }
+    assert(sum == 36, "shuffle ist eine Permutation");
+
+    // own-Objekte werden verschoben, nicht kopiert.
+    Item[] items = [new Item(10), new Item(20), new Item(30), new Item(40)];
+    Random r2 = new Random(2026);
+    r2.shuffle(&items);
+    for (Item it : items) { print(it.value.toString()); }
+
+    // Strings.
+    string[] s = ["alpha", "beta", "gamma", "delta"];
+    Random r3 = new Random(2026);
+    r3.shuffle(&s);
+    for (string x : s) { print(x); }
+
+    // Ein leerer Vektor bleibt leer.
+    i32[] e = [];
+    r.shuffle(&e);
+    print(e.length.toString());
+    return 0;
+}

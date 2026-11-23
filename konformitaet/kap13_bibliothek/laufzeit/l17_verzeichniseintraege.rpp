@@ -1,0 +1,30 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.20, V-13.2
+// Erwartet: Ausgabe "a.rpp:src/a.rpp,m:src/m,z.rpp:src/z.rpp\na.rpp:src/a.rpp,m:src/m,z.rpp:src/z.rpp\n0\nfehlt"; Exit-Code 0
+using rpp.io.Dir;
+using rpp.io.DirEntry;
+using rpp.io.File;
+using rpp.io.FileType;
+
+i32 main(string[] args) {
+    Dir::create("src");
+    File::writeText("src/z.rpp", "z");
+    Dir::create("src/m");
+    File::writeText("src/a.rpp", "a");
+    for (i32 run = 0; run < 2; run++) {
+        string[] found = [];
+        for (DirEntry e : Dir::entries("src")) {
+            FileType expected = e.name == "m" ? FileType::Directory : FileType::File;
+            if (e.kind != expected) { fail("Falscher Typ für " + e.name); }
+            found.push(e.name + ":" + e.path);
+        }
+        print(string::join(",", found));
+    }
+    print(Dir::entries("src/m").length.toString());
+    try {
+        discard Dir::entries("fehlt");
+    } catch (IOException e) {
+        print(e.path);
+    }
+    return 0;
+}
