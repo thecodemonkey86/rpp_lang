@@ -2707,6 +2707,7 @@ impl<'p> Checker<'p> {
                     params: ps.iter().enumerate().map(|(i, p)| PInfo { name: format!("p{i}"), ty: p.ty.clone(), mode: p.mode }).collect(),
                     ret: Ret::Void,
                     tparams: Vec::new(),
+                    targs: Vec::new(),
                     is_static: true,
                     modifier: None,
                     nodiscard: false,
@@ -3154,6 +3155,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let mut c = m.clone();
+        c.targs = m.tparams.iter().map(|t| map[t].clone()).collect();
         for p in &mut c.params {
             p.ty = p.ty.subst(&map);
         }
@@ -3244,6 +3246,7 @@ impl<'p> Checker<'p> {
                         params: c.params.iter().map(|p| PInfo { name: p.name.clone(), ty: p.ty.subst(&map), mode: p.mode }).collect(),
                         ret: Ret::Val(t.clone()),
                         tparams: Vec::new(),
+                        targs: Vec::new(),
                         is_static: true,
                         modifier: None,
                         nodiscard: false,
@@ -3411,6 +3414,7 @@ impl<'p> Checker<'p> {
             params: params.into_iter().enumerate().map(|(i, (ty, mode))| PInfo { name: format!("p{i}"), ty, mode }).collect(),
             ret: if ret == Ty::Void { Ret::Void } else { Ret::Val(ret) },
             tparams: Vec::new(),
+            targs: Vec::new(),
             is_static: false,
             modifier: None,
             nodiscard,

@@ -1,0 +1,37 @@
+// Zusatztest für den C-Codegenerator: Buchstabenklassen und Groß-/Kleinschreibung nach
+// Unicode, wie char und string in Rust (Interpreter von rppc).
+class Zeichen {
+public:
+    static string klassen(char c) {
+        string r = "";
+        if (c.isLetter()) {
+            r = r + "L";
+        }
+        if (c.isUpper()) {
+            r = r + "U";
+        }
+        if (c.isLower()) {
+            r = r + "l";
+        }
+        if (c.isWhitespace()) {
+            r = r + "W";
+        }
+        if (c.isDigit()) {
+            r = r + "D";
+        }
+        return r + " " + c.toUpper().toString() + c.toLower().toString();
+    }
+}
+
+i32 main(string[] args) {
+    string[] texte = ["Straße", "ÄÖÜäöü", "ΟΔΥΣΣΕΥΣ", "ΣΑΣ.", "Σ", "ǅungla", "Ⅻ ⅻ", "ﬁ", "İstanbul", "Ωmega ȿ ɐ", "Привет, Мир", "ǈ ǋ", "a b c"];
+    for (string t : texte) {
+        print(t.toUpper() + " | " + t.toLower() + " | " + t.trim().length.toString());
+    }
+    string alle = "aZßÄǅ1٣  　Ⅻⅻªº゛ーᾈ";
+    for (char c : alle) {
+        print(Zeichen::klassen(c));
+    }
+    print("    trimmen 　 ".trim());
+    return 0;
+}

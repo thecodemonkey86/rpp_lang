@@ -88,6 +88,8 @@ struct Frame {
     label: String,
     /// Sperren bis zum Ende eines Blocks (Tiefe, Objekt, schreibend)
     locks: Vec<(usize, ORef, bool)>,
+    /// Typargumente der generischen Methode (Typ-Parameter, Typ), R-7.26
+    mtargs: Vec<(usize, Ty)>,
 }
 
 struct Layout {
@@ -558,7 +560,7 @@ impl Interp {
         let Some(body) = body else { return Ok(()) };
         let label = self.label(c, "destructor");
         let file = self.p.defs[c].file;
-        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label, locks: Vec::new() })?;
+        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label, locks: Vec::new(), mtargs: Vec::new() })?;
         let r = self.block(body);
         let r = self.leave(r);
         match r {
@@ -613,7 +615,7 @@ impl Interp {
         };
         let argv: Vec<Value> = args.iter().map(|a| Value::Str(Rc::from(a.as_str()))).collect();
         let vec = self.new_vec(argv);
-        let frame = Frame { scopes: vec![Vec::new()], env: Vec::new(), this: None, class: None, file, label: "main".into(), locks: Vec::new() };
+        let frame = Frame { scopes: vec![Vec::new()], env: Vec::new(), this: None, class: None, file, label: "main".into(), locks: Vec::new(), mtargs: Vec::new() };
         self.frames.push(frame);
         self.declare(&m.args.name, Value::Obj(vec, Form::Own));
         let r = self.block(&m.body);
@@ -1713,7 +1715,7 @@ impl Interp {
         });
         let Some(init) = init else { return Err(self.internal(format!("statisches Feld {name}"))) };
         let file = self.p.defs[d].file;
-        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: None, class: Some(d), file, label: self.label(d, name), locks: Vec::new() })?;
+        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: None, class: Some(d), file, label: self.label(d, name), locks: Vec::new(), mtargs: Vec::new() })?;
         let r = self.eval_store(init);
         self.frames.pop();
         let v = r?;
@@ -2009,7 +2011,7 @@ impl Interp {
                         match body {
                             Some((param, b)) => {
                                 let file = self.p.defs[c].file;
-                                self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(n.clone(), Form::Borrow)), class: Some(c), file, label: self.label(c, "copy"), locks: Vec::new() })?;
+                                self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(n.clone(), Form::Borrow)), class: Some(c), file, label: self.label(c, "copy"), locks: Vec::new(), mtargs: Vec::new() })?;
                                 self.declare(&param.name.name, v.view());
                                 let r = self.block(b);
                                 self.leave(r)?;
@@ -2048,6 +2050,9 @@ impl Interp {
     fn tmap(&self) -> HashMap<usize, Ty> {
         let mut map = HashMap::new();
         let Some(f) = self.frames.last() else { return map };
+        for (p, t) in &f.mtargs {
+            map.insert(*p, t.clone());
+        }
         let (Some(c), Some(Value::Obj(o, _))) = (f.class, &f.this) else { return map };
         let Some(dynamic) = o.class else { return map };
         let st = Ty::Named(dynamic, o.targs.borrow().clone());
@@ -2085,7 +2090,7 @@ impl Interp {
             let Some(i) = lay.index.get(&f.name.name).copied() else { continue };
             let v = match &f.init {
                 Some(init) => {
-                    self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label: self.label(c, &f.name.name), locks: Vec::new() })?;
+                    self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label: self.label(c, &f.name.name), locks: Vec::new(), mtargs: Vec::new() })?;
                     let r = self.eval_store(init);
                     self.frames.pop();
                     r?
@@ -2112,7 +2117,7 @@ impl Interp {
             _ => None,
         });
         let file = ctor.as_ref().map(|k| k.ast.0).unwrap_or(self.p.defs[c].file);
-        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label: self.label(c, "constructor"), locks: Vec::new() })?;
+        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label: self.label(c, "constructor"), locks: Vec::new(), mtargs: Vec::new() })?;
         if let Some(k) = &ctor {
             for (pi, v) in k.params.iter().zip(args) {
                 self.declare(&pi.name, v);
@@ -2296,10 +2301,15 @@ impl Interp {
         }
         self.locked_args = locked;
         let vals = self.args(args, &m.params)?;
-        let target = match (&recv, exact) {
+        let targs = m.targs.clone();
+        let mut target = match (&recv, exact) {
             (Some(Value::Obj(o, _)), false) => o.class.and_then(|d| self.dispatch(d, &m)).unwrap_or(m),
             _ => m,
         };
+        // die Fassung der Unterklasse hat dieselben Typ-Parameter; die Typargumente des Aufrufs gelten weiter
+        if target.targs.is_empty() && target.tparams.len() == targs.len() {
+            target.targs = targs;
+        }
         self.call_method(&target, recv.map(|r| r.view()), vals)
     }
 
@@ -2325,7 +2335,10 @@ impl Interp {
             return Err(self.internal(format!("Methode {} ohne Rumpf", m.name)));
         };
         let Some(body) = &md.body else { return Err(self.internal(format!("Methode {} ohne Rumpf", m.name))) };
-        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this, class: Some(m.owner).filter(|o| *o != usize::MAX), file: m.ast.0, label: self.label(m.owner, &m.name), locks: Vec::new() })?;
+        // Typargumente einer generischen Methode, gesehen vom Aufrufer (R-7.26)
+        let outer = self.tmap();
+        let mtargs: Vec<(usize, Ty)> = m.tparams.iter().zip(&m.targs).map(|(p, t)| (*p, t.subst(&outer))).collect();
+        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this, class: Some(m.owner).filter(|o| *o != usize::MAX), file: m.ast.0, label: self.label(m.owner, &m.name), locks: Vec::new(), mtargs })?;
         for (p, v) in m.params.iter().zip(args) {
             self.declare(&p.name, v);
         }
@@ -2370,7 +2383,8 @@ impl Interp {
             }
             env
         };
-        Ok(Value::Func(Rc::new(Closure { own, params: ps, body, file, class, env, this: if own { None } else { this } })))
+        let mtargs = self.frames.last().map(|f| f.mtargs.clone()).unwrap_or_default();
+        Ok(Value::Func(Rc::new(Closure { own, params: ps, body, file, class, env, this: if own { None } else { this }, mtargs })))
     }
 
     fn call_value(&mut self, f: Value, args: &'static [ast::Arg]) -> R<Value> {
@@ -2394,7 +2408,7 @@ impl Interp {
     }
 
     fn call_closure(&mut self, c: &Rc<Closure>, vals: Vec<Value>) -> R<Value> {
-        self.enter(Frame { scopes: vec![Vec::new()], env: c.env.clone(), this: c.this.clone(), class: c.class, file: c.file, label: "Lambda".into(), locks: Vec::new() })?;
+        self.enter(Frame { scopes: vec![Vec::new()], env: c.env.clone(), this: c.this.clone(), class: c.class, file: c.file, label: "Lambda".into(), locks: Vec::new(), mtargs: c.mtargs.clone() })?;
         for ((n, _), v) in c.params.iter().zip(vals) {
             self.declare(n, v);
         }

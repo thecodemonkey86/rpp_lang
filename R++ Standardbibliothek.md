@@ -18,6 +18,7 @@ Grundsätze, die beim Schreiben zusätzlich festgelegt werden mussten, stehen in
 | V-13.6 | Eine Borrow-Methode darf auch einen Borrow zurückgeben, der über eine `ref`-Variable, ein Schleifenelement oder einen weiteren Borrow-Aufruf von `this` ausgeht (z. B. aus einer Schleife über `this.entries`). Das erweitert R-5.23 in der Oberflächensprache; die Sicherheitsbegründung ist dieselbe. |
 | V-13.7 | Für Typen mit `Comparable` sind `<`, `<=`, `>`, `>=` erlaubt und rufen `compareTo` auf (Erweiterung von Kapitel 4, R-4.17, analog zu `==` und `Equatable`). |
 | V-13.8 | `File::exists(path)` sagt, ob unter `path` eine gewöhnliche Datei liegt; `Path::absolute(p)` liefert den absoluten Pfad mit `/` als Trenner, `.` und `..` rein textuell aufgelöst (Verweise im Dateisystem werden nicht verfolgt). Beides braucht ein Compiler, der Projekte lädt. |
+| V-13.9 | Eine `IOException` trägt den betroffenen Pfad in `path`; ihr Text (`message`) nennt den Pfad und beschreibt den Fehler. Der genaue Wortlaut der Beschreibung, insbesondere der Teil, der vom Betriebssystem kommt, ist nicht festgelegt und kann sich zwischen Implementierungen und Systemen unterscheiden. Programme und Tests werten ihn nicht aus. (angenommen am 23.11.2026) |
 
 ## 1. Grundsätze
 

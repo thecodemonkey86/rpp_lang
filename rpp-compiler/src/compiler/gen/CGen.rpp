@@ -68,7 +68,9 @@ public:
     // Klasse für Felder und statische Felder; -1: keine
     i64 cls = -1;
     bool binding = false;
-    // Schlüssel der Felder von this (Klasse cls)
+    // Typ-Parameter der generischen Methode und der C-Ausdruck ihrer Typargumente (R-7.26)
+    i64[] mparams = [];
+    string mtExpr = "";
     constructor() {
     }
 }
@@ -755,6 +757,13 @@ private:
             thisExpr = "";
         }
         beginFn(d, thisExpr);
+        if (m.tparams.length > 0) {
+            emit("const RTy** MT = rt_take_mtargs(); (void)MT;");
+            for (i64 tp : m.tparams) {
+                f.mparams.push(tp);
+            }
+            f.mtExpr = "MT";
+        }
         emit("*ret = rv_void();");
         emit("if ((st = rt_enter(" + cstr(label) + ")) != 0) return st;");
         pushScope();
@@ -2536,6 +2545,13 @@ private:
     // Laufzeittyp; Typ-Parameter über die Typargumente von this
     string rtTyExpr(shared Ty t0) mut {
         shared Ty t = Tys::core(t0);
+        if (t.kind == TK::Param && f.mtExpr != "") {
+            for (i64 i = 0; i < f.mparams.length; i++) {
+                if (f.mparams[i] == t.id) {
+                    return "(" + f.mtExpr + " ? " + f.mtExpr + "[" + i.toString() + "] : NULL)";
+                }
+            }
+        }
         if (t.kind == TK::Param) {
             string self0 = f.thisExpr;
             if (self0 == "") {
@@ -2724,6 +2740,20 @@ private:
         if (recv != "rv_null()") {
             rview = "rv_view(" + recv + ")";
         }
+        if (m.targs.length > 0) {
+            // Typargumente der generischen Methode für den Aufruf (R-7.26)
+            string[] parts = [];
+            for (shared Ty ta : m.targs) {
+                parts.push(rtTyExpr(ta));
+            }
+            string ma = "MA" + f.labels.toString();
+            f.labels++;
+            emit("const RTy* " + ma + "[" + parts.length.toString() + "];");
+            for (i64 i = 0; i < parts.length; i++) {
+                emit(ma + "[" + i.toString() + "] = " + parts[i] + ";");
+            }
+            emit("rt_set_mtargs(rt_targs_copy(" + ma + ", " + parts.length.toString() + "));");
+        }
         emit("st = " + fn + "(&" + r + ", " + rview + ", " + arr + ");");
         discard f.targets.pop();
         emit(relLab + ":;");
@@ -2856,6 +2886,10 @@ private:
             string te = f.thisExpr;
             emit("  c_->self = rv_view(" + te + ");");
         }
+        if (f.mtExpr != "") {
+            string mte = f.mtExpr;
+            emit("  c_->mt = " + mte + ";");
+        }
         for (i64 i = 0; i < caps.length; i++) {
             if (outer[i] == "") {
                 continue;
@@ -2872,6 +2906,12 @@ private:
         f.cls = saved.cls;
         if (!isOwn && saved.thisExpr != "") {
             f.thisExpr = "C->self";
+        }
+        if (saved.mtExpr != "") {
+            for (i64 tp : saved.mparams) {
+                f.mparams.push(tp);
+            }
+            f.mtExpr = "C->mt";
         }
         f.targets.push("XF");
         for (i64 i = 0; i < caps.length; i++) {

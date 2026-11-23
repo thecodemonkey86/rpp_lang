@@ -75,6 +75,8 @@ pub struct MethodInfo {
     pub params: Vec<PInfo>,
     pub ret: Ret,
     pub tparams: Vec<ParamId>,
+    /// abgeleitete Typargumente einer generischen Methode (Reihenfolge wie tparams), am Aufruf
+    pub targs: Vec<Ty>,
     pub is_static: bool,
     pub modifier: Option<MethodModifier>,
     pub nodiscard: bool,
@@ -689,6 +691,7 @@ impl Program {
                                     params,
                                     ret,
                                     tparams: tps,
+                                    targs: Vec::new(),
                                     is_static: md.modifier == Some(MethodModifier::Static),
                                     modifier: md.modifier,
                                     nodiscard: md.nodiscard,

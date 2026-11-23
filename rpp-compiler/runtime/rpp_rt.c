@@ -552,74 +552,51 @@ static int64_t char_pos(RStr* s, int64_t k) {
     return i;
 }
 
-/* ---------------------------------------------------------------- Unicode (Auswahl) */
+/* ---------------------------------------------------------------- Unicode */
+/* Tabellen aus der Standardbibliothek von Rust (gen_unicode.rs), damit char und Strings sich wie im
+ * Interpreter verhalten */
+#include "rpp_unicode.h"
 
-static int u_is_upper(uint32_t c);
-static int u_is_lower(uint32_t c);
-
-static int u_is_whitespace(uint32_t c) {
-    return (c >= 9 && c <= 13) || c == 32 || c == 0x85 || c == 0xa0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200a) ||
-           c == 0x2028 || c == 0x2029 || c == 0x202f || c == 0x205f || c == 0x3000;
-}
-
-static int u_is_alpha(uint32_t c) {
-    if (c < 0x80) return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-    if (c == 0xaa || c == 0xb5 || c == 0xba) return 1;
-    if (c >= 0xc0 && c <= 0x24f) return c != 0xd7 && c != 0xf7;
-    if (c >= 0x250 && c <= 0x2c1) return 1;
-    if (c >= 0x370 && c <= 0x3ff) return c != 0x375 && c != 0x37e && c != 0x384 && c != 0x385 && c != 0x387;
-    if (c >= 0x400 && c <= 0x52f) return !(c >= 0x482 && c <= 0x489);
-    if (c >= 0x531 && c <= 0x587) return 1;
-    if (c >= 0x5d0 && c <= 0x5ea) return 1;
-    if (c >= 0x620 && c <= 0x64a) return 1;
-    if (c >= 0x1e00 && c <= 0x1fff) return 1;
-    if (c >= 0x3041 && c <= 0x30ff) return 1;
-    if (c >= 0x4e00 && c <= 0x9fff) return 1;
-    if (c >= 0xac00 && c <= 0xd7a3) return 1;
+static int u_in(const uint32_t (*r)[2], int n, uint32_t c) {
+    int lo = 0, hi = n - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (c < r[mid][0]) hi = mid - 1;
+        else if (c > r[mid][1]) lo = mid + 1;
+        else return 1;
+    }
     return 0;
 }
 
-static uint32_t u_to_lower(uint32_t c) {
-    if (c >= 'A' && c <= 'Z') return c + 32;
-    if (c < 0x80) return c;
-    if ((c >= 0xc0 && c <= 0xde) && c != 0xd7) return c + 32;
-    if (c >= 0x100 && c <= 0x17f) {
-        if (c == 0x130) return 'i';
-        if (c >= 0x139 && c <= 0x148) return (c & 1) ? c + 1 : c;
-        if (c >= 0x179 && c <= 0x17e) return (c & 1) ? c + 1 : c;
-        if (c == 0x178) return 0xff;
-        if (c == 0x17f) return c;
-        return (c & 1) ? c : c + 1;
+/* Abbildung (bis zu drei Zeichen); NULL, wenn das Zeichen bleibt */
+static const uint32_t* u_map(const uint32_t (*m)[4], int n, uint32_t c) {
+    int lo = 0, hi = n - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (c < m[mid][0]) hi = mid - 1;
+        else if (c > m[mid][0]) lo = mid + 1;
+        else return &m[mid][1];
     }
-    if (c >= 0x391 && c <= 0x3ab && c != 0x3a2) return c + 32;
-    if (c >= 0x410 && c <= 0x42f) return c + 32;
-    if (c >= 0x400 && c <= 0x40f) return c + 80;
-    return c;
+    return NULL;
 }
 
+static int u_is_whitespace(uint32_t c) { return u_in(u_space, U_SPACE_N, c); }
+static int u_is_alpha(uint32_t c) { return u_in(u_alpha, U_ALPHA_N, c); }
+static int u_is_upper(uint32_t c) { return u_in(u_upper, U_UPPER_N, c); }
+static int u_is_lower(uint32_t c) { return u_in(u_lower, U_LOWER_N, c); }
+static int u_is_cased(uint32_t c) { return u_in(u_cased, U_CASED_N, c); }
+static int u_is_ignorable(uint32_t c) { return u_in(u_ignorable, U_IGNORABLE_N, c); }
+
+/* erstes Zeichen von to_uppercase / to_lowercase (char.toUpper, char.toLower) */
 static uint32_t u_to_upper(uint32_t c) {
-    if (c >= 'a' && c <= 'z') return c - 32;
-    if (c < 0x80) return c;
-    if (c == 0xb5) return 0x39c;
-    if ((c >= 0xe0 && c <= 0xfe) && c != 0xf7) return c - 32;
-    if (c == 0xff) return 0x178;
-    if (c >= 0x100 && c <= 0x17f) {
-        if (c == 0x131) return 'I';
-        if (c >= 0x139 && c <= 0x148) return (c & 1) ? c : c - 1;
-        if (c >= 0x179 && c <= 0x17e) return (c & 1) ? c : c - 1;
-        if (c == 0x17f) return 'S';
-        if (c == 0x130 || c == 0x138 || c == 0x149) return c;
-        return (c & 1) ? c - 1 : c;
-    }
-    if (c >= 0x3b1 && c <= 0x3cb && c != 0x3c2) return c - 32;
-    if (c == 0x3c2) return 0x3a3;
-    if (c >= 0x430 && c <= 0x44f) return c - 32;
-    if (c >= 0x450 && c <= 0x45f) return c - 80;
-    return c;
+    const uint32_t* m = u_map(u_upmap, U_UPMAP_N, c);
+    return m ? m[0] : c;
 }
 
-static int u_is_upper(uint32_t c) { return u_is_alpha(c) && u_to_lower(c) != c; }
-static int u_is_lower(uint32_t c) { return (u_is_alpha(c) && u_to_upper(c) != c) || c == 0xdf || c == 0x138 || c == 0x149; }
+static uint32_t u_to_lower(uint32_t c) {
+    const uint32_t* m = u_map(u_lowmap, U_LOWMAP_N, c);
+    return m ? m[0] : c;
+}
 
 /* ---------------------------------------------------------------- Zahlen als Text */
 
@@ -1412,6 +1389,7 @@ RFun* rt_fun_new(RFn fn, int own, int n) {
     f->own = (uint8_t)own;
     f->fn = fn;
     f->self = rv_null();
+    f->mt = NULL;
     f->n = n;
     f->cells = (rv**)xmalloc(sizeof(rv*) * (size_t)(n ? n : 1));
     f->vals = own ? (rv*)xmalloc(sizeof(rv) * (size_t)(n ? n : 1)) : NULL;
@@ -1863,18 +1841,57 @@ static int64_t chars_before(RStr* s, int64_t byte) {
     return n;
 }
 
-static rv map_case(RStr* s, int upper) {
-    Buf b = { 0 };
-    int64_t i = 0;
+/* Schluss-Sigma (str::to_lowercase in Rust): Ist vor dem Sigma, über ignorierbare Zeichen
+ * hinweg, ein Buchstabe mit Groß-/Kleinschreibung und danach keiner? */
+static int sigma_final(RStr* s, int64_t at, int64_t after) {
+    int64_t i = at;
+    int before = 0;
+    while (i > 0) {
+        int64_t p = i - 1;
+        while (p > 0 && ((unsigned char)s->data[p] & 0xc0) == 0x80) p--;
+        uint32_t c;
+        utf8_dec(s->data, s->len, p, &c);
+        i = p;
+        if (u_is_ignorable(c)) continue;
+        before = u_is_cased(c);
+        break;
+    }
+    if (!before) return 0;
+    i = after;
     while (i < s->len) {
         uint32_t c;
         int k = utf8_dec(s->data, s->len, i, &c);
         i += k;
-        if (upper && c == 0xdf) { buf_str(&b, "SS"); continue; }
-        uint32_t d = upper ? u_to_upper(c) : u_to_lower(c);
+        if (u_is_ignorable(c)) continue;
+        return !u_is_cased(c);
+    }
+    return 1;
+}
+
+static rv map_case(RStr* s, int upper) {
+    Buf b = { 0 };
+    buf_str(&b, "");
+    int64_t i = 0;
+    while (i < s->len) {
+        uint32_t c;
+        int64_t at = i;
+        int k = utf8_dec(s->data, s->len, i, &c);
+        i += k;
         char t[4];
-        int n = utf8_enc(d, t);
-        buf_add(&b, t, n);
+        if (!upper && c == 0x3a3) {
+            int n = utf8_enc(sigma_final(s, at, i) ? 0x3c2 : 0x3c3, t);
+            buf_add(&b, t, n);
+            continue;
+        }
+        const uint32_t* m = upper ? u_map(u_upmap, U_UPMAP_N, c) : u_map(u_lowmap, U_LOWMAP_N, c);
+        if (!m) {
+            buf_add(&b, s->data + at, k);
+            continue;
+        }
+        for (int j = 0; j < 3 && m[j]; j++) {
+            int n = utf8_enc(m[j], t);
+            buf_add(&b, t, n);
+        }
     }
     return buf_take(&b);
 }
@@ -1997,7 +2014,7 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
         if (!strcmp(name, "isWhitespace")) { *out = rv_bool(u_is_whitespace(c)); return ST_OK; }
         if (!strcmp(name, "isUpper")) { *out = rv_bool(u_is_upper(c)); return ST_OK; }
         if (!strcmp(name, "isLower")) { *out = rv_bool(u_is_lower(c)); return ST_OK; }
-        if (!strcmp(name, "toUpper")) { *out = rv_char(c == 0xdf ? c : u_to_upper(c)); return ST_OK; }
+        if (!strcmp(name, "toUpper")) { *out = rv_char(u_to_upper(c)); return ST_OK; }
         if (!strcmp(name, "toLower")) { *out = rv_char(u_to_lower(c)); return ST_OK; }
         return rt_fatal("InternalError", "char.%s", name);
     }
@@ -3027,6 +3044,16 @@ int rt_new_param(rv* out, const RTy* t) {
     }
     *out = rv_obj(o, F_OWN);
     return ST_OK;
+}
+
+static const RTy** pending_mtargs = NULL;
+
+void rt_set_mtargs(const RTy** t) { pending_mtargs = t; }
+
+const RTy** rt_take_mtargs(void) {
+    const RTy** t = pending_mtargs;
+    pending_mtargs = NULL;
+    return t;
 }
 
 int rt_no_method(rv* ret, rv self, rv* args) {

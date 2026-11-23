@@ -4111,7 +4111,11 @@ private:
                 return (false, m.substituted(new Subst()));
             }
         }
-        return (true, m.substituted(map));
+        MethodInfo r = m.substituted(map);
+        for (i64 t : m.tparams) {
+            r.targs.push(map.vals[Program::indexOfInt(map.keys, t)]);
+        }
+        return (true, r);
     }
 
     // Bindet Typ-Parameter einer generischen Methode an die Typen der Argumente

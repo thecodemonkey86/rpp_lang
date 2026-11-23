@@ -2,7 +2,7 @@
 
 Stand: 22.11.2026, Entwurf 0.6. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
-Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M5 sind abgeschlossen, M6 ist begonnen (Abschnitt 6).
+Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M6 sind abgeschlossen (Abschnitt 6); M7 ist die Geschwindigkeit des übersetzten Codes.
 
 ## 1. Rolle der ersten Implementierung
 
@@ -81,7 +81,8 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M3 | Null-Flussanalyse, Ownership und Borrows, Warnungen | auch die abgelehnten Tests der Kapitel 5, 6 und 9; FR++-Tests und Zufallsprogramme stimmen überein |
 | M4 | Zwischenrepräsentation, Interpreter, Exceptions und Programmfehler | alle Laufzeittests mit `print` und `rpp.core` bestehen |
 | M5 | Standardbibliothek für den Compiler: `rpp.text`, `rpp.collections`, `rpp.io`, `rpp.env`, `rpp.fmt` | alle Konformitätstests bestehen im Debugmodus |
-| M6 | Beginn des R++-Compilers in R++ | – |
+| M6 | Beginn des R++-Compilers in R++ | der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein (festgelegt am 23.11.2026) |
+| M7 | Geschwindigkeit des übersetzten Codes | – (Ziel und Weg des Releasemodus werden noch besprochen) |
 
 JIT und Releasemodus folgen nach M5. Bis dahin ist die Implementierung nur für den Debugmodus konform (R-14.7).
 
@@ -307,4 +308,16 @@ Beim Vergleich aufgefallen und behoben: Eine Sicht auf einen `weak`-Verweis wurd
 
 Zum Vergleich: `rppc pruefe` (Rust) braucht 0,6 s, der Interpreter rund 20 Minuten. Der Fixpunkt der Selbstübersetzung hält nach jedem Schritt (zwei Runden, weil der neue Generator erst in der zweiten Runde läuft).
 
-Offen: Der übersetzte Code ist noch rund 15-mal langsamer als `rppc` (Werte mit Art in jedem Ausdruck, Rahmen und Felder je Aufruf, Namensvergleich bei eingebauten Methoden); Typargumente generischer Methoden für `new T()` (wie im Interpreter); vollständige Unicode-Tabellen für `char`; der Releasemodus über eine eigene Zwischendarstellung oder LLVM bleibt nach dem Plan offen.
+**Weitere offene Punkte (22.11.2026).**
+
+| Punkt | Umsetzung |
+|---|---|
+| `new T()` mit dem Typ-Parameter einer generischen Methode | Die Prüfung hält die abgeleiteten Typargumente am gewählten Aufruf fest (`MethodInfo.targs`, in `body.rs` und `Checker.rpp`). Der Interpreter setzt sie, vom Aufrufer aus gesehen, in den Rahmen der Methode und nimmt sie in Lambdas mit; der Codegenerator gibt sie über `rt_set_mtargs` an die Methode und über `RFun.mt` an Lambdas. Neuer Laufzeittest `kap07_klassen/laufzeit/l05_new_t_methode.rpp` (auch über einen weiteren generischen Aufruf, eine Instanzmethode und ein Lambda); `rppc test ..`: 259 bestanden. Generische Methoden lassen sich nicht überschreiben (R-7.13), virtuelle Aufrufe behalten die Typargumente trotzdem. |
+| Unicode für `char` und Strings | Die C-Laufzeit nimmt ihre Tabellen aus der Standardbibliothek von Rust (`runtime/gen_unicode.rs` erzeugt `rpp_unicode.h`: Buchstaben, Groß- und Kleinbuchstaben, Leerraum, Abbildungen auf bis zu drei Zeichen) und Case_Ignorable aus den Unicode-Kategorien (`gen_unicode_ignorable.py`) für das Schluss-Sigma. Zusatztest `rpp-compiler/tests_c/t02_unicode.rpp`. |
+| Text von `IOException` | V-13.9 (Kapitel 13, angenommen am 23.11.2026): Der Text nennt den Pfad und beschreibt den Fehler; der genaue Wortlaut, besonders der Teil vom Betriebssystem, ist nicht festgelegt. |
+
+Offen: Der übersetzte Code ist noch rund 15-mal langsamer als `rppc` (Werte mit Art in jedem Ausdruck, Rahmen und Felder je Aufruf, Namensvergleich bei eingebauten Methoden); der Releasemodus über eine eigene Zwischendarstellung oder LLVM bleibt nach dem Plan offen.
+
+**M6 abgeschlossen (23.11.2026).** Kriterium (festgelegt am 23.11.2026): Der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein. Stand: Fixpunkt nach zwei Runden; `vergleich.py --exe` 540/1094/1072/598/508/790 gleich (tokens, pre, ast, projekt, defs, pruefe), 0 verschieden; `vergleich_c.py --fr 200` 228 gleich, 0 verschieden; `rppc test ..` 259 bestanden.
+
+Entschieden am 23.11.2026: V-13.9 (Text von `IOException`) ist angenommen. `Map` und `Set` bleiben eingebaut; als R++-Quelltext erst, wenn der erzeugte Code schneller ist. Die Geschwindigkeit des übersetzten Codes wird Meilenstein M7; ob der C-Codegenerator der Releasemodus nach R-12.1 wird (statt einer eigenen Zwischendarstellung bzw. LLVM, Abschnitt 3), ist noch zu besprechen.

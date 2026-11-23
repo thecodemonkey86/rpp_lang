@@ -48,6 +48,8 @@ pub struct Closure {
     pub class: Option<DefId>,
     pub env: Vec<(String, Cellv)>,
     pub this: Option<Value>,
+    /// Typargumente der generischen Methode, in der das Lambda steht
+    pub mtargs: Vec<(usize, rpp_sema::ty::Ty)>,
 }
 
 #[derive(Clone)]

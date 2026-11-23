@@ -94,6 +94,7 @@ struct RFun {
     int32_t n;
     rv** cells;     /* erfasste Variablen */
     rv* vals;       /* own-Lambda: die erfassten Werte selbst */
+    const struct RTy** mt;  /* Typargumente der generischen Methode, in der das Lambda steht */
 };
 
 /* Laufzeittypen (für Typargumente und new T()) */
@@ -480,6 +481,9 @@ const RTy** rt_targs_copy(const RTy** a, int n);
 const RTy* rt_targ(rv self, int32_t cls, int idx);
 int rt_new_param(rv* out, const RTy* t);
 int rt_no_method(rv* ret, rv self, rv* args);
+/* Typargumente für den nächsten Aufruf einer generischen Methode (R-7.26) */
+void rt_set_mtargs(const RTy** t);
+const RTy** rt_take_mtargs(void);
 
 /* Start */
 int rt_main(int argc, char** argv, int (*body)(rv* ret, rv args), int release);

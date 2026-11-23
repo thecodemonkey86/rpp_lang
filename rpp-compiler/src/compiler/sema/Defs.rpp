@@ -90,6 +90,8 @@ public:
     PInfo[] params = [];
     Ret ret;
     i64[] tparams = [];
+    // abgeleitete Typargumente einer generischen Methode (Reihenfolge wie tparams), am Aufruf
+    shared Ty[] targs = [];
     bool isStatic = false;
     // "", "static", "virtual", "override" oder "abstract"
     string modifier = "";
@@ -125,6 +127,9 @@ public:
         }
         for (i64 t : tparams) {
             c.tparams.push(t);
+        }
+        for (shared Ty t : targs) {
+            c.targs.push(Ty::subst(t, m));
         }
         c.isStatic = isStatic;
         c.modifier = modifier;

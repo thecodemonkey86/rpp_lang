@@ -1,0 +1,58 @@
+// Konformitätstest Kapitel 7 – Laufzeit.
+// Regel: R-7.24, R-7.26, R-4.44
+// Erwartet: Ausgabe "Item\nOther\nOther\nW:Item\nOther 2\nItem"; Exit-Code 0
+// new T() mit dem Typ-Parameter einer generischen Methode: Die abgeleiteten Typargumente
+// bleiben zur Laufzeit erhalten, auch über einen weiteren generischen Aufruf, eine
+// Instanzmethode und ein Lambda.
+class Item {
+public:
+    string name() { return "Item"; }
+}
+
+class Other {
+public:
+    string name() { return "Other"; }
+}
+
+class Box<T> {
+public:
+    T value;
+    constructor(own T value) { this.value = value; }
+}
+
+class Fabrik {
+public:
+    static T wie<T : new()>(T vorlage) { return new T(); }
+    static Box<T> verpackt<T : new()>(T vorlage) { return new Box<T>(wie(vorlage)); }
+    static i32 zaehle<T : new()>(T vorlage, i32 n) {
+        T[] xs = [];
+        for (i32 i = 0; i < n; i++) {
+            Func<T> mach = own () => new T();
+            xs.push(mach());
+        }
+        return cast<i32>(xs.length);
+    }
+}
+
+class Werkstatt {
+public:
+    string marke = "W";
+    Box<T> bau<T : new()>(T vorlage) {
+        T neu = new T();
+        return new Box<T>(Fabrik::wie(neu));
+    }
+}
+
+i32 main(string[] args) {
+    Item a = new Item();
+    print(Fabrik::wie(a).name());
+    Other o = new Other();
+    print(Fabrik::wie(o).name());
+    Box<Other> bx = Fabrik::verpackt(o);
+    print(bx.value.name());
+    Werkstatt w = new Werkstatt();
+    print(w.marke + ":" + w.bau(a).value.name());
+    print("Other " + Fabrik::zaehle(o, 2).toString());
+    print(Fabrik::verpackt(a).value.name());
+    return 0;
+}
