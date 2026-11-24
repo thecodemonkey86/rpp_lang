@@ -4,8 +4,9 @@
 // eval, eval_store, transfer, temp, convert, args und die Anweisungen werden zu C-Code,
 // der dieselben Laufzeitfunktionen in derselben Reihenfolge aufruft.
 //
-// Aufbau einer erzeugten Funktion: alle Werte stehen in Feldern T (Zwischenwerte) und V
-// (Variablen); st ist der Status (ST_OK, ST_THROW, ST_FATAL, ST_RET, ST_BRK, ST_CONT).
+// Aufbau einer erzeugten Funktion: Zwischenwerte stehen in einzelnen C-Variablen t0, t1, …,
+// Argumentfelder in A0, A1, …, Variablen im Feld V, Grundwert-Variablen in x0, x1, … und
+// native Zwischenwerte in n0, n1, … (M7); st ist der Status (ST_OK, ST_THROW, ST_FATAL, ST_RET, ST_BRK, ST_CONT).
 // Ein Fehler springt zur Aufräummarke des innersten Gültigkeitsbereichs (X…) bzw. der
 // Anweisung (L…); von dort geht es nach außen weiter.
 package compiler.gen;
@@ -59,6 +60,9 @@ public:
     i64 ptrs = 0;
     i64 maxPtrs = 0;
     i64 lockCount = 0;
+    // Felder A0, A1, … für Argumente (Größe je Nummer, wiederverwendet je Anweisung; M7)
+    i64 arrs = 0;
+    i64[] arrSizes = [];
     // native Zwischenwerte (int64_t n0, n1, …; M7)
     i64 nats = 0;
     i64 maxNats = 0;
@@ -548,7 +552,7 @@ private:
     }
 
     string tmp() mut {
-        string t = "T[" + f.temps.toString() + "]";
+        string t = "t" + f.temps.toString();
         f.temps++;
         if (f.temps > f.maxTemps) {
             f.maxTemps = f.temps;
@@ -806,7 +810,16 @@ private:
         StringBuilder b = new StringBuilder();
         b.append(header);
         b.append(" {\n    int st = ST_OK;\n");
-        b.append("    rv T[" + max1(f.maxTemps).toString() + "];\n");
+        if (f.maxTemps > 0) {
+            b.append("    rv t0");
+            for (i64 i = 1; i < f.maxTemps; i++) {
+                b.append(", t" + i.toString());
+            }
+            b.append(";\n");
+        }
+        for (i64 i = 0; i < f.arrSizes.length; i++) {
+            b.append("    rv A" + i.toString() + "[" + f.arrSizes[i].toString() + "];\n");
+        }
         b.append("    rv V[" + max1(f.vars).toString() + "];\n");
         b.append("    int64_t M[" + max1(f.marks).toString() + "];\n");
         b.append("    int B[" + max1(f.maxInts).toString() + "];\n");
@@ -826,7 +839,7 @@ private:
             }
             b.append(";\n");
         }
-        b.append("    (void)T; (void)M; (void)B; (void)P;\n");
+        b.append("    (void)M; (void)B; (void)P;\n");
         b.append("    for (int i = 0; i < " + max1(f.vars).toString() + "; i++) V[i] = rv_moved();\n");
         b.append("    for (int i = 0; i < " + max1(f.lockCount).toString() + "; i++) K[i] = NULL;\n");
         b.append(f.code.toString());
@@ -1486,6 +1499,7 @@ private:
         i64 i0 = f.ints;
         i64 p0 = f.ptrs;
         i64 n0 = f.nats;
+        i64 a0 = f.arrs;
         // Anweisungen ohne eigene Zwischenwerte brauchen keine Marke (M7): Blöcke und
         // Verzweigungen (Bedingung und Rümpfe haben eigene Marken) und rein native Anweisungen
         string k = s.kind;
@@ -1495,6 +1509,7 @@ private:
             f.ints = i0;
             f.ptrs = p0;
             f.nats = n0;
+            f.arrs = a0;
             return;
         }
         string mk = "M[" + f.marks.toString() + "]";
@@ -1510,6 +1525,7 @@ private:
         f.ints = i0;
         f.ptrs = p0;
         f.nats = n0;
+        f.arrs = a0;
     }
 
     void subStmt(Node s) mut {
@@ -1748,16 +1764,20 @@ private:
         }
     }
 
-    // zusammenhängende Zwischenwerte für ein Feld von n Werten; liefert die Adresse
+    // Feld von n Werten (Argumente, Elemente, Zerlegung); liefert die Adresse. Die Felder A…
+    // werden wie die Zwischenwerte je Anweisung wiederverwendet (M7).
     string tmpArray(i64 n) mut {
-        i64 start = f.temps;
-        for (i64 i = 0; i < n; i++) {
-            discard tmp();
-        }
         if (n == 0) {
             return "NULL";
         }
-        return "&T[" + start.toString() + "]";
+        i64 k = f.arrs;
+        f.arrs++;
+        if (k >= f.arrSizes.length) {
+            f.arrSizes.push(n);
+        } else if (f.arrSizes[k] < n) {
+            f.arrSizes[k] = n;
+        }
+        return "A" + k.toString();
     }
 
     void forStmt(Node s) mut {
