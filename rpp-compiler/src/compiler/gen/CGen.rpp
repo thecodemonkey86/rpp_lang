@@ -76,6 +76,11 @@ public:
     string[] noNat = [];
     // zuletzt ausgegebene Zeile (für rt_temp nach einem Erzeuger ohne Besitz; M7)
     string lastLine = "";
+    // ausgegebene Zeilen; ownedTmp hält nach Zeile ownedAt einen besitzenden Wert (Ergebnis eines
+    // erzeugten Aufrufs oder eines Konstruktors), promote und own_str entfallen dann (M7)
+    i64 lines = 0;
+    string ownedTmp = "";
+    i64 ownedAt = -1;
     GScope[] scopes = [];
     string[] targets = [];
     // C-Ausdruck für this; leer: kein this
@@ -552,6 +557,35 @@ private:
         f.code.append(line);
         f.code.append("\n");
         f.lastLine = line;
+        f.lines++;
+    }
+
+    // r hält jetzt einen besitzenden Wert (bis zur nächsten Zeile)
+    void markOwned(string r) mut {
+        f.ownedTmp = r;
+        f.ownedAt = f.lines;
+    }
+
+    bool justOwned(string v) {
+        return f.ownedTmp == v && f.ownedAt == f.lines;
+    }
+
+    // promote; entfällt für einen gerade erzeugten besitzenden Wert
+    void promoteEmit(string v) mut {
+        if (justOwned(v)) {
+            return;
+        }
+        emit(v + " = rt_promote(" + v + ");");
+    }
+
+    // own_str; entfällt nach promote und transfer_var (die geliehene Strings und weakb schon
+    // umwandeln) und für einen gerade erzeugten besitzenden Wert
+    void ownStrEmit(string v) mut {
+        string l = f.lastLine;
+        if (justOwned(v) || l == v + " = rt_promote(" + v + ");" || (l.startsWith(v + " = rt_transfer_var(") && l.endsWith(");") && !l.contains("; "))) {
+            return;
+        }
+        emit(v + " = rt_own_str(" + v + ");");
     }
 
     // v als Zwischenwert der Anweisung führen (temp); entfällt, wenn die vorige Zeile v einen Wert
@@ -2862,7 +2896,7 @@ private:
             convertFrom(v, st, e);
         }
         if (!plainPrim(e)) {
-            emit(v + " = rt_own_str(" + v + ");");
+            ownStrEmit(v);
         }
         return v;
     }
@@ -2887,7 +2921,7 @@ private:
         }
         string v = eval(e);
         if (!plainPrim(e)) {
-            emit(v + " = rt_promote(" + v + ");");
+            promoteEmit(v);
         }
         return v;
     }
@@ -3397,6 +3431,7 @@ private:
             string targs = typeArgsExpr(e);
             emit("{ RObj* o_ = rt_obj_new(&CL_" + d.toString() + ", " + targs + "); st = " + kname + "(o_, " + arr + "); if (st) rt_obj_fail(o_); else " + r + " = rv_obj(o_, F_OWN); }");
             chk();
+            markOwned(r);
             return r;
         }
         if (t.kind == TargetKind::NewParam) {
@@ -3653,6 +3688,9 @@ private:
         chk();
         if (safe) {
             emit("}");
+        } else if (fn.startsWith("M_") && !isNative(m.owner, m.member)) {
+            // erzeugte Methoden liefern immer besitzende Werte (Rückgabe über store)
+            markOwned(r);
         }
     }
 

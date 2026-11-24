@@ -99,4 +99,4 @@ Native Grundwerte (M7): Reine Ausdrücke über `i8`–`i64`, `char` und `bool` o
 
 Umgebungsvariablen der Laufzeit: `RPP_NOFREE=1` gibt keinen Speicher frei (zum Eingrenzen von Fehlern bei der Freigabe); `RPP_PROFILE=DATEI` schreibt jede Millisekunde den Befehlszähler und bis zu sieben Aufrufer als Adressen relativ zum Modul, eine Stichprobe je Zeile (Windows; auflösen mit der Map-Datei des Linkers, `/MAP`); `RPP_MAINTHREAD=1` läuft ohne eigenen Thread mit großem Stack.
 
-Geschwindigkeit (24.11.2026, übersetzter `rppcc.exe`, MSVC `/O2`): `pruefe rpp-compiler` 2,55 s, Selbstübersetzung 2,95 s (22.11.2026: 9,2 s und 10,4 s); im Interpreter jeweils rund 20 Minuten, `rppc pruefe` (Release) 0,54 s.
+Geschwindigkeit (24.11.2026, übersetzter `rppcc.exe`, MSVC `/O2`): `pruefe rpp-compiler` 2,3 s, Selbstübersetzung 2,7 s (22.11.2026: 9,2 s und 10,4 s); im Interpreter jeweils rund 20 Minuten, `rppc pruefe` (Release) 0,54 s.
