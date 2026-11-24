@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.30, R-13.31
+// Erwartet: Ausgabe "ok"; Exit-Code 0
+using rpp.io.File;
+using rpp.io.TextReader;
+using rpp.text.Text;
+
+i32 main(string[] args) {
+    string lang = Text::repeat("abcdefgh", 1023) + "1234567Ä";
+    string[] faelle = ["", "\n", "\r\n", "\nÄ\r\n\nEnde\n", "a\rb\r", lang + "\r\n尾"];
+    for (string inhalt : faelle) {
+        File::writeText("zeilen.txt", inhalt);
+        TextReader a = File::openTextReader("zeilen.txt");
+        TextReader b = File::openTextReader("zeilen.txt");
+        for (string erwartet : Text::lines(inhalt)) {
+            string? zeile = a.readLine();
+            if (zeile == null || zeile != erwartet) { return 1; }
+        }
+        if (a.readLine() != null || a.readLine() != null) { return 2; }
+        if (inhalt == "a\rb\r" && (b.readLine() ?? "") != "a\rb\r") { return 3; }
+    }
+    File::delete("zeilen.txt");
+    print("ok");
+    return 0;
+}

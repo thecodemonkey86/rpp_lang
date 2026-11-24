@@ -2050,6 +2050,15 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
         W w = w_of(recv);
         return int_result(out, w_neg_p(w) ? w_negate(w) : w, p);
     }
+    if (!strcmp(name, "tryAdd") || !strcmp(name, "trySub") || !strcmp(name, "tryMul")) {
+        W a = w_of(recv), b = w_of(args[0]);
+        W result;
+        if (!strcmp(name, "tryAdd")) result = w_add(a, b);
+        else if (!strcmp(name, "trySub")) result = w_sub(a, b);
+        else result = w_mul(a, b);
+        *out = w_fits(result, recv.tag) ? make_int_w(result, recv.tag) : rv_null();
+        return ST_OK;
+    }
     if (!strcmp(name, "min") || !strcmp(name, "max")) {
         int c;
         int st = rt_compare(&c, recv, args[0]);
@@ -2964,6 +2973,43 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         if (l > 0 && in_buf[in_pos + l - 1] == '\r') l--;
         *out = rt_str_from(in_buf + in_pos, l);
         in_pos += used;
+        return ST_OK;
+    }
+    if (IS("rpp.io.File.openTextReader")) {
+        const char* path = rt_s(args[0])->data;
+        if (is_dir(path)) { errno = EISDIR; return path_io_error(path); }
+        FILE* file = u_fopen(path, "rb");
+        if (!file) return path_io_error(path);
+        RObj* reader = rt_obj_new(rt_cls_text_reader, NULL, 0);
+        reader->native = file;
+        rt_vec_push(reader, rt_promote(rv_view(args[0])));
+        *out = rv_obj(reader, F_OWN);
+        return ST_OK;
+    }
+    if (IS("rpp.io.TextReader.close")) {
+        if (o->native) fclose((FILE*)o->native);
+        o->native = NULL;
+        return ST_OK;
+    }
+    if (IS("rpp.io.TextReader.readLine")) {
+        FILE* file = (FILE*)o->native;
+        Buf line = { 0 };
+        int c;
+        while ((c = fgetc(file)) != EOF && c != '\n') {
+            char byte = (char)c;
+            buf_add(&line, &byte, 1);
+        }
+        if (c == EOF && ferror(file)) {
+            free(line.p);
+            return path_io_error(rt_s(o->slots[0])->data);
+        }
+        if (c == EOF && !line.n) { *out = rv_null(); return ST_OK; }
+        if (c == '\n' && line.n && line.p[line.n - 1] == '\r') line.n--;
+        if (!utf8_valid((const unsigned char*)line.p, line.n)) {
+            free(line.p);
+            return rt_throw_std("rpp.core.FormatException", "kein gültiges UTF-8");
+        }
+        *out = buf_take(&line);
         return ST_OK;
     }
     if (IS("rpp.io.File.open")) {

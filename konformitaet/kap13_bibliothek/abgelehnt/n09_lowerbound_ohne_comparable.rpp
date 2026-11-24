@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 13 – abgelehnt.
+// Regel: R-7.26, R-13.26
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Comparable fehlt).
+using rpp.collections.Vectors;
+
+class Plain {}
+
+i32 main(string[] args) {
+    Plain[] s = [new Plain()];
+    discard Vectors::lowerBound(s, s[0]);   // FEHLER
+    return 0;
+}

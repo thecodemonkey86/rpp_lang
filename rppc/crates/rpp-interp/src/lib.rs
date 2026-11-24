@@ -114,6 +114,7 @@ struct Ctor {
 
 struct Interp {
     save_files: HashMap<*const Obj, save_file::SaveFile>,
+    text_readers: HashMap<*const Obj, std::io::BufReader<std::fs::File>>,
     p: &'static Program,
     release: bool,
     out: String,
@@ -260,7 +261,7 @@ fn to_text(v: &Value) -> String {
 
 impl Interp {
     fn new(p: &'static Program, release: bool, input: String) -> Interp {
-        Interp { p, release, out: String::new(), err: String::new(), input, in_pos: 0, frames: Vec::new(), temps: Vec::new(), layouts: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0), binding: Cell::new(false), locked_args: Vec::new(), check: false, pending_targs: Vec::new(), heap: Vec::new(), shared_used: false, save_files: HashMap::new() }
+        Interp { p, release, out: String::new(), err: String::new(), input, in_pos: 0, frames: Vec::new(), temps: Vec::new(), layouts: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0), binding: Cell::new(false), locked_args: Vec::new(), check: false, pending_targs: Vec::new(), heap: Vec::new(), shared_used: false, save_files: HashMap::new(), text_readers: HashMap::new() }
     }
 
     // ------------------------------------------------------------ Hilfen
@@ -2548,6 +2549,18 @@ impl Interp {
         }
         match name {
             "toString" => Ok(s(to_text(recv))),
+            "tryAdd" | "trySub" | "tryMul" => {
+                let p = prim_of_value(recv).unwrap();
+                let a = recv.as_i128().unwrap();
+                let b = args[0].as_i128().unwrap();
+                // Selbst i128 kann das Produkt zweier ui64 nicht immer darstellen.
+                let result = match name {
+                    "tryAdd" => a.checked_add(b),
+                    "trySub" => a.checked_sub(b),
+                    _ => a.checked_mul(b),
+                };
+                Ok(result.filter(|&v| ty::int_fits(v, p)).map_or(Value::Null, |v| make_int(v, p)))
+            }
             "abs" => match recv {
                 Value::F32(x) => Ok(Value::F32(x.abs())),
                 Value::F64(x) => Ok(Value::F64(x.abs())),

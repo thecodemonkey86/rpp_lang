@@ -1,0 +1,24 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.31
+// Erwartet: Ausgabe "fehlt.txt\nok\nFormatException"; Exit-Code 0
+using rpp.io.File;
+using rpp.io.TextReader;
+
+i32 main(string[] args) {
+    try {
+        discard File::openTextReader("fehlt.txt");
+    } catch (IOException e) {
+        print(e.path);
+    }
+    byte[] daten = ["o".byteAt(0), "k".byteAt(0), "\n".byteAt(0), "ä".byteAt(1)];
+    File::writeBytes("kaputt.txt", daten);
+    try {
+        TextReader reader = File::openTextReader("kaputt.txt");
+        print(reader.readLine() ?? "EOF");
+        print(reader.readLine() ?? "EOF");
+    } catch (FormatException e) {
+        print("FormatException");
+    }
+    File::delete("kaputt.txt");
+    return 0;
+}

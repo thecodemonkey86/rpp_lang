@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.26
+// Erwartet: Ausgabe "0\n0\n0\n0\n0\n2\n2\n2\n2\n3\n3\n5\n5\n5"; Exit-Code 0
+using rpp.collections.Vectors;
+
+class Test {
+public:
+    static void grenzen(Slice<string> s, string x) {
+        print(Vectors::lowerBound(s, x).toString());
+        print(Vectors::upperBound(s, x).toString());
+    }
+}
+
+i32 main(string[] args) {
+    string[] leer = [];
+    Test::grenzen(leer, "b");
+    string[] werte = ["b", "b", "d", "f", "f"];
+    Test::grenzen(werte, "a");
+    Test::grenzen(werte, "b");
+    Test::grenzen(werte, "c");
+    Test::grenzen(werte, "d");
+    Test::grenzen(werte, "f");
+    Test::grenzen(werte, "g");
+    return 0;
+}

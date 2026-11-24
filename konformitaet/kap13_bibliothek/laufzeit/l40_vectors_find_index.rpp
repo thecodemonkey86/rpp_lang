@@ -1,0 +1,21 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.26
+// Erwartet: Ausgabe "7\n4\n1\n3\n8\n2\n7\n-1\n7\n-1\n-1\n-1"; Exit-Code 0
+using rpp.collections.Vectors;
+
+i32 main(string[] args) {
+    Func<i32, bool> gerade = own (i32 wert) => {
+        print(wert.toString());
+        return wert % 2 == 0;
+    };
+    i32[] werte = [0, 7, 4, 8, 3, 0];
+    // Zwei Treffer im Teilslice: vorne 7, 4 bis Index 1, hinten 3, 8 bis Index 2.
+    print((Vectors::findIndex(werte[1..5], gerade) ?? -1).toString());
+    print((Vectors::findLastIndex(werte[1..5], gerade) ?? -1).toString());
+    // Ohne Treffer wird jedes Element besucht, beim leeren Slice keines.
+    print((Vectors::findIndex(werte[1..2], gerade) ?? -1).toString());
+    print((Vectors::findLastIndex(werte[1..2], gerade) ?? -1).toString());
+    print((Vectors::findIndex(werte[2..2], gerade) ?? -1).toString());
+    print((Vectors::findLastIndex(werte[2..2], gerade) ?? -1).toString());
+    return 0;
+}

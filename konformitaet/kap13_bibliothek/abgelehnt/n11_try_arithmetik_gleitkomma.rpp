@@ -1,0 +1,8 @@
+// Konformitätstest Kapitel 13 – abgelehnt.
+// Regel: R-7.1, R-13.11
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile.
+i32 main(string[] args) {
+    f64 x = 1.0;
+    discard x.tryAdd(x);   // FEHLER
+    return 0;
+}

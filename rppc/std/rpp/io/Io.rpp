@@ -4,6 +4,7 @@ package rpp.io;
 export class File {
 public:
     static own File open(string path) { fail("eingebaut"); }
+    static own TextReader openTextReader(string path) { fail("eingebaut"); }
     nodiscard string readAllText() { fail("eingebaut"); }
     nodiscard byte[] readAllBytes() { fail("eingebaut"); }
     static void writeText(string path, string text) { fail("eingebaut"); }
@@ -20,6 +21,15 @@ public:
 }
 
 export enum FileType { File, Directory, Symlink, Other }
+
+export class TextReader {
+private:
+    constructor() { }
+    void close() mut { fail("eingebaut"); }
+public:
+    nodiscard string? readLine() mut { fail("eingebaut"); }
+    destructor() { close(); }
+}
 
 export class DirEntry {
 public:

@@ -1,0 +1,17 @@
+// Konformitätstest Kapitel 13 – abgelehnt.
+// Regel: R-7.26, R-13.9
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile.
+using rpp.collections.Deque;
+
+class Key {
+    import Equatable<Key>;
+public:
+    bool equals(Key other) { return true; }
+}
+
+i32 main(string[] args) {
+    Deque<i32> numbers = new Deque<i32>();
+    Func<i32, Key> selector = own (i32 n) => new Key();
+    discard numbers.countBy(selector);   // FEHLER
+    return 0;
+}

@@ -1,0 +1,28 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.11
+// Erwartet: Ausgabe "ok"; Exit-Code 0
+i32 main(string[] args) {
+    // Exakte Ergebnisse an beiden Grenzen und im Inneren.
+    i8? summe = i8::MAX.tryAdd(0);
+    i16? differenz = i16::MIN.trySub(0);
+    i32 negativ = -6;
+    i32? produkt = negativ.tryMul(7);
+    if ((summe ?? 0) != i8::MAX) { return 1; }
+    if ((differenz ?? 0) != i16::MIN) { return 2; }
+    if ((produkt ?? 0) != -42) { return 3; }
+
+    // Vorzeichenbehafteter Überlauf in beide Richtungen.
+    if (i8::MAX.tryAdd(1) != null || i8::MIN.tryAdd(-1) != null) { return 4; }
+    if (i16::MIN.trySub(1) != null || i16::MAX.trySub(-1) != null) { return 5; }
+    if (i64::MIN.tryMul(-1) != null || i64::MIN.tryMul(2) != null) { return 6; }
+
+    // Vorzeichenlose Typen und Produkte bis zur vollen Breite von 128 Bit.
+    if (ui8::MIN.trySub(1) != null || ui16::MAX.tryAdd(1) != null) { return 7; }
+    if (ui32::MAX.tryMul(2) != null || ui64::MAX.tryAdd(1) != null) { return 8; }
+    if (ui64::MAX.tryMul(ui64::MAX) != null) { return 9; }
+    ui64? maximum = ui64::MAX.tryMul(1);
+    ui64? nullprodukt = ui64::MAX.tryMul(0);
+    if ((maximum ?? 0) != ui64::MAX || (nullprodukt ?? 1) != 0) { return 10; }
+    print("ok");
+    return 0;
+}

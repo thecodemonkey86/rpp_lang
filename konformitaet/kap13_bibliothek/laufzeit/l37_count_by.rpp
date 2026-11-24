@@ -1,0 +1,38 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.9, R-13.17
+// Erwartet: Ausgabe "0\n5\n3\n2\n4\n8\n2:3\n0:1\n1:1"; Exit-Code 0
+using rpp.collections.Deque;
+using rpp.collections.Entry;
+using rpp.collections.Map;
+
+// Verschiedene Schlüssel haben denselben Hashwert.
+class Key {
+    import Hashable;
+    import Equatable<Key>;
+public:
+    i32 value;
+    constructor(i32 value) { this.value = value; }
+    i64 hash() { return 0; }
+    bool equals(Key other) { return value == other.value; }
+}
+
+i32 main(string[] args) {
+    Deque<i32> numbers = new Deque<i32>();
+    Func<i32, Key> selector = own (i32 n) => {
+        print(n.toString());
+        return new Key(n % 3);
+    };
+    Map<Key, i64> empty = numbers.countBy(selector);
+    print(empty.length().toString());
+
+    numbers.pushBack(5);
+    numbers.pushBack(3);
+    numbers.pushBack(2);
+    numbers.pushBack(4);
+    numbers.pushBack(8);
+    Map<Key, i64> counts = numbers.countBy(selector);
+    for (Entry<Key, i64> entry : counts) {
+        print(entry.key.value.toString() + ":" + entry.value.toString());
+    }
+    return 0;
+}

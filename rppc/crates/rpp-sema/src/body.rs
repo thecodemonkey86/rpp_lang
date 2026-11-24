@@ -3466,6 +3466,8 @@ impl<'p> Checker<'p> {
         Some(match (t, name) {
             (Ty::Prim(_), "toString") => m(name, vec![], s),
             (Ty::Prim(p), "abs") if is_numeric(*p) => m(name, vec![], t.clone()),
+            (Ty::Prim(p), "tryAdd" | "trySub" | "tryMul") if is_integer(*p) =>
+                m(name, vec![(t.clone(), r)], t.clone().nullable()),
             (Ty::Prim(p), "min" | "max") if is_numeric(*p) => m(name, vec![(t.clone(), r)], t.clone()),
             (Ty::Prim(P::Char), "isLetter" | "isDigit" | "isWhitespace" | "isUpper" | "isLower") => m(name, vec![], b),
             (Ty::Prim(P::Char), "toUpper" | "toLower") => m(name, vec![], t.clone()),

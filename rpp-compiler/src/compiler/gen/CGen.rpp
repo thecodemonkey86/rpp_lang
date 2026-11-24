@@ -150,7 +150,7 @@ private:
             bool[] nat = [];
             DefKind dk = c.p.defs[d].kind;
             string full = c.p.defs[d].fullName();
-            bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env" || full == "rpp.io.SaveFile" || full == "rpp.text.StringView" || full == "rpp.math.Math" || full == "rpp.env.ElapsedTimer";
+            bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env" || full == "rpp.io.SaveFile" || full == "rpp.io.TextReader" || full == "rpp.text.StringView" || full == "rpp.math.Math" || full == "rpp.env.ElapsedTimer";
             if (dk != DefKind::Enum) {
                 i64 fileIdx = c.p.defs[d].file;
                 i64 declIdx = c.p.defs[d].decl;
@@ -1143,9 +1143,11 @@ private:
         t.append("int32_t rt_os_def = " + os.toString() + ";\n");
         i64 dirEntry = c.p.lookupFull("rpp.io.DirEntry");
         i64 saveFile = c.p.lookupFull("rpp.io.SaveFile");
+        i64 textReader = c.p.lookupFull("rpp.io.TextReader");
         i64 fileType = c.p.lookupFull("rpp.io.FileType");
         t.append("const RClass* rt_cls_dir_entry = " + clsRef(dirEntry) + ";\n");
         t.append("const RClass* rt_cls_save_file = " + clsRef(saveFile) + ";\n");
+        t.append("const RClass* rt_cls_text_reader = " + clsRef(textReader) + ";\n");
         t.append("int32_t rt_file_type_def = " + fileType.toString() + ";\n");
         // Exceptions der Standardbibliothek (std_throw)
         t.append("int rt_std_new(rv* out, const char* full, int nargs, rv* args) {\n    int st;\n");

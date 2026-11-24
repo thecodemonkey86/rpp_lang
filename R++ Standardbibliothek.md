@@ -110,6 +110,7 @@ Das Mixin implementiert die folgenden Methoden in Cursor-Reihenfolge. Der Callba
 | `all(Func<T, bool> predicate)` | Beendet die Prüfung beim ersten Gegenbeispiel. | `true` |
 | `fold<A>(own A acc, Func<own A, T, A> step)` | Übergibt den Akkumulator und das Element an `step`. Der Rückgabewert wird zum nächsten Akkumulator. Nach dem letzten Element gibt `fold` den Akkumulator zurück. | Startwert |
 | `U[] mapNotNull<U>(Func<T, U?> transform)` | Ruft `transform` einmal je Element auf und sammelt alle Ergebnisse außer `null` in einem neuen Vektor. Reihenfolge und Duplikate bleiben erhalten. | Leerer Vektor |
+| `Map<K, i64> countBy<K : Hashable & Equatable<K>>(Func<T, K> keySelector)` | Ruft `keySelector` genau einmal je Element in Cursor-Reihenfolge auf. Die neue Map enthält für jeden gemäß `equals` verschiedenen Schlüssel die Anzahl seiner Vorkommen. Beim Iterieren erscheinen die Schlüssel in der Reihenfolge ihres ersten Auftretens. | Leere Map |
 
 **R-13.10 (for-each über Iterable).** `for (T x : c) S` mit `c` vom Typ `Iterable<T, C>` bedeutet
 
@@ -138,6 +139,8 @@ Das Mixin implementiert die folgenden Methoden in Cursor-Reihenfolge. Der Callba
 | `n.abs()`, `a.min(b)`, `a.max(b)` | Betrag, Minimum, Maximum; `abs` von `N::MIN` ist ein Überlauf (Kapitel 4, R-4.14) |
 
 Gleitkomma-Text wird exakt gerundet eingelesen (IEEE 754, zur nächsten darstellbaren Zahl).
+
+Für jeden Ganzzahltyp `N` (`i8`, `i16`, `i32`, `i64` sowie `ui8`, `ui16`, `ui32`, `ui64`) gibt es zusätzlich die Instanzmethoden `N? tryAdd(N b)`, `N? trySub(N b)` und `N? tryMul(N b)`. Sie berechnen die mathematische Summe, Differenz bzw. das Produkt von Empfänger und Argument. Liegt das Ergebnis im geschlossenen Bereich von `N::MIN` bis `N::MAX`, liefern sie diesen Wert, andernfalls `null`. Das gilt in Debug und Release gleichermaßen, auch bei einer negativen Differenz für einen vorzeichenlosen Typ.
 
 **R-13.12 (char).** `c.isLetter()`, `c.isDigit()`, `c.isWhitespace()`, `c.isUpper()`, `c.isLower()` nach den Unicode-Eigenschaften; `c.toUpper()`, `c.toLower()`; `c.toString()`.
 
@@ -319,7 +322,7 @@ Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. 
 | A | `rpp.math` | `sqrt`, `floor`/`ceil`/`trunc`/`round`, `clamp`, `PI`/`E` (Abschnitt 12, **festgelegt**); offen: `pow`, `exp`, `log`, `sin`, `cos` (plattformabhängig) | Rust `f64`, Java `Math` |
 | A | `rpp.random` | seedbarer Zufall, `shuffle` (Abschnitt 10, **festgelegt**) | Rust `rand`, Go `math/rand` |
 | A | `rpp.text` (Ausbau) | `Text`: `lines`, `removePrefix`/`removeSuffix`, `repeat`, `splitLimit` (Abschnitt 13, **festgelegt**) | Kotlin, Python |
-| A | `rpp.io` (Ausbau) | `File`: `appendText`, `copyFile`, `moveFile`, `delete`, `size` (Abschnitt 14, **festgelegt**); offen: gepuffertes Lesen, Mtime (braucht `rpp.time`) | Java `BufferedReader`, Go `os` |
+| A | `rpp.io` (Ausbau) | Datei-Operationen und gepuffertes Lesen mit `TextReader` (Abschnitt 14, **festgelegt**). Offen ist die Änderungszeit (braucht `rpp.time`). | Java `BufferedReader`, Go `os` |
 | B | `rpp.iter` | lazy `map`/`filter`/`take`/`flatMap`/`chain` über dem Cursor-Protokoll | Rust Iterator, Kotlin Sequence, C++20 ranges |
 | B | `rpp.regex` | lineare Zeit, kein katastrophales Backtracking | RE2 (Go) |
 | B | `rpp.json` | Pull-Parser und Baum; Parsefehler mit Zeile/Spalte | Go `encoding/json`, Rust `serde_json` |
@@ -396,6 +399,10 @@ Statische generische Methoden der Klasse `Vectors`, eingebunden mit `using rpp.c
 export class Vectors {
 public:
     static i64? binarySearch<T : Comparable<T>>(Slice<T> s, T x);
+    static i64 lowerBound<T : Comparable<T>>(Slice<T> s, T x);
+    static i64 upperBound<T : Comparable<T>>(Slice<T> s, T x);
+    static i64? findIndex<T>(Slice<T> s, Func<T, bool> predicate);
+    static i64? findLastIndex<T>(Slice<T> s, Func<T, bool> predicate);
     static bool equals<T : Equatable<T>>(Slice<T> a, Slice<T> b);
     static void reverse<T>(mut T[] v);
     static void retain<T>(mut T[] v, Func<T, bool> keep);
@@ -406,7 +413,15 @@ public:
 | Methode | Verhalten |
 |---|---|
 | `binarySearch(s, x)` | binäre Suche im **aufsteigend sortierten** Slice `s` (Comparable); liefert die Position eines Treffers oder `null`. Leerer Slice: `null`. Bei mehreren gleichen Treffern wird eine Position geliefert. |
+| `lowerBound(s, x)` | Erster Index im aufsteigend sortierten Slice mit `s[i].compareTo(x) >= 0`, andernfalls `s.length`. |
+| `upperBound(s, x)` | Erster Index im aufsteigend sortierten Slice mit `s[i].compareTo(x) > 0`, andernfalls `s.length`. |
+| `findIndex(s, predicate)` | Durchsucht den Slice in aufsteigender Indexreihenfolge und liefert den kleinsten passenden Index oder `null`. |
+| `findLastIndex(s, predicate)` | Durchsucht den Slice in absteigender Indexreihenfolge und liefert den größten passenden Index oder `null`. |
 | `equals(a, b)` | elementweiser Vergleich zweier Slices (Equatable); `true` bei gleicher Länge und gleichen Elementen in gleicher Reihenfolge. Füllt die Lücke, dass Arrays kein `==` haben (V-4.8). |
+
+Beide Grenzen sind relativ zum Slice und erfordern logarithmisch viele Vergleiche. Bei einem leeren Slice liefern beide `0`. Alle mit `x` gleich vergleichenden Elemente liegen im halboffenen Bereich `[lowerBound(s, x), upperBound(s, x))`. Fehlt `x`, liefern beide dieselbe Einfügeposition.
+
+`findIndex` und `findLastIndex` zählen Indizes ab dem Anfang des übergebenen Slice. Beide rufen das Prädikat genau einmal je besuchtem Element auf und beenden die Suche sofort, sobald es `true` liefert. Bei einem leeren Slice liefern beide `null`, ohne das Prädikat aufzurufen.
 
 **R-13.27 (Veränderbare Algorithmen).** `reverse`, `retain` und `dedup` verändern einen Vektor an Ort und Stelle:
 
@@ -418,7 +433,7 @@ public:
 
 Alle drei arbeiten über `remove`/`insert` (R-13.16): Aus Elementen wird nicht herausbewegt (V-3), und `swap` auf zwei Indizes gilt immer als überlappend (Kapitel 5, Abschnitt 7). Die Elemente werden verschoben; die Methoden funktionieren für jeden Elementtyp, auch für `own`-Objekte. Da jede Verschiebung linear ist, brauchen sie Zeit proportional zum Quadrat der Länge; für den Referenz-Interpreter genügt das. Ein Slice darf seine Länge nicht ändern (Satz 5.2), deshalb nehmen die Methoden `mut T[]` und nicht `mut Slice<T>`; feste Arrays lassen sich so nicht verändern.
 
-Die Constraints werden am Aufruf geprüft (R-7.26): `binarySearch` ohne `Comparable`, `equals` und `dedup` ohne `Equatable` sind Fehler.
+Die Constraints werden am Aufruf geprüft (R-7.26). `binarySearch`, `lowerBound` und `upperBound` verlangen `Comparable`, `equals` und `dedup` verlangen `Equatable`.
 
 ## 12. rpp.math
 
@@ -495,6 +510,7 @@ static i64 copyFile(string from, string to);
 static void moveFile(string from, string to);
 static void delete(string path);
 static i64 size(string path);
+static own TextReader openTextReader(string path);
 ```
 
 | Methode | Verhalten |
@@ -504,10 +520,13 @@ static i64 size(string path);
 | `moveFile(from, to)` | benennt from nach to um (ein vorhandenes to wird ersetzt). `IOException`, wenn from fehlt. |
 | `delete(path)` | entfernt die Datei. `IOException`, wenn sie fehlt. |
 | `size(path)` | Größe der Datei in Bytes. `IOException`, wenn sie fehlt. |
+| `openTextReader(path)` | Öffnet die Datei zum gepufferten Lesen von UTF-8. Jeder Aufruf liefert einen eigenen Reader am Dateianfang. Fehler beim Öffnen oder Lesen werfen eine `IOException` mit dem betroffenen Pfad. |
 
 `copy` ist ein Schlüsselwort (Kapitel 7), deshalb heißen die Methoden `copyFile` und `moveFile`. Pfade verwenden `/` als Trenner; die Bibliothek wandelt auf Windows um (R-13.20).
 
-Noch offen (später): gepuffertes Lesen und die Änderungszeit (Mtime); letztere braucht eine Zeitdarstellung aus `rpp.time` (Abschnitt 9, Phase B).
+`rpp.io.TextReader` hält die Datei bis zur Zerstörung des Readers geöffnet. Die Methode `nodiscard string? readLine() mut` liest die nächste Zeile. Wie bei `Text::lines` (R-13.30) trennt LF die Zeilen. Ein CR unmittelbar vor LF entfällt, jedes andere CR bleibt erhalten, auch am Dateiende. Eine Leerzeile ergibt `""`. Nach der letzten Zeile und bei einer leeren Datei liefert jeder weitere Aufruf `null`. Ein abschließendes LF erzeugt keine zusätzliche Zeile. Ungültiges UTF-8 wirft beim Lesen der betroffenen Zeile eine `FormatException`.
+
+Die Änderungszeit (Mtime) bleibt offen, bis eine Zeitdarstellung aus `rpp.time` vorliegt (Abschnitt 9, Phase B).
 
 ## 15. rpp.collections: Deque und getOrPut (Ausbau)
 

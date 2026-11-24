@@ -1,5 +1,6 @@
 // Standardbibliothek: rpp.core, Mixins der Sprache (Kapitel 13, R-13.6 bis R-13.9)
 package rpp.core;
+using rpp.collections.Map;
 
 export mixin Equatable<T> {
     nodiscard bool equals(T other);
@@ -51,6 +52,16 @@ export mixin Iterable<T, C> {
             }
         }
         return result;
+    }
+
+    nodiscard Map<K, i64> countBy<K : Hashable & Equatable<K>>(Func<T, K> keySelector) {
+        Map<K, i64> counts = new Map<K, i64>();
+        for (T item : this) {
+            K key = keySelector(item);
+            i64 count = counts.get(key) ?? 0;
+            counts.put(key, count + 1);
+        }
+        return counts;
     }
 }
 

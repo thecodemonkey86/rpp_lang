@@ -10,11 +10,13 @@
 
 use super::*;
 use std::cmp::Ordering;
+use std::io::{BufRead, BufReader};
 
 /// Klassen und Methoden, die eingebaut sind.
 const NATIVE_CLASSES: &[&str] = &[
     "rpp.io.Console",
     "rpp.io.File",
+    "rpp.io.TextReader",
     "rpp.io.SaveFile",
     "rpp.io.Dir",
     "rpp.io.Path",
@@ -239,6 +241,49 @@ impl Interp {
                 let d = m.owner;
                 let f = self.raw_object(d, vec![str_value(&path)]);
                 Ok(Value::Obj(f, Form::Own))
+            }
+            "rpp.io.File.openTextReader" => {
+                let path = text(&args, 0);
+                let file = match std::fs::File::open(&path) {
+                    Ok(file) => file,
+                    Err(e) => return self.io_error(format!("{path}: {e}"), &path),
+                };
+                match file.metadata() {
+                    Ok(meta) if meta.is_dir() => return self.io_error(format!("{path}: ist ein Verzeichnis"), &path),
+                    Err(e) => return self.io_error(format!("{path}: {e}"), &path),
+                    _ => {}
+                }
+                let Some(class) = self.p.std_def("rpp.io.TextReader") else { return Err(self.internal("TextReader fehlt")) };
+                let object = self.raw_object(class, vec![str_value(&path)]);
+                self.text_readers.insert(Rc::as_ptr(&object), BufReader::new(file));
+                Ok(Value::Obj(object, Form::Own))
+            }
+            "rpp.io.TextReader.close" => {
+                self.text_readers.remove(&Rc::as_ptr(&o.unwrap()));
+                Ok(Value::Void)
+            }
+            "rpp.io.TextReader.readLine" => {
+                let object = o.unwrap();
+                let Some(reader) = self.text_readers.get_mut(&Rc::as_ptr(&object)) else {
+                    return Err(self.internal("TextReader ohne Datei"));
+                };
+                let mut line = Vec::new();
+                match reader.read_until(b'\n', &mut line) {
+                    Ok(0) => return Ok(Value::Null),
+                    Ok(_) => {}
+                    Err(e) => {
+                        let path = Self::sb_text(&object);
+                        return self.io_error(format!("{path}: {e}"), &path);
+                    }
+                }
+                if line.last() == Some(&b'\n') {
+                    line.pop();
+                    if line.last() == Some(&b'\r') { line.pop(); }
+                }
+                match String::from_utf8(line) {
+                    Ok(s) => Ok(str_value(s)),
+                    Err(_) => self.std_throw("rpp.core.FormatException", vec![str_value(format!("{}: kein gültiges UTF-8", Self::sb_text(&object)))]),
+                }
             }
             "rpp.io.File.readAllText" | "rpp.io.File.readAllBytes" => {
                 let path = o.as_ref().map(Self::sb_text).unwrap_or_default();

@@ -4558,6 +4558,10 @@ private:
             if (Num::isNumeric(q) && nm == "abs") {
                 return (true, one(nm, none, noModes, t));
             }
+            if (Num::isInteger(q) && (nm == "tryAdd" || nm == "trySub" || nm == "tryMul")) {
+                shared Ty[] ps = [t];
+                return (true, one(nm, ps, r1, Ty::nullable(t)));
+            }
             if (Num::isNumeric(q) && (nm == "min" || nm == "max")) {
                 shared Ty[] ps = [t];
                 return (true, one(nm, ps, r1, t));
