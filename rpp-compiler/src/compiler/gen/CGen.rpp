@@ -74,6 +74,8 @@ public:
     // Grundwert-Variablen dürfen C-Variablen werden; noNat: Namen, die einen rv-Ort brauchen
     bool natVars = false;
     string[] noNat = [];
+    // zuletzt ausgegebene Zeile (für rt_temp nach einem Erzeuger ohne Besitz; M7)
+    string lastLine = "";
     GScope[] scopes = [];
     string[] targets = [];
     // C-Ausdruck für this; leer: kein this
@@ -363,7 +365,7 @@ private:
 
     void tempOf(string v, Node e) mut {
         if (!plainPrim(e)) {
-            emit(v + " = rt_temp(" + v + ");");
+            tempEmit(v);
         }
     }
 
@@ -549,6 +551,18 @@ private:
         f.code.append("    ");
         f.code.append(line);
         f.code.append("\n");
+        f.lastLine = line;
+    }
+
+    // v als Zwischenwert der Anweisung führen (temp); entfällt, wenn die vorige Zeile v einen Wert
+    // ohne Besitz zugewiesen hat (Sicht, Literal, Enum ohne Daten, null, Grundwert; M7)
+    void tempEmit(string v) mut {
+        string l = f.lastLine;
+        string h = v + " = ";
+        if (l.endsWith(");") && !l.contains("; ") && (l.startsWith(h + "rv_view(") || l.startsWith(h + "rt_lit(") || l.startsWith(h + "rv_enum(") || l.startsWith(h + "rv_null(") || l.startsWith(h + "rn_box("))) {
+            return;
+        }
+        emit(v + " = rt_temp(" + v + ");");
     }
 
     string tmp() mut {
@@ -1715,7 +1729,7 @@ private:
         } else {
             lockScope(target, mutable);
         }
-        emit(v + " = rt_temp(" + v + ");");
+        tempEmit(v);
         i64 x = declare(s.kids[1].text);
         emit("V[" + x.toString() + "] = " + v + ";");
     }
@@ -1833,7 +1847,7 @@ private:
         pushScope();
         lockScope(iter, borrowMut);
         string coll = eval(iter);
-        emit(coll + " = rt_temp(" + coll + ");");
+        tempEmit(coll);
         shared Ty? it = typeOf(iter);
         i64 cd = -1;
         if (it != null) {
@@ -1930,7 +1944,7 @@ private:
 
     void switchStmt(Node s) mut {
         string v = eval(s.kids[0]);
-        emit(v + " = rt_temp(" + v + ");");
+        tempEmit(v);
         shared Ty? st0 = typeOf(s.kids[0]);
         i64 enumDef = -1;
         if (st0 != null) {
@@ -2248,7 +2262,7 @@ private:
         }
         if (e.kind == "member") {
             string ov = eval(e.kids[0]);
-            emit(ov + " = rt_temp(" + ov + ");");
+            tempEmit(ov);
             i64 d = -1;
             shared Ty? ot = typeOf(e.kids[0]);
             if (ot != null) {
@@ -2261,7 +2275,7 @@ private:
         }
         if (e.kind == "index") {
             string ov = eval(e.kids[0]);
-            emit(ov + " = rt_temp(" + ov + ");");
+            tempEmit(ov);
             string iv = eval(e.kids[1]);
             string p = ptrTmp();
             call("rt_index_slot(&" + p + ", " + ov + ", " + iv + ")");
@@ -2949,7 +2963,7 @@ private:
         }
         if (k == "copy") {
             string v = eval(e.kids[0]);
-            emit(v + " = rt_temp(" + v + ");");
+            tempEmit(v);
             string r = tmp();
             call("rt_deep_copy(&" + r + ", " + v + ")");
             return r;
@@ -3007,7 +3021,7 @@ private:
         }
         if (k == "index") {
             string ov = eval(e.kids[0]);
-            emit(ov + " = rt_temp(" + ov + ");");
+            tempEmit(ov);
             string iv = eval(e.kids[1]);
             string r = tmp();
             call("rt_index(&" + r + ", " + ov + ", " + iv + ")");
@@ -3015,7 +3029,7 @@ private:
         }
         if (k == "slice") {
             string ov = eval(e.kids[0]);
-            emit(ov + " = rt_temp(" + ov + ");");
+            tempEmit(ov);
             string a = "rv_null()";
             string hasA = "0";
             if (e.kids[1].kind != "none") {
@@ -3294,7 +3308,7 @@ private:
         if (safe) {
             emit("if (rv_isnull(" + ov + ")) " + r + " = rv_null(); else {");
         }
-        emit(ov + " = rt_temp(" + ov + ");");
+        tempEmit(ov);
         i64 d = -1;
         shared Ty? ot = typeOf(object);
         if (ot != null) {
@@ -3511,7 +3525,7 @@ private:
             if (safe) {
                 emit("if (rv_isnull(" + recv + ")) " + r + " = rv_null(); else {");
             }
-            emit(recv + " = rt_temp(" + recv + ");");
+            tempEmit(recv);
             i64[] none = [];
             string arr = args(argsNode, t.params, none);
             call("rt_builtin_method(&" + r + ", " + recv + ", " + cstr(t.name) + ", " + argsNode.kids.length.toString() + ", " + arr + ")");
@@ -3552,7 +3566,7 @@ private:
                 if (safe) {
                     emit("if (rv_isnull(" + rv0 + ")) " + r + " = rv_null(); else {");
                 }
-                emit(rv0 + " = rt_temp(" + rv0 + ");");
+                tempEmit(rv0);
                 recv = rv0;
             } else if (f.thisExpr != "") {
                 recv = f.thisExpr;

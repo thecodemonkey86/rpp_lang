@@ -3925,7 +3925,8 @@ static void run_main(MainArgs* m) {
 }
 
 #ifdef _WIN32
-/* RPP_PROFILE=DATEI: Stichproben des Befehlszählers (1 ms) als Adressen relativ zum Modul */
+/* RPP_PROFILE=DATEI: Stichproben des Befehlszählers (1 ms) als Adressen relativ zum Modul; je Zeile
+ * der Befehlszähler und bis zu sieben Aufrufer (aus den Abwicklungsdaten des Moduls) */
 static volatile int prof_stop = 0;
 static HANDLE prof_target;
 static DWORD WINAPI prof_thread(LPVOID p) {
@@ -3938,8 +3939,25 @@ static DWORD WINAPI prof_thread(LPVOID p) {
         if (SuspendThread(prof_target) == (DWORD)-1) break;
         CONTEXT c;
         memset(&c, 0, sizeof c);
-        c.ContextFlags = CONTEXT_CONTROL;
-        if (GetThreadContext(prof_target, &c)) fprintf(f, "%llx\n", (unsigned long long)(c.Rip - base));
+        c.ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext(prof_target, &c)) {
+            fprintf(f, "%llx", (unsigned long long)(c.Rip - base));
+            for (int k = 0; k < 7; k++) {
+                DWORD64 ib = 0;
+                PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, NULL);
+                if (!fe) {
+                    c.Rip = *(DWORD64*)c.Rsp;
+                    c.Rsp += 8;
+                } else {
+                    PVOID hd = NULL;
+                    DWORD64 ef = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, &hd, &ef, NULL);
+                }
+                if (c.Rip < base || c.Rip - base > 0x10000000) break;
+                fprintf(f, " %llx", (unsigned long long)(c.Rip - base));
+            }
+            fputc('\n', f);
+        }
         ResumeThread(prof_target);
     }
     fclose(f);
