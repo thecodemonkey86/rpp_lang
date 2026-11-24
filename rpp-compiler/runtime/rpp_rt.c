@@ -390,6 +390,56 @@ int rt_fatal_at(int st, int line) {
 
 int rt_internal(const char* msg) { return rt_fatal("InternalError", "%s", msg); }
 
+/* Native Grundwerte (M7): langsame Fälle über die rv-Pfade, damit Meldungen, Überlauf und
+ * Releasemodus genau wie im Interpreter sind */
+int rn_arith_slow(int64_t* out, int op, int64_t a, int64_t b, uint8_t tag) {
+    rv v;
+    int st = rt_arith(&v, op, rn_box(a, tag), rn_box(b, tag));
+    if (st == ST_OK) {
+        if (v.tag != tag) st = rt_convert_exact(&v, tag);
+        *out = v.v.i;
+    }
+    return st;
+}
+
+int rn_neg_slow(int64_t* out, int64_t a, uint8_t tag) {
+    rv v;
+    int st = rt_neg(&v, rn_box(a, tag));
+    if (st == ST_OK) *out = v.v.i;
+    return st;
+}
+
+int rn_incdec_slow(int64_t* out, int64_t a, int d, uint8_t tag) {
+    rv v;
+    int st = rt_incdec(&v, rn_box(a, tag), d);
+    if (st == ST_OK) *out = v.v.i;
+    return st;
+}
+
+int rn_index_slow(int64_t* out, rv obj, int64_t i) {
+    rv v;
+    int st = rt_index_slow(&v, obj, rv_i64(i));
+    if (st == ST_OK) *out = v.v.i;
+    return st;
+}
+
+int rn_len_slow(int64_t* out, rv obj, int bytes) {
+    rv v;
+    int st = rt_member_len_slow(&v, obj, bytes);
+    if (st == ST_OK) *out = v.v.i;
+    return st;
+}
+
+/* RPP_NATCHECK: native Lesezugriffe prüfen die Art des Werts (Prüfung des Generators) */
+int64_t rn_check(const rv* x, uint8_t tag) {
+    if (x->tag != tag) {
+        fprintf(stderr, "RPP_NATCHECK: Art %d statt %d\n", (int)x->tag, (int)tag);
+        fflush(stderr);
+        abort();
+    }
+    return x->v.i;
+}
+
 int rt_combine(int st, int d) {
     if (d == ST_FATAL) return ST_FATAL;
     if (st != ST_OK) return st;
@@ -1329,6 +1379,19 @@ int rt_deep_copy(rv* out, rv v) {
             RObj* n = rt_vec_new(o->len);
             for (int64_t i = 0; i < o->len; i++) {
                 rv x = o->slots[i];
+                /* schneller Pfad (M7): Grundwerte, Enums ohne Daten, Bereiche und Strings
+                 * (wie share, ohne Aufruf je Element; n hat schon Platz für o->len) */
+                if (x.tag < RT_STR || x.tag == RT_ENUM || x.tag == RT_SLICE) {
+                    n->slots[n->len++] = x;
+                    continue;
+                }
+                if (x.tag == RT_STR) {
+                    RStr* s = (RStr*)x.v.p;
+                    if (s->rc >= 0) s->rc++;
+                    x.form = F_OWN;
+                    n->slots[n->len++] = x;
+                    continue;
+                }
                 if (x.tag == RT_OBJ || x.tag == RT_TUP || x.tag == RT_ENUM || x.tag == RT_ENUMD) {
                     rv y;
                     int st = rt_deep_copy(&y, x);

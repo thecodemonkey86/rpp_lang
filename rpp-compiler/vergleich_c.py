@@ -1,6 +1,6 @@
 """Vergleich des C-Codegenerators (rpp-compiler, Befehl `c`) mit dem Interpreter von rppc.
 
-Aufruf (aus diesem Verzeichnis):  py -X utf8 vergleich_c.py [-v] [--gcc] [--fr N] [--nur-fr] [MUSTER ...]
+Aufruf (aus diesem Verzeichnis):  py -X utf8 vergleich_c.py [-v] [--gcc] [--fr N] [--nur-fr] [--exe RPPCC] [--cflags "…"] [MUSTER ...]
 
 Für jeden Laufzeittest der Konformitätstests (konformitaet/*/laufzeit) und jede Datei in
 tests_c/ wird in beiden Modi (debug, release)
@@ -14,6 +14,8 @@ tests_c/ wird in beiden Modi (debug, release)
 MUSTER wählt Tests, deren Pfad das Muster enthält. Mit --fr N kommen die handgeschriebenen
 FR++-Programme (fr-modell/tests) und N Zufallsprogramme aus frpp/gen.py dazu, nach R++
 übersetzt wie in fr-modell/vergleich.py; verglichen werden die, die rppc annimmt.
+Mit --exe RPPCC erzeugt der übersetzte Compiler den C-Code statt des Interpreters (schneller);
+--cflags gibt dem C-Compiler weitere Schalter, etwa "/DRPP_NATCHECK" (bzw. "-DRPP_NATCHECK").
 """
 
 import os
@@ -88,26 +90,27 @@ def run_in_fresh_dir(cmd, stdin):
 
 
 class Compiler:
-    def __init__(self, use_gcc, build):
+    def __init__(self, use_gcc, build, cflags=""):
         self.gcc = use_gcc
+        self.cflags = cflags
         self.build = build
         self.rt_obj = None
 
     def compile(self, c_file, exe):
         if self.gcc:
-            cmd = [GCC, "-std=c17", "-O1", "-w", "-I", str(RUNTIME), str(c_file), str(RUNTIME / "rpp_rt.c"), "-o", str(exe), "-lm", "-lwinmm", "-Wl,--stack,16777216"]
+            cmd = [GCC, "-std=c17", "-O1", "-w", *self.cflags.split(), "-I", str(RUNTIME), str(c_file), str(RUNTIME / "rpp_rt.c"), "-o", str(exe), "-lm", "-lwinmm", "-Wl,--stack,16777216"]
             p = subprocess.run(cmd, capture_output=True)
             return p.returncode == 0, (p.stdout + p.stderr).decode("utf-8", errors="replace")
         if self.rt_obj is None:
             self.rt_obj = self.build / "rpp_rt.obj"
             bat = self.build / "rt.bat"
-            bat.write_text(f'@echo off\ncall "{VCVARS}" >nul\ncl /nologo /std:c17 /O2 /W3 /c /I "{RUNTIME}" "{RUNTIME / "rpp_rt.c"}" /Fo:"{self.rt_obj}"\n', encoding="cp1252")
+            bat.write_text(f'@echo off\ncall "{VCVARS}" >nul\ncl /nologo /std:c17 /O2 /W3 {self.cflags} /c /I "{RUNTIME}" "{RUNTIME / "rpp_rt.c"}" /Fo:"{self.rt_obj}"\n', encoding="cp1252")
             p = subprocess.run(["cmd", "/c", str(bat)], capture_output=True)
             if p.returncode != 0:
                 raise SystemExit("Laufzeit lässt sich nicht übersetzen:\n" + (p.stdout + p.stderr).decode("cp1252", errors="replace"))
         obj = exe.with_suffix(".obj")
         bat = self.build / "cc.bat"
-        bat.write_text(f'@echo off\ncall "{VCVARS}" >nul\ncl /nologo /std:c17 /O1 /W1 /wd4101 /wd4102 /I "{RUNTIME}" "{c_file}" "{self.rt_obj}" /Fo:"{obj}" /Fe:"{exe}" /link /STACK:16777216\n', encoding="cp1252")
+        bat.write_text(f'@echo off\ncall "{VCVARS}" >nul\ncl /nologo /std:c17 /O1 /W1 /wd4101 /wd4102 {self.cflags} /I "{RUNTIME}" "{c_file}" "{self.rt_obj}" /Fo:"{obj}" /Fe:"{exe}" /link /STACK:16777216\n', encoding="cp1252")
         p = subprocess.run(["cmd", "/c", str(bat)], capture_output=True)
         return p.returncode == 0, (p.stdout + p.stderr).decode("cp1252", errors="replace")
 
@@ -163,9 +166,19 @@ def main():
         k = argv.index("--fr")
         fr_count = int(argv[k + 1])
         del argv[k:k + 2]
+    exe_gen = None
+    if "--exe" in argv:
+        k = argv.index("--exe")
+        exe_gen = str(pathlib.Path(argv[k + 1]).resolve())
+        del argv[k:k + 2]
+    cflags = ""
+    if "--cflags" in argv:
+        k = argv.index("--cflags")
+        cflags = argv[k + 1]
+        del argv[k:k + 2]
     patterns = [a for a in argv if not a.startswith("-")]
     build = pathlib.Path(tempfile.mkdtemp(prefix="rppc-c-build-"))
-    comp = Compiler(use_gcc, build)
+    comp = Compiler(use_gcc, build, cflags)
     same = diff = 0
     todo = [] if "--nur-fr" in argv else cases(patterns)
     if fr_count or "--nur-fr" in argv:
@@ -188,7 +201,8 @@ def main():
                 for f in (c_file, exe):
                     if f.exists():
                         f.unlink()
-                gen = subprocess.run([str(RPPC), "run", str(HERE), "--", "c"] + flag + [str(STD), str(path.resolve()), str(c_file)], capture_output=True, timeout=3600, input=b"")
+                gen_cmd = [exe_gen] if exe_gen else [str(RPPC), "run", str(HERE), "--"]
+                gen = subprocess.run(gen_cmd + ["c"] + flag + [str(STD), str(path.resolve()), str(c_file)], capture_output=True, timeout=3600, input=b"")
                 if gen.returncode != 0 or not c_file.exists():
                     diff += 1
                     print(f"VERSCHIEDEN {rel} ({mode}): Erzeugen fehlgeschlagen\n{gen.stdout.decode('utf-8', 'replace')}{gen.stderr.decode('utf-8', 'replace')}")

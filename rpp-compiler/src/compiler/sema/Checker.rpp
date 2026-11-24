@@ -2094,6 +2094,10 @@ private:
                     err(e.line, e.col, "R-10.11", n + " ist im own-Lambda erfasst und unveränderlich");
                 }
                 access(new Place(id), true, e.line, e.col);
+                // Typ eines Grundwert-Ziels für den Codegenerator (native Zuweisung, M7)
+                if (quiet == 0 && e.id >= 0 && lty.kind == TK::Prim) {
+                    rt.types[e.id] = lty;
+                }
                 return lty;
             }
             shared Ty t = expr(e, null);

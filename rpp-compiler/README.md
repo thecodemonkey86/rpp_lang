@@ -89,10 +89,14 @@ Der Codegenerator folgt dem Debug-Interpreter von `rppc`, der Referenz nach R-12
 
 Die Angaben, die der Interpreter aus `Program::rt` liest, erhebt `Checker.rpp` an denselben Stellen wie `body.rs` (`Rt.rpp`); die Knoten des Syntaxbaums sind dafür nummeriert (`Node.id`).
 
-Vergleich: `py -X utf8 vergleich_c.py [--fr N] [--nur-fr] [--gcc] [MUSTER]` erzeugt, übersetzt (MSVC; mit `--gcc` gcc) und startet jeden Laufzeittest der Konformitätstests und jedes Programm in `tests_c/` in beiden Modi in einem frischen Arbeitsverzeichnis und vergleicht Ausgabe, Fehlerausgabe und Exit-Code mit `rppc run`; mit `--fr N` auch die nach R++ übersetzten FR++-Programme.
+Vergleich: `py -X utf8 vergleich_c.py [--fr N] [--nur-fr] [--gcc] [--exe RPPCC] [--cflags "…"] [MUSTER]` erzeugt, übersetzt (MSVC; mit `--gcc` gcc) und startet jeden Laufzeittest der Konformitätstests und jedes Programm in `tests_c/` in beiden Modi in einem frischen Arbeitsverzeichnis und vergleicht Ausgabe, Fehlerausgabe und Exit-Code mit `rppc run`; mit `--fr N` auch die nach R++ übersetzten FR++-Programme.
 
 Unicode-Tabellen (`runtime/rpp_unicode.h`, `rpp_unicode_ign.h`) entstehen mit `runtime/gen_unicode.rs` aus der Standardbibliothek von Rust und mit `gen_unicode_ignorable.py`; damit verhalten sich `char` und Strings wie im Interpreter. Texte von Betriebssystemfehlern in `IOException` kommen aus der C-Bibliothek (nach V-13.12 nicht festgelegt). Pfade und Kommandozeilenargumente sind UTF-8; unter Windows gehen Dateizugriffe über die `wchar_t`-Fassungen.
 
+Mit `--exe` erzeugt ein übersetzter `rppcc` den C-Code statt des Interpreters; `--cflags "-DRPP_NATCHECK"` übersetzt so, dass jeder native Lesezugriff des Generators (M7) die Art des Werts prüft.
+
+Native Grundwerte (M7): Reine Ausdrücke über `i8`–`i64`, `char` und `bool` ohne Aufrufe wertet der Generator direkt in C als `int64_t` aus; der schnelle Fall steht in `rpp_rt.h` (`rn_…`), alle anderen Fälle gehen über die rv-Pfade wie im Interpreter.
+
 Umgebungsvariablen der Laufzeit: `RPP_NOFREE=1` gibt keinen Speicher frei (zum Eingrenzen von Fehlern bei der Freigabe); `RPP_PROFILE=DATEI` schreibt jede Millisekunde den Befehlszähler als Adresse relativ zum Modul (Windows; auflösen mit der Map-Datei des Linkers, `/MAP`); `RPP_MAINTHREAD=1` läuft ohne eigenen Thread mit großem Stack.
 
-Geschwindigkeit (22.11.2026, übersetzter `rppcc.exe`, MSVC `/O2`): `pruefe rpp-compiler` 9,2 s, Selbstübersetzung 10,4 s; im Interpreter jeweils rund 20 Minuten, `rppc pruefe` 0,6 s.
+Geschwindigkeit (24.11.2026, übersetzter `rppcc.exe`, MSVC `/O2`): `pruefe rpp-compiler` 3,9 s, Selbstübersetzung 4,4 s (22.11.2026: 9,2 s und 10,4 s); im Interpreter jeweils rund 20 Minuten, `rppc pruefe` (Release) 0,54 s.

@@ -59,6 +59,9 @@ public:
     i64 ptrs = 0;
     i64 maxPtrs = 0;
     i64 lockCount = 0;
+    // native Zwischenwerte (int64_t n0, n1, …; M7)
+    i64 nats = 0;
+    i64 maxNats = 0;
     string[] names = [];
     string[] cvars = [];
     GScope[] scopes = [];
@@ -553,6 +556,15 @@ private:
         return t;
     }
 
+    string natTmp() mut {
+        string t = "n" + f.nats.toString();
+        f.nats++;
+        if (f.nats > f.maxNats) {
+            f.maxNats = f.nats;
+        }
+        return t;
+    }
+
     string ptrTmp() mut {
         string t = "P[" + f.ptrs.toString() + "]";
         f.ptrs++;
@@ -620,6 +632,19 @@ private:
         return k;
     }
 
+    // Variable eines Grundtyps ohne Freigabe (nicht string, nicht nullbar): am Ende des
+    // Bereichs ist nichts freizugeben, rt_scope_drop entfällt (M7)
+    i64 declareTyped(string name, shared Ty? t) mut {
+        if (t == null || t.kind != TK::Prim || t.prim == "string") {
+            return declare(name);
+        }
+        i64 k = f.vars;
+        f.vars++;
+        f.names.push(name);
+        f.cvars.push("V[" + k.toString() + "]");
+        return k;
+    }
+
     // Name an einen schon bestehenden C-Ort binden (Erfassung)
     void bindName(string name, string cexpr) mut {
         f.names.push(name);
@@ -653,6 +678,13 @@ private:
         b.append("    int B[" + max1(f.maxInts).toString() + "];\n");
         b.append("    rv* P[" + max1(f.maxPtrs).toString() + "];\n");
         b.append("    RObj* K[" + max1(f.lockCount).toString() + "];\n");
+        if (f.maxNats > 0) {
+            b.append("    int64_t n0");
+            for (i64 i = 1; i < f.maxNats; i++) {
+                b.append(", n" + i.toString());
+            }
+            b.append(";\n");
+        }
         b.append("    (void)T; (void)M; (void)B; (void)P;\n");
         b.append("    for (int i = 0; i < " + max1(f.vars).toString() + "; i++) V[i] = rv_moved();\n");
         b.append("    for (int i = 0; i < " + max1(f.lockCount).toString() + "; i++) K[i] = NULL;\n");
@@ -768,7 +800,7 @@ private:
         emit("if ((st = rt_enter(" + cstr(label) + ")) != 0) return st;");
         pushScope();
         for (i64 i = 0; i < m.params.length; i++) {
-            i64 v = declare(m.params[i].name);
+            i64 v = declareTyped(m.params[i].name, m.params[i].ty);
             emit("V[" + v.toString() + "] = args[" + i.toString() + "];");
         }
         block(body);
@@ -1239,11 +1271,23 @@ private:
 
     // Eine Anweisung; temporäre Werte werden an ihrem Ende freigegeben (stmt)
     void stmt(Node s) mut {
-        string mk = "M[" + f.marks.toString() + "]";
-        f.marks++;
         i64 t0 = f.temps;
         i64 i0 = f.ints;
         i64 p0 = f.ptrs;
+        i64 n0 = f.nats;
+        // Anweisungen ohne eigene Zwischenwerte brauchen keine Marke (M7): Blöcke und
+        // Verzweigungen (Bedingung und Rümpfe haben eigene Marken) und rein native Anweisungen
+        string k = s.kind;
+        if (k == "block" || k == "if" || k == "while" || k == "dowhile" || k == "break" || k == "continue" || (k == "return" && s.kids.length == 0) || natStmtOk(s)) {
+            stmtKind(s);
+            f.temps = t0;
+            f.ints = i0;
+            f.ptrs = p0;
+            f.nats = n0;
+            return;
+        }
+        string mk = "M[" + f.marks.toString() + "]";
+        f.marks++;
         string lab = newLabel();
         emit(mk + " = rt_tmark();");
         f.targets.push(lab);
@@ -1254,6 +1298,7 @@ private:
         f.temps = t0;
         f.ints = i0;
         f.ptrs = p0;
+        f.nats = n0;
     }
 
     void subStmt(Node s) mut {
@@ -1264,6 +1309,9 @@ private:
 
     // Bedingung mit eigenen temporären Werten (cond); liefert einen C-Ausdruck
     string cond(Node e) mut {
+        if (natOk(e)) {
+            return "(" + nat(e) + ")";
+        }
         string mk = "M[" + f.marks.toString() + "]";
         f.marks++;
         emit(mk + " = rt_tmark();");
@@ -1352,7 +1400,11 @@ private:
             return;
         }
         if (k == "return") {
-            if (s.kids.length > 0) {
+            if (natReturnOk(s)) {
+                ref Node rv0 = s.kids[0];
+                string x = nat(rv0);
+                emit("*ret = rn_box(" + x + ", " + ctag(natTargetPrim(rv0)) + ");");
+            } else if (s.kids.length > 0) {
                 string v = store(s.kids[0]);
                 emit("*ret = " + v + ";");
             }
@@ -1390,16 +1442,26 @@ private:
     void localVar(Node d) mut {
         // Kinder: Typ oder var, Name, Initialisierer
         ref Node nameNode = d.kids[1];
-        if (d.kids.length > 2) {
+        if (natLocalOk(d)) {
+            ref Node init = d.kids[2];
+            string x = nat(init);
+            shared Ty? dt = declOf(nameNode);
+            string tag = "0";
+            if (dt != null) {
+                tag = ctag(dt.prim);
+            }
+            i64 xv = declareTyped(nameNode.text, dt);
+            emit("V[" + xv.toString() + "] = rn_box(" + x + ", " + tag + ");");
+        } else if (d.kids.length > 2) {
             string v = store(d.kids[2]);
             shared Ty? dt = declOf(nameNode);
             if (dt != null) {
                 convertFrom(v, dt, d.kids[2]);
             }
-            i64 x = declare(nameNode.text);
+            i64 x = declareTyped(nameNode.text, dt);
             emit("V[" + x.toString() + "] = " + v + ";");
         } else {
-            i64 x = declare(nameNode.text);
+            i64 x = declareTyped(nameNode.text, declOf(nameNode));
             emit("V[" + x.toString() + "] = rv_uninit();");
         }
     }
@@ -1501,6 +1563,12 @@ private:
         }
         loopBody(s.kids[3], end);
         for (Node u : s.kids[2].kids) {
+            if (natExprOk(u)) {
+                i64 n0 = f.nats;
+                exprStmt(u);
+                f.nats = n0;
+                continue;
+            }
             // temps.push; expr_stmt; temps.pop (ohne Freigabe)
             string mk = "M[" + f.marks.toString() + "]";
             f.marks++;
@@ -1793,6 +1861,10 @@ private:
     // ================================================================ Ausdrucksanweisungen und Zuweisung
 
     void exprStmt(Node es) mut {
+        if (natExprOk(es)) {
+            natExprStmt(es);
+            return;
+        }
         if (es.kind == "assign") {
             assign(es.kids[0], es.text, es.kids[1]);
             return;
@@ -1927,6 +1999,465 @@ private:
         return "((rv*)NULL)";
     }
 
+    // ================================================================ Native Grundwerte (M7)
+    //
+    // Reine Ausdrücke über Ganzzahlen mit Vorzeichen, char und bool (Literale, lokale
+    // Variablen, Felder, Index, length und Operatoren; keine Aufrufe) werden direkt in C als
+    // int64_t ausgewertet. Außer Programmfehlern haben sie keine Nebenwirkungen; Schritte, die
+    // scheitern können, stehen als eigene Anweisungen in der Reihenfolge des Interpreters.
+    // Die schnellen Fälle stehen in rpp_rt.h (rn_…), alle anderen gehen über die bisherigen
+    // Laufzeitfunktionen und verhalten sich damit wie dort.
+
+    // "i" Ganzzahl mit Vorzeichen, "c" char, "b" bool; "" nicht nativ
+    static string nkindOf(shared Ty? t) {
+        if (t == null) {
+            return "";
+        }
+        if (t.kind != TK::Prim) {
+            return "";
+        }
+        string p = t.prim;
+        if (p == "i8" || p == "i16" || p == "i32" || p == "i64") {
+            return "i";
+        }
+        if (p == "char") {
+            return "c";
+        }
+        if (p == "bool") {
+            return "b";
+        }
+        return "";
+    }
+
+    string nkind(Node e) {
+        return nkindOf(typeOf(e));
+    }
+
+    string natPrim(Node e) {
+        shared Ty? t = typeOf(e);
+        if (t == null) {
+            return "";
+        }
+        return t.prim;
+    }
+
+    static i64 intRank(string p) {
+        if (p == "i8") {
+            return 1;
+        }
+        if (p == "i16") {
+            return 2;
+        }
+        if (p == "i32") {
+            return 3;
+        }
+        if (p == "i64") {
+            return 4;
+        }
+        return 0;
+    }
+
+    // Wert von e passt ohne Umwandlung (außer Verbreiterung) in den Typ t
+    bool natFits(Node e, shared Ty? t) {
+        string a = nkind(e);
+        if (a == "" || a != nkindOf(t)) {
+            return false;
+        }
+        if (a != "i" || t == null) {
+            return true;
+        }
+        return intRank(t.prim) >= intRank(natPrim(e));
+    }
+
+    // Grundtyp, in dem ein nativer Wert gespeichert wird (storeOf, sonst der eigene)
+    string natTargetPrim(Node e) {
+        shared Ty? st = storeOf(e);
+        if (st != null && st.kind == TK::Prim) {
+            return st.prim;
+        }
+        return natPrim(e);
+    }
+
+    // C-Ort (rv) ohne Auswertung: lokale Variable, Feld von this oder Feldkette ohne Sperre; "" sonst
+    string rvPlace(Node e) {
+        if (e.kind == "paren") {
+            return rvPlace(e.kids[0]);
+        }
+        if (e.kind == "name") {
+            string cv = lookup(e.text);
+            if (cv != "") {
+                return cv;
+            }
+            i64 idx = fieldIndex(f.cls, e.text);
+            if (idx >= 0 && f.thisExpr != "") {
+                return "rv_o(" + f.thisExpr + ")->slots[" + idx.toString() + "]";
+            }
+            return "";
+        }
+        if (e.kind == "this") {
+            return f.thisExpr;
+        }
+        if (e.kind == "member" && e.text != "safe") {
+            ref Node object = e.kids[0];
+            shared Ty? ot = typeOf(object);
+            if (ot == null) {
+                return "";
+            }
+            if (ot.kind != TK::Named || rootVar(object) != "") {
+                return "";
+            }
+            i64 idx = fieldIndex(ot.id, e.kids[1].text);
+            if (idx < 0) {
+                return "";
+            }
+            string o = rvPlace(object);
+            if (o == "") {
+                return "";
+            }
+            return "rv_o(" + o + ")->slots[" + idx.toString() + "]";
+        }
+        return "";
+    }
+
+    // Ort mit nativem Typ als Ziel einer Zuweisung (ohne Prüfung der Sperre, wie slot)
+    string natPlace(Node t) {
+        if (t.kind != "name" && t.kind != "member" && t.kind != "paren") {
+            return "";
+        }
+        if (nkind(t) == "") {
+            return "";
+        }
+        if (t.kind != "name" && rootVar(t) != "") {
+            return "";
+        }
+        return rvPlace(t);
+    }
+
+    // Vektor, Array, Bereich oder string ohne Sperre (für Index und length)
+    bool natSeq(Node o) {
+        shared Ty? t = typeOf(o);
+        if (t == null) {
+            return false;
+        }
+        if (t.kind != TK::Vector && t.kind != TK::Array && t.kind != TK::Slice && !(t.kind == TK::Prim && t.prim == "string")) {
+            return false;
+        }
+        return rootVar(o) == "" && rvPlace(o) != "";
+    }
+
+    static bool isArithOp(string op) {
+        return op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
+    }
+
+    static bool isBitOp(string op) {
+        return op == "&" || op == "|" || op == "^";
+    }
+
+    static bool isCmpOp(string op) {
+        return op == "<" || op == ">" || op == "<=" || op == ">=";
+    }
+
+    // lässt sich e ganz nativ auswerten?
+    bool natOk(Node e) {
+        string nk = nkind(e);
+        if (nk == "") {
+            return false;
+        }
+        string k = e.kind;
+        if (k == "int") {
+            return nk == "i";
+        }
+        if (k == "char" || k == "bool") {
+            return true;
+        }
+        if (k == "paren") {
+            return natOk(e.kids[0]);
+        }
+        if (k == "name") {
+            return rvPlace(e) != "";
+        }
+        if (k == "member") {
+            if (rvPlace(e) != "") {
+                return true;
+            }
+            string fname = e.kids[1].text;
+            return nk == "i" && e.text != "safe" && (fname == "length" || fname == "byteLength") && natSeq(e.kids[0]);
+        }
+        if (k == "index") {
+            ref Node ix = e.kids[1];
+            return natSeq(e.kids[0]) && nkind(ix) == "i" && natOk(ix);
+        }
+        if (k == "unary") {
+            ref Node x = e.kids[0];
+            if (e.text == "!") {
+                return nk == "b" && natOk(x);
+            }
+            if (e.text == "-") {
+                if (nk != "i") {
+                    return false;
+                }
+                if (x.kind == "int") {
+                    return true;
+                }
+                return natPrim(x) == natPrim(e) && natOk(x);
+            }
+            return false;
+        }
+        if (k == "binary") {
+            ref Node a = e.kids[0];
+            ref Node b = e.kids[1];
+            string op = e.text;
+            if (!natOk(a) || !natOk(b)) {
+                return false;
+            }
+            string ka = nkind(a);
+            string kb = nkind(b);
+            if (op == "&&" || op == "||") {
+                return ka == "b" && kb == "b";
+            }
+            if (op == "==" || op == "!=") {
+                return ka == kb;
+            }
+            if (isCmpOp(op)) {
+                return ka == kb && ka != "b";
+            }
+            if (isArithOp(op) || isBitOp(op)) {
+                if (nk != "i" || ka != "i" || kb != "i") {
+                    return false;
+                }
+                i64 ra = intRank(natPrim(a));
+                i64 rb = intRank(natPrim(b));
+                if (rb > ra) {
+                    ra = rb;
+                }
+                return intRank(natPrim(e)) == ra;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    // nativer Ausdruck ohne eigene Anweisungen (nichts, was scheitern kann)
+    bool natFlat(Node e) {
+        string k = e.kind;
+        if (k == "paren") {
+            return natFlat(e.kids[0]);
+        }
+        if (k == "int" || k == "char" || k == "bool" || k == "name") {
+            return true;
+        }
+        if (k == "member") {
+            return rvPlace(e) != "";
+        }
+        if (k == "unary") {
+            ref Node x = e.kids[0];
+            if (e.text == "!") {
+                return natFlat(x);
+            }
+            return x.kind == "int";
+        }
+        if (k == "binary") {
+            if (isArithOp(e.text)) {
+                return false;
+            }
+            return natFlat(e.kids[0]) && natFlat(e.kids[1]);
+        }
+        return false;
+    }
+
+    // C-Ausdruck (int64_t) für e; verlangt natOk(e)
+    string nat(Node e) mut {
+        string k = e.kind;
+        if (k == "paren") {
+            return nat(e.kids[0]);
+        }
+        if (k == "int") {
+            (bool ok, ui64 mag) = Num::value(e.text);
+            return "((int64_t)" + mag.toString() + "ULL)";
+        }
+        if (k == "char") {
+            string u = unescape(e.text);
+            i64 code = 0;
+            for (char ch : u) {
+                code = cast<i64>(ch);
+                break;
+            }
+            return code.toString();
+        }
+        if (k == "bool") {
+            if (e.text == "true") {
+                return "1";
+            }
+            return "0";
+        }
+        string place = rvPlace(e);
+        if ((k == "name" || k == "member") && place != "") {
+            return "RN(" + place + ", " + ctag(natPrim(e)) + ")";
+        }
+        if (k == "member") {
+            string bytes = "0";
+            if (e.kids[1].text == "byteLength") {
+                bytes = "1";
+            }
+            string obj = rvPlace(e.kids[0]);
+            string n = natTmp();
+            call("rn_len(&" + n + ", " + obj + ", " + bytes + ")");
+            return n;
+        }
+        if (k == "index") {
+            string obj = rvPlace(e.kids[0]);
+            string iv = nat(e.kids[1]);
+            string n = natTmp();
+            call("rn_index(&" + n + ", " + obj + ", " + iv + ")");
+            return n;
+        }
+        if (k == "unary") {
+            ref Node x = e.kids[0];
+            if (e.text == "!") {
+                return "(!" + nat(x) + ")";
+            }
+            if (x.kind == "int") {
+                (bool ok, ui64 mag) = Num::value(x.text);
+                return "((int64_t)(0ULL - " + mag.toString() + "ULL))";
+            }
+            string a = nat(x);
+            string n = natTmp();
+            call("rn_neg(&" + n + ", " + a + ", " + ctag(natPrim(e)) + ")");
+            return n;
+        }
+        // binary
+        string op = e.text;
+        ref Node lhs = e.kids[0];
+        ref Node rhs = e.kids[1];
+        string xa = nat(lhs);
+        if (op == "&&" || op == "||") {
+            if (natFlat(rhs)) {
+                return "(" + xa + " " + op + " " + nat(rhs) + ")";
+            }
+            string n = natTmp();
+            emit(n + " = (" + xa + ") != 0;");
+            if (op == "&&") {
+                emit("if (" + n + ") {");
+            } else {
+                emit("if (!" + n + ") {");
+            }
+            string xb = nat(rhs);
+            emit(n + " = (" + xb + ") != 0;");
+            emit("}");
+            return n;
+        }
+        string xb = nat(rhs);
+        if (isArithOp(op)) {
+            string n = natTmp();
+            call("rn_arith(&" + n + ", " + arithOp(op) + ", " + xa + ", " + xb + ", " + ctag(natPrim(e)) + ")");
+            return n;
+        }
+        return "(" + xa + " " + op + " " + xb + ")";
+    }
+
+    // ---- Anweisungen
+
+    bool natLocalOk(Node d) {
+        if (d.kids.length < 3) {
+            return false;
+        }
+        ref Node init = d.kids[2];
+        return natOk(init) && natFits(init, declOf(d.kids[1]));
+    }
+
+    bool natReturnOk(Node s) {
+        if (s.kids.length == 0) {
+            return false;
+        }
+        ref Node x = s.kids[0];
+        if (!natOk(x)) {
+            return false;
+        }
+        shared Ty? st = storeOf(x);
+        if (st == null) {
+            return true;
+        }
+        return natFits(x, st);
+    }
+
+    // Zuweisung, Verbundzuweisung oder ++/-- auf einen nativen Ort
+    bool natExprOk(Node es) {
+        if (es.kind == "assign") {
+            ref Node t = es.kids[0];
+            ref Node v = es.kids[1];
+            if (natPlace(t) == "" || !natOk(v)) {
+                return false;
+            }
+            string op = es.text;
+            if (op == "=") {
+                return natFits(v, typeOf(t));
+            }
+            if (nkind(t) != "i" || nkind(v) != "i") {
+                return false;
+            }
+            if (op.length != 2 || !op.endsWith("=")) {
+                return false;
+            }
+            string o1 = op.substring(0, 1);
+            if (!isArithOp(o1) && !isBitOp(o1)) {
+                return false;
+            }
+            return intRank(natPrim(v)) <= intRank(natPrim(t));
+        }
+        if (es.kids.length == 0) {
+            return false;
+        }
+        ref Node x = es.kids[0];
+        if (x.kind == "postinc" || x.kind == "postdec" || (x.kind == "unary" && (x.text == "++" || x.text == "--"))) {
+            ref Node t = x.kids[0];
+            return nkind(t) == "i" && natPlace(t) != "";
+        }
+        return false;
+    }
+
+    void natExprStmt(Node es) mut {
+        if (es.kind == "assign") {
+            ref Node t = es.kids[0];
+            ref Node v = es.kids[1];
+            string place = natPlace(t);
+            string tag = ctag(natPrim(t));
+            string x = nat(v);
+            if (es.text == "=") {
+                emit(place + " = rn_box(" + x + ", " + tag + ");");
+                return;
+            }
+            string n = natTmp();
+            call("rn_arith(&" + n + ", " + arithOp(es.text.substring(0, 1)) + ", RN(" + place + ", " + tag + "), " + x + ", " + tag + ")");
+            emit(place + " = rn_box(" + n + ", " + tag + ");");
+            return;
+        }
+        ref Node x0 = es.kids[0];
+        ref Node t = x0.kids[0];
+        string place = natPlace(t);
+        string tag = ctag(natPrim(t));
+        string d = "1";
+        if (x0.kind == "postdec" || x0.text == "--") {
+            d = "-1";
+        }
+        string n = natTmp();
+        call("rn_incdec(&" + n + ", RN(" + place + ", " + tag + "), " + d + ", " + tag + ")");
+        emit(place + " = rn_box(" + n + ", " + tag + ");");
+    }
+
+    bool natStmtOk(Node s) {
+        string k = s.kind;
+        if (k == "local") {
+            return natLocalOk(s);
+        }
+        if (k == "exprstmt") {
+            return natExprOk(s.kids[0]);
+        }
+        if (k == "return") {
+            return natReturnOk(s);
+        }
+        return false;
+    }
+
     // ================================================================ Sperren (V-1)
 
     // C-Variable der Wurzel eines Orts (Paren, Member, Index), wenn sie lokal ist
@@ -2059,6 +2590,12 @@ private:
 
     string eval(Node e) mut {
         string k = e.kind;
+        if ((k == "binary" || k == "unary" || k == "index") && natOk(e)) {
+            string x = nat(e);
+            string r = tmp();
+            emit(r + " = rn_box(" + x + ", " + ctag(natPrim(e)) + ");");
+            return r;
+        }
         if (k == "int" || k == "float" || k == "str" || k == "char" || k == "bool" || k == "null") {
             return literal(e, e, false);
         }

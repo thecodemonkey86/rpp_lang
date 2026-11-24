@@ -2,7 +2,7 @@
 
 Stand: 23.11.2026, Entwurf 0.12. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
-Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M6 sind abgeschlossen (Abschnitt 6); M7 ist die Geschwindigkeit des übersetzten Codes.
+Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M6 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes, läuft über den Ausbau des C-Codegenerators.
 
 ## 1. Rolle der ersten Implementierung
 
@@ -82,7 +82,7 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M4 | Zwischenrepräsentation, Interpreter, Exceptions und Programmfehler | alle Laufzeittests mit `print` und `rpp.core` bestehen |
 | M5 | Standardbibliothek für den Compiler: `rpp.text`, `rpp.collections`, `rpp.io`, `rpp.env`, `rpp.fmt` | alle Konformitätstests bestehen im Debugmodus |
 | M6 | Beginn des R++-Compilers in R++ | der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein (festgelegt am 23.11.2026) |
-| M7 | Geschwindigkeit des übersetzten Codes | – (Ziel und Weg des Releasemodus werden noch besprochen) |
+| M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | – (Zielwert noch festzulegen, Vorschlag: übersetzter `rppcc` mindestens so schnell wie `rppc` bei `pruefe rpp-compiler`) |
 
 JIT und Releasemodus folgen nach M5. Bis dahin ist die Implementierung nur für den Debugmodus konform (R-14.7).
 
@@ -389,3 +389,20 @@ Im Codegenerator: `for` über `Iterable` nimmt bei einer Methode ohne Rumpf (`th
 Beim Erzeugen von C (Prüfung mit den Rümpfen der Standardbibliothek) fielen zwei Fehler im neuen Bibliothekscode auf, die `rppc` nicht meldet, weil es die Rümpfe der Standardbibliothek nicht prüft: `Random.mix` wies seinem Parameter zu (R-8.19), `Deque.front`/`back` gaben `null` bzw. einen Borrow zurück, der nicht von `this` ausgeht (R-5.23). Beide sind behoben; die Ausgaben bleiben gleich.
 
 Stand: `rppc test ..` 291 bestanden; `vergleich_c.py --fr 200` 278 gleich, 0 verschieden; Fixpunkt der Selbstübersetzung (Runde 1 bis 3 Byte für Byte gleich, gut 10 s je Runde); `vergleich.py --exe` 581/1176/1154/670/540/822 gleich (tokens, pre, ast, projekt, defs, pruefe), 0 verschieden.
+
+**M7 begonnen: Ausbau des C-Codegenerators (24.11.2026).** Entschieden (24.11.2026): Der Releasemodus nach R-12.1 entsteht durch Ausbau des C-Codegenerators aus M6, nicht über eine eigene Zwischendarstellung oder LLVM. Der Generator bleibt gegen den Interpreter geprüft (`vergleich_c.py`), der Fixpunkt der Selbstübersetzung muss nach jedem Schritt halten. Ein Zielwert für M7 ist noch festzulegen.
+
+Ausgangsstand (gemessen wie in M6, MSVC `/O2`): `pruefe rpp-compiler` 9,6 s, Selbstübersetzung 10,2 s; `rppc pruefe` (Rust, Release) 0,54 s. Das Profil zeigte 32 % in einer einzigen Binärsuche (`IdSet.lowerBound` in `Flow.rpp`) und 11 % in `rt_deep_copy`.
+
+| Schritt | Umsetzung | `pruefe rpp-compiler` | Selbstübersetzung |
+|---|---|---|---|
+| Ausgangsstand | – | 9,6 s | 10,2 s |
+| native Grundwerte | Reine Ausdrücke über `i8`–`i64`, `char` und `bool` (Literale, lokale Variablen, Felder und Feldketten ohne Sperre, Index, `length`, Operatoren; keine Aufrufe) wertet der Generator direkt in C als `int64_t` aus (`CGen.rpp`, Abschnitt „Native Grundwerte“). Schritte, die scheitern können (Überlauf, Division, Index), stehen als eigene Anweisungen in der Reihenfolge des Interpreters; ihr schneller Fall steht inline in `rpp_rt.h` (`rn_…`), alles andere geht über die bisherigen rv-Pfade und verhält sich damit gleich (Meldungen, Releasemodus). Bedingungen, Zuweisungen, Verbundzuweisungen, `++`/`--`, `return` und Deklarationen mit nativem Wert brauchen keine Marke für Zwischenwerte; Blöcke und Verzweigungen ebenso nicht. | 5,4 s | 6,0 s |
+| Kopie von Vektoren | `rt_deep_copy` kopiert Grundwerte, Enums ohne Daten und Strings ohne Aufruf je Element (838 000 Kopien mit 89 Mio. Elementen je `pruefe`) | 4,5 s | |
+| Ziele und Variablen | `Checker.rpp` hält den Typ lokaler Grundwert-Ziele fest (native Zuweisung); Grundwert-Variablen werden am Bereichsende nicht freigegeben; `return;`, `break`, `continue` ohne Marke; langsame Fälle der `rn_…` als eigene Funktionen | 3,9 s | 4,4 s |
+
+Prüfung des Generators: Mit `RPP_NATCHECK` (C-Makro) prüft jeder native Lesezugriff, dass der Wert die erwartete Art hat; damit laufen der übersetzte Compiler selbst und `vergleich_c.py --cflags -DRPP_NATCHECK`. `vergleich_c.py` kann mit `--exe` den übersetzten Compiler statt des Interpreters zum Erzeugen nehmen.
+
+Stand: Fixpunkt der Selbstübersetzung (Runde 2 und 3 Byte für Byte gleich, auch mit `RPP_NATCHECK`); `vergleich_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 290 gleich, 0 verschieden; `vergleich.py --exe` 591/1196/1174/690/550/832 gleich (tokens, pre, ast, projekt, defs, pruefe), 0 verschieden; die Laufzeit übersetzt auch mit gcc.
+
+Verbleibendes Profil: rund 60 % im erzeugten Code (Werte mit Art in Feldern `T`/`V`, Rahmen je Aufruf), 11 % Heap (malloc/free), knapp 10 % Freigabe und Übergabe (`rt_drop_slow`, `destruct`, `rt_promote_slow`, `rt_temp`). Nächste Kandidaten: lokale Grundwert-Variablen als C-Variablen statt in `V`, ein eigener Speicherverwalter für kleine Objekte, direkte Aufrufe eingebauter Methoden statt Namensvergleich.

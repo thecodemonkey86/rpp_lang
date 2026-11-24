@@ -455,6 +455,106 @@ rv rt_minmax(uint8_t tag, int max);
 rv rt_float_lit(const char* text, int negative, int f32);
 rv rt_int_lit(const char* text, int negative, uint8_t tag);
 
+/* ---------------------------------------------------------------- Native Grundwerte (M7)
+ * Der Generator wertet reine Ausdrücke über Ganzzahlen mit Vorzeichen, char und bool direkt in
+ * C aus (int64_t). Nur der schnelle Fall steht hier; alles andere (Überlauf, Division durch
+ * null, Index außerhalb, Releasemodus) geht über die rv-Pfade oben und verhält sich damit
+ * genau wie bisher. Mit RPP_NATCHECK prüft jeder Lesezugriff die Art des Werts. */
+#ifdef RPP_NATCHECK
+int64_t rn_check(const rv* x, uint8_t tag);
+#define RN(x, tag) rn_check(&(x), (tag))
+#else
+#define RN(x, tag) ((x).v.i)
+#endif
+
+#if defined(_MSC_VER)
+#define RN_INLINE static __forceinline
+#else
+#define RN_INLINE static inline __attribute__((always_inline))
+#endif
+
+/* langsame Fälle (rpp_rt.c): über die rv-Pfade, damit wie im Interpreter */
+int rn_arith_slow(int64_t* out, int op, int64_t a, int64_t b, uint8_t tag);
+int rn_neg_slow(int64_t* out, int64_t a, uint8_t tag);
+int rn_incdec_slow(int64_t* out, int64_t a, int d, uint8_t tag);
+int rn_index_slow(int64_t* out, rv obj, int64_t i);
+int rn_len_slow(int64_t* out, rv obj, int bytes);
+
+RN_INLINE rv rn_box(int64_t v, uint8_t tag) {
+    rv r = rv_make(tag);
+    r.v.i = v;
+    return r;
+}
+RN_INLINE int rn_fits(int64_t r, uint8_t tag) {
+    switch (tag) {
+    case RT_I8: return r >= -128 && r <= 127;
+    case RT_I16: return r >= -32768 && r <= 32767;
+    case RT_I32: return r >= INT32_MIN && r <= INT32_MAX;
+    default: return 1;
+    }
+}
+/* a op b im Typ tag (Ganzzahl mit Vorzeichen; beide Werte liegen schon in tag) */
+RN_INLINE int rn_arith(int64_t* out, int op, int64_t a, int64_t b, uint8_t tag) {
+    int64_t r;
+    switch (op) {
+    case OP_ADD:
+        if (tag == RT_I64 && ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b))) return rn_arith_slow(out, op, a, b, tag);
+        r = a + b;
+        break;
+    case OP_SUB:
+        if (tag == RT_I64 && ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b))) return rn_arith_slow(out, op, a, b, tag);
+        r = a - b;
+        break;
+    case OP_MUL:
+        if (a < -2147483647 || a > 2147483647 || b < -2147483647 || b > 2147483647) return rn_arith_slow(out, op, a, b, tag);
+        r = a * b;
+        break;
+    case OP_DIV:
+        if (b == 0 || b == -1) return rn_arith_slow(out, op, a, b, tag);
+        r = a / b;
+        break;
+    case OP_REM:
+        if (b == 0 || b == -1) return rn_arith_slow(out, op, a, b, tag);
+        r = a % b;
+        break;
+    case OP_AND: *out = a & b; return ST_OK;
+    case OP_OR: *out = a | b; return ST_OK;
+    case OP_XOR: *out = a ^ b; return ST_OK;
+    default: return rn_arith_slow(out, op, a, b, tag);
+    }
+    if (!rn_fits(r, tag)) return rn_arith_slow(out, op, a, b, tag);
+    *out = r;
+    return ST_OK;
+}
+RN_INLINE int rn_neg(int64_t* out, int64_t a, uint8_t tag) {
+    if (a == INT64_MIN || !rn_fits(-a, tag)) return rn_neg_slow(out, a, tag);
+    *out = -a;
+    return ST_OK;
+}
+RN_INLINE int rn_incdec(int64_t* out, int64_t a, int d, uint8_t tag) {
+    if ((d > 0 && a == INT64_MAX) || (d < 0 && a == INT64_MIN) || !rn_fits(a + d, tag)) return rn_incdec_slow(out, a, d, tag);
+    *out = a + d;
+    return ST_OK;
+}
+/* a[i] als Grundwert */
+RN_INLINE int rn_index(int64_t* out, rv obj, int64_t i) {
+    if (obj.tag == RT_OBJ) {
+        RObj* o = (RObj*)obj.v.p;
+        if (!o->cls && i >= 0 && i < o->len) {
+            *out = o->slots[i].v.i;
+            return ST_OK;
+        }
+    }
+    return rn_index_slow(out, obj, i);
+}
+RN_INLINE int rn_len(int64_t* out, rv obj, int bytes) {
+    if (obj.tag == RT_OBJ && !((RObj*)obj.v.p)->cls) {
+        *out = ((RObj*)obj.v.p)->len;
+        return ST_OK;
+    }
+    return rn_len_slow(out, obj, bytes);
+}
+
 /* eingebaute Funktionen und Methoden */
 void rt_print(rv v);
 int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args);

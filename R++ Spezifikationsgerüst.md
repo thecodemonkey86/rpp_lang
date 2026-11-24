@@ -181,6 +181,6 @@ Die dabei nötigen Festlegungen V-1 bis V-11 und die Schreibweise `ref` für ben
 
 ## Nächste Schritte
 
-1. M6 fortsetzen: Die ganze Prüfung in R++ (`rpp-compiler/`: Lexer, Präprozessor, Parser, Projekte, Deklarationen, Rümpfe mit Flussanalyse) ist fertig und gleichwertig zu `rppc`. Als Nächstes die Angaben für die Ausführung und ein Codegenerator, damit sich der Compiler selbst übersetzen kann; dazu die Laufzeit der Prüfung im Interpreter (Fixpunkt an verschachtelten Schleifen). Offen aus M5 sind Typargumente generischer Methoden zur Laufzeit.
+1. M7 fortsetzen: M6 ist abgeschlossen (der Compiler in R++ übersetzt sich selbst). M7 macht den übersetzten Code schneller, indem der C-Codegenerator ausgebaut wird (Implementierungsplan, Abschnitt 6); erster Schritt sind native Grundwerte. Offen ist ein Zielwert für M7.
 2. Ein Bibliotheksverzeichnis für die Konformitätstests festlegen, damit R-11.19 und R-11.20 prüfbar werden.
 3. Satz 5.1 maschinell beweisen (Coq, Lean oder Isabelle); das ausführbare Modell dient dabei als Referenz.
