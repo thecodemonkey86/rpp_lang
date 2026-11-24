@@ -109,6 +109,9 @@ private:
     i64[] dispDefs = [];
     i64[] dispMembers = [];
     i64 dispDone = 0;
+    // Ergebnisse von overridden (Schlüssel owner * 1000000 + member)
+    i64[] ovKeys = [];
+    bool[] ovVals = [];
 
 public:
     constructor(own Checker c, bool release) {
@@ -1159,6 +1162,74 @@ private:
             }
         }
         return (false, -1, -1);
+    }
+
+    // Empfänger ist sicher ein Objekt einer Klasse (kein Grundwert über ein Mixin, kein Typ-Parameter)
+    bool recvIsClass(Node callee) {
+        i64 d = -1;
+        if (callee.kind == "member") {
+            if (callee.kids[0].kind == "base") {
+                return false;
+            }
+            shared Ty? ot = typeOf(callee.kids[0]);
+            if (ot == null) {
+                return false;
+            }
+            d = classOf(ot);
+        } else if (f.thisExpr != "") {
+            d = f.cls;
+        }
+        return d >= 0 && c.p.defs[d].kind == DefKind::Class;
+    }
+
+    // überschreibt eine Klasse die Methode (owner, member)? Wie genDispatcher: ohne Fälle dort
+    // ruft der Verteiler immer M_owner_member, der Aufruf kann direkt gehen (M7). Nur mit Rumpf.
+    bool overridden(i64 owner, i64 member) mut {
+        i64 key = owner * 1000000 + member;
+        i64 at = Program::indexOfInt(ovKeys, key);
+        if (at >= 0) {
+            return ovVals[at];
+        }
+        bool r = computeOverridden(owner, member);
+        ovKeys.push(key);
+        ovVals.push(r);
+        return r;
+    }
+
+    bool computeOverridden(i64 owner, i64 member) {
+        MethodInfo? found = null;
+        for (MethodInfo x : c.p.defs[owner].methods) {
+            if (x.member == member) {
+                found = x.substituted(new Subst());
+            }
+        }
+        if (found == null) {
+            return true;
+        }
+        if (!found.hasBody) {
+            return true;
+        }
+        shared Ty[] none = [];
+        for (i64 d = 0; d < c.p.defs.length; d++) {
+            if (c.p.defs[d].kind != DefKind::Class) {
+                continue;
+            }
+            shared Ty dt = Ty::named(d, none);
+            bool sub = d == owner;
+            for (shared Ty s : c.p.supertypes(dt)) {
+                if (s.kind == TK::Named && s.id == owner) {
+                    sub = true;
+                }
+            }
+            if (!sub) {
+                continue;
+            }
+            (bool ok, i64 io, i64 im) = dispatch(d, found);
+            if (ok && !(io == owner && im == member)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void genDispatcher(i64 owner, i64 member) mut {
@@ -3512,7 +3583,7 @@ private:
         }
         string arr = args(argsNode, m.params, locked);
         string fn = "M_" + m.owner.toString() + "_" + m.member.toString();
-        if (!exact && !m.isStatic) {
+        if (!exact && !m.isStatic && !(recvIsClass(callee) && !overridden(m.owner, m.member))) {
             fn = dispatchName(m);
         } else if (m.isStatic && !m.hasBody) {
             fn = dispatchName(m);

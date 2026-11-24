@@ -209,7 +209,7 @@ static inline int rv_isnull(rv v) { return v.tag == RT_NULL; }
 static inline RObj* rv_o(rv v) { return (RObj*)v.v.p; }
 int rt_is_int_tag(uint8_t t);
 int rt_is_num_tag(uint8_t t);
-int rt_is_prim(rv v);
+static inline int rt_is_prim(rv v) { return v.tag >= RT_BOOL && v.tag <= RT_STR; }
 
 /* Strings */
 rv rt_lit(RStr** cache, const char* s, int64_t len);
@@ -359,9 +359,19 @@ rv rv_fun(RFun* f, uint8_t form);
 int rt_call_value(rv* ret, rv f, rv* args);
 int rt_capture_own(rv* cell, rv* out);          /* own-Lambda: Erfassung per Wert (R-10.8) */
 
-/* Rahmen */
-int rt_enter(const char* label);
-void rt_leave(void);
+/* Rahmen: Stapel der Namen für den Stacktrace (inline, M7) */
+#define RT_MAX_DEPTH 12000
+extern const char* rt_frames[];
+extern int rt_fdepth;
+int rt_enter_overflow(void);
+static inline int rt_enter(const char* label) {
+    if (rt_fdepth >= RT_MAX_DEPTH) return rt_enter_overflow();
+    rt_frames[rt_fdepth++] = label;
+    return ST_OK;
+}
+static inline void rt_leave(void) {
+    if (rt_fdepth > 0) rt_fdepth--;
+}
 int rt_depth(void);
 RTrace rt_trace(void);
 

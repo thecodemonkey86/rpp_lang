@@ -44,9 +44,8 @@ static char* fatal_msg = NULL;
 static RTrace fatal_trace;
 static int fatal_pending = 0;
 
-#define MAX_DEPTH 12000
-static const char* frames[MAX_DEPTH + 16];
-static int depth = 0;
+const char* rt_frames[RT_MAX_DEPTH + 16];
+int rt_fdepth = 0;
 
 /* ---------------------------------------------------------------- Speicher (M7)
  * Kleine Blöcke (bis 1024 Byte) kommen aus Freilisten je Größenklasse, die aus großen Stücken
@@ -186,9 +185,6 @@ int rt_is_num_tag(uint8_t t) { return t >= RT_I8 && t <= RT_F64; }
 static int is_unsigned(uint8_t t) { return t >= RT_U8 && t <= RT_U64; }
 static int is_float_tag(uint8_t t) { return t == RT_F32 || t == RT_F64; }
 
-int rt_is_prim(rv v) {
-    return (v.tag >= RT_BOOL && v.tag <= RT_STR);
-}
 
 /* Ganzzahl mit 128 Bit (für exakte Ergebnisse wie i128 im Interpreter) */
 typedef struct W {
@@ -408,9 +404,9 @@ rv rt_num_to(rv v, uint8_t p) {
 
 RTrace rt_trace(void) {
     RTrace t;
-    t.n = depth;
-    t.labels = (const char**)xmalloc(sizeof(char*) * (size_t)(depth + 1));
-    for (int i = 0; i < depth; i++) t.labels[i] = frames[depth - 1 - i];
+    t.n = rt_fdepth;
+    t.labels = (const char**)xmalloc(sizeof(char*) * (size_t)(rt_fdepth + 1));
+    for (int i = 0; i < rt_fdepth; i++) t.labels[i] = rt_frames[rt_fdepth - 1 - i];
     return t;
 }
 
@@ -552,17 +548,11 @@ static int io_error(const char* msg, const char* path) {
 
 /* ================================================================ Rahmen */
 
-int rt_enter(const char* label) {
-    if (depth >= MAX_DEPTH) return rt_fatal("StackOverflowError", "mehr als %d verschachtelte Aufrufe", MAX_DEPTH);
-    frames[depth++] = label;
-    return ST_OK;
+int rt_enter_overflow(void) {
+    return rt_fatal("StackOverflowError", "mehr als %d verschachtelte Aufrufe", RT_MAX_DEPTH);
 }
 
-void rt_leave(void) {
-    if (depth > 0) depth--;
-}
-
-int rt_depth(void) { return depth; }
+int rt_depth(void) { return rt_fdepth; }
 
 /* ================================================================ Strings */
 
