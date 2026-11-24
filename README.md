@@ -13,7 +13,7 @@ R++ is an object-oriented, statically typed language with a syntax close to C, C
 ## 2. Structure of the specification
 
 | Cap. | Theme | Document |
-|----|----|--|-|
+|----|----|--|
 | 1 | Introduction | “R++ Introduction” (this document) |
 | 2 | Lexical structure | “R++ specification framework”, section 2 |
 | 3 | Grammar | “R++ Specification Scaffolding”, Section 3, and `rpp-grammar/RPP.g4` (normative) |
