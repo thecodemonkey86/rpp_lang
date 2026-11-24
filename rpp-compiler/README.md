@@ -95,8 +95,8 @@ Unicode-Tabellen (`runtime/rpp_unicode.h`, `rpp_unicode_ign.h`) entstehen mit `r
 
 Mit `--exe` erzeugt ein übersetzter `rppcc` den C-Code statt des Interpreters; `--cflags "-DRPP_NATCHECK"` übersetzt so, dass jeder native Lesezugriff des Generators (M7) die Art des Werts prüft.
 
-Native Grundwerte (M7): Reine Ausdrücke über `i8`–`i64`, `char` und `bool` ohne Aufrufe wertet der Generator direkt in C als `int64_t` aus; der schnelle Fall steht in `rpp_rt.h` (`rn_…`), alle anderen Fälle gehen über die rv-Pfade wie im Interpreter.
+Native Grundwerte (M7): Reine Ausdrücke über `i8`–`i64`, `char` und `bool` ohne Aufrufe wertet der Generator direkt in C als `int64_t` aus; der schnelle Fall steht in `rpp_rt.h` (`rn_…`), alle anderen Fälle gehen über die rv-Pfade wie im Interpreter. Lokale Variablen und Parameter dieser Typen sind C-Variablen (`int64_t x…`), außer ein Lambda erfasst sie oder `take`/`replace` bzw. eine Tupelzuweisung braucht sie als Ort. Kleine Blöcke verwaltet die Laufzeit selbst (Freilisten je Größenklasse, `xmalloc`/`xfree`).
 
 Umgebungsvariablen der Laufzeit: `RPP_NOFREE=1` gibt keinen Speicher frei (zum Eingrenzen von Fehlern bei der Freigabe); `RPP_PROFILE=DATEI` schreibt jede Millisekunde den Befehlszähler als Adresse relativ zum Modul (Windows; auflösen mit der Map-Datei des Linkers, `/MAP`); `RPP_MAINTHREAD=1` läuft ohne eigenen Thread mit großem Stack.
 
-Geschwindigkeit (24.11.2026, übersetzter `rppcc.exe`, MSVC `/O2`): `pruefe rpp-compiler` 3,9 s, Selbstübersetzung 4,4 s (22.11.2026: 9,2 s und 10,4 s); im Interpreter jeweils rund 20 Minuten, `rppc pruefe` (Release) 0,54 s.
+Geschwindigkeit (24.11.2026, übersetzter `rppcc.exe`, MSVC `/O2`): `pruefe rpp-compiler` 3,6 s, Selbstübersetzung 4,1 s (22.11.2026: 9,2 s und 10,4 s); im Interpreter jeweils rund 20 Minuten, `rppc pruefe` (Release) 0,54 s.

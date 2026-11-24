@@ -48,21 +48,94 @@ static int fatal_pending = 0;
 static const char* frames[MAX_DEPTH + 16];
 static int depth = 0;
 
-static void* xmalloc(size_t n) {
-    void* p = malloc(n ? n : 1);
-    if (!p) {
-        fputs("interner Fehler: kein Speicher\n", stderr);
-        exit(3);
+/* ---------------------------------------------------------------- Speicher (M7)
+ * Kleine Blöcke (bis 1024 Byte) kommen aus Freilisten je Größenklasse, die aus großen Stücken
+ * gespeist werden; größere direkt von malloc. Vor jedem Block steht ein Kopf mit der Klasse
+ * (16 Byte, damit die Ausrichtung erhalten bleibt). Der Speicher kleiner Blöcke geht nicht an
+ * das Betriebssystem zurück. Die Laufzeit führt R++-Code in einem einzigen Thread aus. */
+#define MEM_HDR 16
+#define MEM_SMALL 1024
+#define MEM_CLASSES 64              /* Klassen in Schritten von 16 Byte */
+#define MEM_LARGE 0xFFFF
+#define MEM_CHUNK ((size_t)1 << 20)
+
+typedef struct MemFree { struct MemFree* next; } MemFree;
+static MemFree* mem_free_list[MEM_CLASSES + 1];
+static char* mem_chunk_cur = NULL;
+static size_t mem_chunk_left = 0;
+
+static void mem_oom(void) {
+    fputs("interner Fehler: kein Speicher\n", stderr);
+    exit(3);
+}
+
+static void* mem_carve(size_t total) {
+    if (mem_chunk_left < total) {
+        mem_chunk_cur = (char*)malloc(MEM_CHUNK);
+        if (!mem_chunk_cur) mem_oom();
+        mem_chunk_left = MEM_CHUNK;
     }
+    void* p = mem_chunk_cur;
+    mem_chunk_cur += total;
+    mem_chunk_left -= total;
     return p;
 }
 
-static void* xrealloc(void* p, size_t n) {
-    void* q = realloc(p, n ? n : 1);
-    if (!q) {
-        fputs("interner Fehler: kein Speicher\n", stderr);
-        exit(3);
+static void* xmalloc(size_t n) {
+    if (n == 0) n = 1;
+    if (n <= MEM_SMALL) {
+        size_t k = (n + 15) >> 4;   /* 1..64 */
+        MemFree* f = mem_free_list[k];
+        char* h;
+        if (f) {
+            mem_free_list[k] = f->next;
+            h = (char*)f;
+        } else {
+            h = (char*)mem_carve(MEM_HDR + (k << 4));
+        }
+        *(uint32_t*)h = (uint32_t)k;
+        return h + MEM_HDR;
     }
+    char* h = (char*)malloc(MEM_HDR + n);
+    if (!h) mem_oom();
+    *(uint32_t*)h = MEM_LARGE;
+    return h + MEM_HDR;
+}
+
+static void xfree(void* p) {
+    if (!p) return;
+    char* h = (char*)p - MEM_HDR;
+    uint32_t k = *(uint32_t*)h;
+    if (k == MEM_LARGE) {
+        free(h);
+        return;
+    }
+    MemFree* f = (MemFree*)h;
+    f->next = mem_free_list[k];
+    mem_free_list[k] = f;
+}
+
+static void* xrealloc(void* p, size_t n) {
+    if (!p) return xmalloc(n);
+    if (n == 0) n = 1;
+    char* h = (char*)p - MEM_HDR;
+    uint32_t k = *(uint32_t*)h;
+    if (k == MEM_LARGE) {
+        if (n > MEM_SMALL) {
+            char* q = (char*)realloc(h, MEM_HDR + n);
+            if (!q) mem_oom();
+            return q + MEM_HDR;
+        }
+        void* q = xmalloc(n);
+        memcpy(q, p, n);   /* der alte Block ist größer als MEM_SMALL >= n */
+        free(h);
+        return q;
+    }
+    size_t have = (size_t)k << 4;
+    if (n <= have) return p;
+    void* q = xmalloc(n);
+    memcpy(q, p, have);
+    xfree(p);
     return q;
 }
 
@@ -103,7 +176,7 @@ static void buf_fmt(Buf* b, const char* fmt, ...) {
     vsnprintf(big, (size_t)n + 1, fmt, ap);
     va_end(ap);
     buf_add(b, big, n);
-    free(big);
+    xfree(big);
 }
 
 /* ================================================================ Zahlen */
@@ -358,8 +431,8 @@ static int fatal_v(const char* name, char* msg) {
         Buf b = { 0 };
         buf_str(&b, fatal_msg);
         buf_fmt(&b, "; beim Aufräumen außerdem %s: %s", name, msg);
-        free(fatal_msg);
-        free(msg);
+        xfree(fatal_msg);
+        xfree(msg);
         fatal_msg = b.p;
         return ST_FATAL;
     }
@@ -382,7 +455,7 @@ int rt_fatal_at(int st, int line) {
     if (st == ST_FATAL && fatal_pending && fatal_msg) {
         Buf b = { 0 };
         buf_fmt(&b, "%s (Zeile %d)", fatal_msg, line);
-        free(fatal_msg);
+        xfree(fatal_msg);
         fatal_msg = b.p;
     }
     return st;
@@ -539,7 +612,7 @@ RStr* rt_s(rv v) {
 
 static rv buf_take(Buf* b) {
     rv r = rt_str_from(b->p ? b->p : "", b->n);
-    free(b->p);
+    xfree(b->p);
     return r;
 }
 
@@ -736,14 +809,14 @@ static int destruct(RObj* o);
 
 static void obj_free(RObj* o) {
     if (rt_nofree) return;
-    free(o->slots);
+    xfree(o->slots);
     o->slots = NULL;
     o->len = o->cap = 0;
     if (o->native) {
-        free(o->native);
+        xfree(o->native);
         o->native = NULL;
     }
-    if (o->weak == 0) free(o);
+    if (o->weak == 0) xfree(o);
     else o->freed = 1;
 }
 
@@ -755,7 +828,7 @@ static int drop_agg(RAgg* a, uint8_t tag) {
         int d = rt_drop(a->items[i]);
         if (d) { st = d; break; }
     }
-    if (!rt_nofree) free(a);
+    if (!rt_nofree) xfree(a);
     return st;
 }
 
@@ -771,14 +844,14 @@ int rt_drop_slow(rv v) {
         }
         if (v.form == F_WEAK) {
             if (o->weak > 0) o->weak--;
-            if (o->weak == 0 && o->freed && !rt_nofree) free(o);
+            if (o->weak == 0 && o->freed && !rt_nofree) xfree(o);
         }
         return ST_OK;
     }
     case RT_STR:
         if (v.form == F_OWN) {
             RStr* s = (RStr*)v.v.p;
-            if (s->rc > 0 && --s->rc == 0 && !rt_nofree) free(s);
+            if (s->rc > 0 && --s->rc == 0 && !rt_nofree) xfree(s);
         }
         return ST_OK;
     case RT_TUP: case RT_ENUMD:
@@ -798,9 +871,9 @@ int rt_drop_slow(rv v) {
                 }
             }
             if (!rt_nofree) {
-                free(f->cells);
-                free(f->vals);
-                free(f);
+                xfree(f->cells);
+                xfree(f->vals);
+                xfree(f);
             }
             return st;
         }
@@ -1228,7 +1301,7 @@ static int destruct(RObj* o) {
             int d = rt_drop(elems[i]);
             if (d) st = d;
         }
-        free(elems);
+        xfree(elems);
     } else {
         st = rt_run_dtors(o, o->cls);
         if (!st) st = rt_drop_fields(o, o->len);
@@ -1245,7 +1318,7 @@ int rt_unpack(rv v, int n, rv* out) {
         for (int i = 0; i < n && i < a->n; i++) out[i] = (v.form == F_BORROW) ? rv_view(a->items[i]) : (a->rc == 1 ? a->items[i] : share(a->items[i]));
         if (v.form == F_OWN) {
             if (a->rc == 1) {
-                if (!rt_nofree) free(a);
+                if (!rt_nofree) xfree(a);
             } else {
                 a->rc--;
             }
@@ -1820,7 +1893,7 @@ int rt_cast_prim(rv* out, rv v, uint8_t p) {
                     Buf b = { 0 };
                     float_text(&b, x, 0);
                     int st = rt_fatal("CastError", "%s passt nicht in %s", b.p, prim_name(p));
-                    free(b.p);
+                    xfree(b.p);
                     return st;
                 }
                 *out = make_int_w(x != x ? w_from_i(0) : x < 0 ? lo : hi, p);
@@ -1886,7 +1959,7 @@ void rt_print(rv v) {
     text_of(&b, v);
     buf_str(&b, "\n");
     fwrite(b.p, 1, (size_t)b.n, stdout);
-    free(b.p);
+    xfree(b.p);
 }
 
 /* ================================================================ Eingebaute Methoden */
@@ -2173,9 +2246,9 @@ static int vec_method(rv* out, RObj* o, const char* name, int n, rv* args) {
         o->cap = 4;
         for (int64_t i = 0; i < m; i++) {
             int st = rt_drop(elems[i]);
-            if (st) { free(elems); return st; }
+            if (st) { xfree(elems); return st; }
         }
-        free(elems);
+        xfree(elems);
         return ST_OK;
     }
     if (!strcmp(name, "first")) { *out = len ? rv_view(o->slots[0]) : rv_null(); return ST_OK; }
@@ -2308,7 +2381,7 @@ int rt_builtin_static(rv* out, uint8_t p, const char* name, int n, rv* args) {
         buf_str(&m, "keine Zahl: ");
         buf_add(&m, s->data, s->len);
         int st = rt_throw_std("rpp.core.FormatException", m.p);
-        free(m.p);
+        xfree(m.p);
         return st;
     }
     if (!strcmp(name, "join")) {
@@ -2339,7 +2412,7 @@ int rt_builtin_static(rv* out, uint8_t p, const char* name, int n, rv* args) {
             }
         }
         if (!utf8_valid((const unsigned char*)b.p, b.n)) {
-            free(b.p);
+            xfree(b.p);
             return rt_throw_std("rpp.core.FormatException", "kein gültiges UTF-8");
         }
         *out = buf_take(&b);
@@ -2449,7 +2522,7 @@ static rv key_at(RObj* o, int64_t i, int map) {
 static void hidx_rebuild_buckets(HIdx* h, int64_t n) {
     int64_t nb = 16;
     while (nb < n * 2) nb *= 2;
-    free(h->head);
+    xfree(h->head);
     h->head = (int64_t*)xmalloc(sizeof(int64_t) * (size_t)nb);
     for (int64_t i = 0; i < nb; i++) h->head[i] = -1;
     h->nb = nb;
@@ -2528,10 +2601,10 @@ static int find_key(int64_t* pos, RObj* o, rv key, int map) {
     for (int64_t k = nc - 1; k >= 0; k--) {
         int eq;
         st = rt_equal(&eq, key_at(o, list[k], map), key);
-        if (st) { free(many); return st; }
+        if (st) { xfree(many); return st; }
         if (eq) { *pos = list[k]; break; }
     }
-    free(many);
+    xfree(many);
     return ST_OK;
 }
 
@@ -2563,15 +2636,15 @@ static FILE* u_fopen(const char* path, const char* mode) {
     wchar_t* wp = u8w(path);
     wchar_t* wm = u8w(mode);
     FILE* f = _wfopen(wp, wm);
-    free(wp);
-    free(wm);
+    xfree(wp);
+    xfree(wm);
     return f;
 }
 
 static int u_stat64(const char* path, struct _stat64* st) {
     wchar_t* wp = u8w(path);
     int r = _wstat64(wp, st);
-    free(wp);
+    xfree(wp);
     return r;
 }
 
@@ -2579,22 +2652,22 @@ static int u_rename(const char* from, const char* to) {
     wchar_t* a = u8w(from);
     wchar_t* b = u8w(to);
     int r = _wrename(a, b);
-    free(a);
-    free(b);
+    xfree(a);
+    xfree(b);
     return r;
 }
 
 static int u_remove(const char* path) {
     wchar_t* wp = u8w(path);
     int r = _wremove(wp);
-    free(wp);
+    xfree(wp);
     return r;
 }
 
 static int u_mkdir(const char* path) {
     wchar_t* wp = u8w(path);
     int r = _wmkdir(wp);
-    free(wp);
+    xfree(wp);
     return r;
 }
 #else
@@ -2672,11 +2745,11 @@ static void normalize_path(const char* in, Buf* out) {
         if (_wfullpath(wabs, win, 4096)) {
             char* u = w2u8(wabs);
             snprintf(abs, sizeof abs, "%s", u);
-            free(u);
+            xfree(u);
         } else {
             snprintf(abs, sizeof abs, "%s", in);
         }
-        free(win);
+        xfree(win);
     }
 #else
     if (in[0] == '/') snprintf(abs, sizeof abs, "%s", in);
@@ -2716,7 +2789,7 @@ static void normalize_path(const char* in, Buf* out) {
         if (i > 0) buf_str(out, "/");
         buf_add(out, parts[i], lens[i]);
     }
-    free(prefix.p);
+    xfree(prefix.p);
 }
 
 
@@ -2751,7 +2824,7 @@ static void lex_path(const char* in, LexPath* lp) {
         if (l == 1 && s[0] == '.') continue;
         if (l == 2 && s[0] == '.' && s[1] == '.') {
             if (lp->n > 0 && strcmp(lp->parts[lp->n - 1], "..") != 0) {
-                free(lp->parts[--lp->n]);
+                xfree(lp->parts[--lp->n]);
                 continue;
             }
             if (lp->rooted) continue;
@@ -2766,7 +2839,7 @@ static void lex_path(const char* in, LexPath* lp) {
 }
 
 static void lex_free(LexPath* lp) {
-    for (int i = 0; i < lp->n; i++) free(lp->parts[i]);
+    for (int i = 0; i < lp->n; i++) xfree(lp->parts[i]);
     lp->n = 0;
 }
 
@@ -2790,7 +2863,7 @@ static int path_io_error(const char* path) {
     Buf m = { 0 };
     buf_fmt(&m, "%s: %s", path, sys_err());
     int st = io_error(m.p, path);
-    free(m.p);
+    xfree(m.p);
     return st;
 }
 
@@ -2799,16 +2872,16 @@ static int file_kind(const char* path) {
 #ifdef _WIN32
     wchar_t* wp = u8w(path);
     DWORD a = GetFileAttributesW(wp);
-    if (a == INVALID_FILE_ATTRIBUTES) { free(wp); return 3; }
+    if (a == INVALID_FILE_ATTRIBUTES) { xfree(wp); return 3; }
     if (a & FILE_ATTRIBUTE_REPARSE_POINT) {
         WIN32_FIND_DATAW fd;
         HANDLE h = FindFirstFileW(wp, &fd);
         if (h != INVALID_HANDLE_VALUE) {
             FindClose(h);
-            if (fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT) { free(wp); return 2; }
+            if (fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT) { xfree(wp); return 2; }
         }
     }
-    free(wp);
+    xfree(wp);
     return (a & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
 #else
     struct stat st;
@@ -2851,7 +2924,7 @@ static FILE* create_new(const char* path) {
 #ifdef _WIN32
     wchar_t* wp = u8w(path);
     int fd = _wopen(wp, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
-    free(wp);
+    xfree(wp);
     return fd < 0 ? NULL : _fdopen(fd, "wb");
 #else
     int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -3015,7 +3088,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         Buf b = { 0 };
         text_of(&b, args[0]);
         if (b.n) fwrite(b.p, 1, (size_t)b.n, stdout);
-        free(b.p);
+        xfree(b.p);
         return ST_OK;
     }
     if (IS("rpp.io.Console.error")) {
@@ -3023,7 +3096,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         text_of(&b, args[0]);
         buf_str(&b, "\n");
         fwrite(b.p, 1, (size_t)b.n, stderr);
-        free(b.p);
+        xfree(b.p);
         return ST_OK;
     }
     if (IS("rpp.io.Console.readLine")) {
@@ -3063,13 +3136,13 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             buf_add(&line, &byte, 1);
         }
         if (c == EOF && ferror(file)) {
-            free(line.p);
+            xfree(line.p);
             return path_io_error(rt_s(o->slots[0])->data);
         }
         if (c == EOF && !line.n) { *out = rv_null(); return ST_OK; }
         if (c == '\n' && line.n && line.p[line.n - 1] == '\r') line.n--;
         if (!utf8_valid((const unsigned char*)line.p, line.n)) {
-            free(line.p);
+            xfree(line.p);
             return rt_throw_std("rpp.core.FormatException", "kein gültiges UTF-8");
         }
         *out = buf_take(&line);
@@ -3081,7 +3154,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             Buf m = { 0 };
             buf_fmt(&m, "Datei nicht gefunden: %s", p->data);
             int st = io_error(m.p, p->data);
-            free(m.p);
+            xfree(m.p);
             return st;
         }
         RObj* f = (RObj*)xmalloc(sizeof(RObj));
@@ -3101,7 +3174,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             Buf m = { 0 };
             buf_fmt(&m, "%s: %s", p->data, sys_err());
             int st = io_error(m.p, p->data);
-            free(m.p);
+            xfree(m.p);
             return st;
         }
         Buf b = { 0 };
@@ -3113,16 +3186,16 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         if (IS("rpp.io.File.readAllBytes")) {
             RObj* v = rt_vec_new(b.n);
             for (int64_t i = 0; i < b.n; i++) rt_vec_push(v, rv_byte((uint8_t)b.p[i]));
-            free(b.p);
+            xfree(b.p);
             *out = rv_obj(v, F_OWN);
             return ST_OK;
         }
         if (!utf8_valid((const unsigned char*)b.p, b.n)) {
-            free(b.p);
+            xfree(b.p);
             Buf m = { 0 };
             buf_fmt(&m, "%s: kein gültiges UTF-8", p->data);
             int st = rt_throw_std("rpp.core.FormatException", m.p);
-            free(m.p);
+            xfree(m.p);
             return st;
         }
         *out = buf_take(&b);
@@ -3144,16 +3217,16 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         }
         FILE* f = u_fopen(p->data, "wb");
         if (!f) {
-            free(b.p);
+            xfree(b.p);
             Buf m = { 0 };
             buf_fmt(&m, "%s: %s", p->data, sys_err());
             int st = io_error(m.p, p->data);
-            free(m.p);
+            xfree(m.p);
             return st;
         }
         if (b.n) fwrite(b.p, 1, (size_t)b.n, f);
         fclose(f);
-        free(b.p);
+        xfree(b.p);
         return ST_OK;
     }
     if (IS("rpp.io.Dir.list")) {
@@ -3166,13 +3239,13 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         WIN32_FIND_DATAW fd;
         wchar_t* wpat = u8w(pat);
         HANDLE h = FindFirstFileW(wpat, &fd);
-        free(wpat);
+        xfree(wpat);
         if (h == INVALID_HANDLE_VALUE) {
             Buf m = { 0 };
             errno = ENOENT;
             buf_fmt(&m, "%s: %s", p->data, sys_err());
             int st = io_error(m.p, p->data);
-            free(m.p);
+            xfree(m.p);
             return st;
         }
         do {
@@ -3187,7 +3260,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             Buf m = { 0 };
             buf_fmt(&m, "%s: %s", p->data, sys_err());
             int st = io_error(m.p, p->data);
-            free(m.p);
+            xfree(m.p);
             return st;
         }
         struct dirent* e;
@@ -3204,9 +3277,9 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         RObj* v = rt_vec_new(nn);
         for (int64_t i = 0; i < nn; i++) {
             rt_vec_push(v, sv(names[i]));
-            free((void*)names[i]);
+            xfree((void*)names[i]);
         }
-        free((void*)names);
+        xfree((void*)names);
         *out = rv_obj(v, F_OWN);
         return ST_OK;
     }
@@ -3224,7 +3297,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             Buf m = { 0 };
             buf_fmt(&m, "%s: %s", p->data, sys_err());
             int st = io_error(m.p, p->data);
-            free(m.p);
+            xfree(m.p);
             return st;
         }
         return ST_OK;
@@ -3237,8 +3310,8 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         if (!*a) buf_str(&r, b);
         else if (a[strlen(a) - 1] == '/') { buf_str(&r, a); buf_str(&r, b); }
         else { buf_str(&r, a); buf_str(&r, "/"); buf_str(&r, b); }
-        free((void*)a);
-        free((void*)b);
+        xfree((void*)a);
+        xfree((void*)b);
         *out = buf_take(&r);
         return ST_OK;
     }
@@ -3253,7 +3326,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         } else {
             *out = slash ? rt_str_from(p, slash - p) : sv("");
         }
-        free((void*)p);
+        xfree((void*)p);
         return ST_OK;
     }
     /* ---------------------------------------------------------------- Datei-Operationen (R-13.31) */
@@ -3263,10 +3336,10 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         buf_str(&b, "");
         text_of(&b, args[1]);
         FILE* f = u_fopen(p->data, "ab");
-        if (!f) { free(b.p); return path_io_error(p->data); }
+        if (!f) { xfree(b.p); return path_io_error(p->data); }
         if (b.n) fwrite(b.p, 1, (size_t)b.n, f);
         fclose(f);
-        free(b.p);
+        xfree(b.p);
         return ST_OK;
     }
     if (IS("rpp.io.File.copyFile")) {
@@ -3340,13 +3413,13 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             s->f = create_new(s->temp);
             if (!s->f && errno != EEXIST) {
                 int e = errno;
-                free(s);
+                xfree(s);
                 errno = e;
                 return path_io_error(target);
             }
         }
         if (!s->f) {
-            free(s);
+            xfree(s);
             errno = EEXIST;
             return path_io_error(target);
         }
@@ -3363,7 +3436,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             Buf m = { 0 };
             buf_fmt(&m, "%s: Schreibvorgang ist beendet", s->target);
             int st = io_error(m.p, s->target);
-            free(m.p);
+            xfree(m.p);
             return st;
         }
         if (IS("rpp.io.SaveFile.commit")) {
@@ -3391,12 +3464,12 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         }
         if (b.n && fwrite(b.p, 1, (size_t)b.n, s->f) != (size_t)b.n) {
             int e = errno;
-            free(b.p);
+            xfree(b.p);
             save_cancel(s);
             errno = e;
             return path_io_error(s->target);
         }
-        free(b.p);
+        xfree(b.p);
         return ST_OK;
     }
     /* ---------------------------------------------------------------- Verzeichniseinträge, Pfade */
@@ -3423,7 +3496,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             e->slots[2] = rv_enum(rt_file_type_def, kind);
             rt_vec_push(v, rv_obj(e, F_OWN));
         }
-        free((void*)dir);
+        xfree((void*)dir);
         st = rt_drop(lv);
         if (st) return st;
         *out = rv_obj(v, F_OWN);
@@ -3497,7 +3570,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         if (IS("rpp.fmt.Fmt.padRight")) buf_add(&r, s.p, s.n);
         for (int64_t i = nc; i < w; i++) buf_str(&r, " ");
         if (IS("rpp.fmt.Fmt.padLeft")) buf_add(&r, s.p, s.n);
-        free(s.p);
+        xfree(s.p);
         *out = buf_take(&r);
         return ST_OK;
     }
@@ -3520,7 +3593,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         char* t = (char*)xmalloc((size_t)len + 1);
         snprintf(t, (size_t)len + 1, "%.*f", (int)d, x);
         *out = rt_str_from(t, len);
-        free(t);
+        xfree(t);
         return ST_OK;
     }
     if (!strncmp(name, "rpp.text.StringBuilder.", 23)) {
@@ -3543,7 +3616,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         buf_add(&s->b, t.p, t.n);
         for (int64_t i = 0; i < t.n; i++)
             if (((unsigned char)t.p[i] & 0xc0) != 0x80) s->chars++;
-        free(t.p);
+        xfree(t.p);
         return ST_OK;
     }
     if (!strncmp(name, "rpp.collections.", 16)) {
@@ -3686,9 +3759,9 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
             h->nb = 0;
             for (int64_t i = 0; i < k; i++) {
                 int st = rt_drop(items[i]);
-                if (st) { free(items); return st; }
+                if (st) { xfree(items); return st; }
             }
-            free(items);
+            xfree(items);
             return ST_OK;
         }
     }
@@ -3825,7 +3898,7 @@ static void run_main(MainArgs* m) {
         for (int i = 1; i < wn; i++) {
             char* u = w2u8(wa[i]);
             rt_vec_push(v, rt_str_c(u));
-            free(u);
+            xfree(u);
         }
         LocalFree(wa);
     } else {

@@ -64,6 +64,12 @@ public:
     i64 maxNats = 0;
     string[] names = [];
     string[] cvars = [];
+    // je Name: Laufzeitart einer nativen C-Variablen (int64_t x…), "" für einen rv-Ort (M7)
+    string[] ntags = [];
+    i64 xvars = 0;
+    // Grundwert-Variablen dürfen C-Variablen werden; noNat: Namen, die einen rv-Ort brauchen
+    bool natVars = false;
+    string[] noNat = [];
     GScope[] scopes = [];
     string[] targets = [];
     // C-Ausdruck für this; leer: kein this
@@ -620,6 +626,7 @@ private:
         while (f.names.length > sc.nameMark) {
             discard f.names.pop();
             discard f.cvars.pop();
+            discard f.ntags.pop();
         }
     }
 
@@ -629,26 +636,150 @@ private:
         f.scopes[f.scopes.length - 1].vars.push(k);
         f.names.push(name);
         f.cvars.push("V[" + k.toString() + "]");
+        f.ntags.push("");
         return k;
     }
 
     // Variable eines Grundtyps ohne Freigabe (nicht string, nicht nullbar): am Ende des
     // Bereichs ist nichts freizugeben, rt_scope_drop entfällt (M7)
-    i64 declareTyped(string name, shared Ty? t) mut {
+    // Liefert den C-Ort: "V[k]" oder eine native C-Variable "x…" (i8–i64, char, bool; M7),
+    // wenn die Funktion das erlaubt und kein Lambda, take/replace oder Tupelziel den Namen braucht.
+    string declareTyped(string name, shared Ty? t) mut {
         if (t == null || t.kind != TK::Prim || t.prim == "string") {
-            return declare(name);
+            i64 d = declare(name);
+            return "V[" + d.toString() + "]";
+        }
+        f.names.push(name);
+        if (f.natVars && nkindOf(t) != "" && !hasStr(f.noNat, name)) {
+            string x = "x" + f.xvars.toString();
+            f.xvars++;
+            f.cvars.push(x);
+            f.ntags.push(ctag(t.prim));
+            return x;
         }
         i64 k = f.vars;
         f.vars++;
-        f.names.push(name);
-        f.cvars.push("V[" + k.toString() + "]");
-        return k;
+        string cv = "V[" + k.toString() + "]";
+        f.cvars.push(cv);
+        f.ntags.push("");
+        return cv;
+    }
+
+    static bool hasStr(string[] list, string x) {
+        for (string s : list) {
+            if (s == x) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // native C-Variable eines Namens ("" , wenn der Name ein rv-Ort ist)
+    string natVar(string name) {
+        for (i64 i = f.names.length - 1; i >= 0; i--) {
+            if (f.names[i] == name) {
+                if (f.ntags[i] == "") {
+                    return "";
+                }
+                return f.cvars[i];
+            }
+        }
+        return "";
+    }
+
+    string natVarTag(string name) {
+        for (i64 i = f.names.length - 1; i >= 0; i--) {
+            if (f.names[i] == name) {
+                return f.ntags[i];
+            }
+        }
+        return "";
+    }
+
+    // native C-Variable eines Ausdrucks (Name, auch geklammert)
+    string natVarOf(Node e) {
+        if (e.kind == "paren") {
+            return natVarOf(e.kids[0]);
+        }
+        if (e.kind == "name") {
+            return natVar(e.text);
+        }
+        return "";
+    }
+
+    // Namen, die einen rv-Ort brauchen: Erfassungen von Lambdas, Argumente von take/replace,
+    // Ziele von Tupelzuweisungen
+    void scanNoNat(Node n) mut {
+        if (n.kind == "lambda" && n.id >= 0) {
+            ref Captures? cl = c.rt.captures[n.id];
+            if (cl != null) {
+                for (string s : cl.names) {
+                    f.noNat.push(s);
+                }
+            }
+        }
+        if (n.kind == "call" && n.kids.length > 1) {
+            ref Node callee = n.kids[0];
+            if (callee.kind == "name" && (callee.text == "take" || callee.text == "replace")) {
+                ref Node args0 = n.kids[1];
+                if (args0.kids.length > 0 && args0.kids[0].kids.length > 0) {
+                    noNatName(args0.kids[0].kids[0]);
+                }
+            }
+        }
+        if (n.kind == "assign" && n.kids.length > 0 && n.kids[0].kind == "tuple") {
+            for (Node t : n.kids[0].kids) {
+                noNatName(t);
+            }
+        }
+        for (Node k : n.kids) {
+            scanNoNat(k);
+        }
+    }
+
+    void noNatName(Node e) mut {
+        if (e.kind == "paren") {
+            noNatName(e.kids[0]);
+        } else if (e.kind == "name") {
+            f.noNat.push(e.text);
+        }
+    }
+
+    // Funktion mit nativen Variablen beginnen (nach beginFn bzw. für einen Lambda-Rumpf)
+    void enableNat(Node body) mut {
+        f.natVars = true;
+        scanNoNat(body);
+    }
+
+    // rv-Wert v (Grundwert der Art tag) an einen C-Ort zuweisen
+    string assignRv(string cv, string v, string tag) {
+        if (cv.startsWith("x")) {
+            return cv + " = RN(" + v + ", " + tag + ");";
+        }
+        return cv + " = " + v + ";";
+    }
+
+    // nativen Wert x (int64_t) an einen Ort zuweisen: C-Variable oder rv-Ort
+    static string natSet(string place, string x, string tag) {
+        if (place.startsWith("x")) {
+            return place + " = " + x + ";";
+        }
+        return place + " = rn_box(" + x + ", " + tag + ");";
+    }
+
+    // nativer Wert eines Orts: C-Variable oder rv-Ort
+    static string natGet(string place, string tag) {
+        if (place.startsWith("x")) {
+            return place;
+        }
+        return "RN(" + place + ", " + tag + ")";
     }
 
     // Name an einen schon bestehenden C-Ort binden (Erfassung)
     void bindName(string name, string cexpr) mut {
         f.names.push(name);
         f.cvars.push(cexpr);
+        f.ntags.push("");
     }
 
     string lookup(string name) {
@@ -678,6 +809,13 @@ private:
         b.append("    int B[" + max1(f.maxInts).toString() + "];\n");
         b.append("    rv* P[" + max1(f.maxPtrs).toString() + "];\n");
         b.append("    RObj* K[" + max1(f.lockCount).toString() + "];\n");
+        if (f.xvars > 0) {
+            b.append("    int64_t x0 = 0");
+            for (i64 i = 1; i < f.xvars; i++) {
+                b.append(", x" + i.toString() + " = 0");
+            }
+            b.append(";\n");
+        }
         if (f.maxNats > 0) {
             b.append("    int64_t n0");
             for (i64 i = 1; i < f.maxNats; i++) {
@@ -799,9 +937,10 @@ private:
         emit("*ret = rv_void();");
         emit("if ((st = rt_enter(" + cstr(label) + ")) != 0) return st;");
         pushScope();
+        enableNat(body);
         for (i64 i = 0; i < m.params.length; i++) {
-            i64 v = declareTyped(m.params[i].name, m.params[i].ty);
-            emit("V[" + v.toString() + "] = args[" + i.toString() + "];");
+            string v = declareTyped(m.params[i].name, m.params[i].ty);
+            emit(assignRv(v, "args[" + i.toString() + "]", ctag(primOf(m.params[i].ty))));
         }
         block(body);
         popScope();
@@ -976,6 +1115,7 @@ private:
         pushScope();
         i64 v = declare(m.kids[0].text);
         emit("V[" + v.toString() + "] = args;");
+        enableNat(m.kids[1]);
         block(m.kids[1]);
         popScope();
         emit("XF: rt_leave();");
@@ -1450,19 +1590,27 @@ private:
             if (dt != null) {
                 tag = ctag(dt.prim);
             }
-            i64 xv = declareTyped(nameNode.text, dt);
-            emit("V[" + xv.toString() + "] = rn_box(" + x + ", " + tag + ");");
+            string xv = declareTyped(nameNode.text, dt);
+            emit(natSet(xv, x, tag));
         } else if (d.kids.length > 2) {
             string v = store(d.kids[2]);
             shared Ty? dt = declOf(nameNode);
             if (dt != null) {
                 convertFrom(v, dt, d.kids[2]);
             }
-            i64 x = declareTyped(nameNode.text, dt);
-            emit("V[" + x.toString() + "] = " + v + ";");
+            string tag = "0";
+            if (dt != null) {
+                tag = ctag(dt.prim);
+            }
+            string x = declareTyped(nameNode.text, dt);
+            emit(assignRv(x, v, tag));
         } else {
-            i64 x = declareTyped(nameNode.text, declOf(nameNode));
-            emit("V[" + x.toString() + "] = rv_uninit();");
+            string x = declareTyped(nameNode.text, declOf(nameNode));
+            if (x.startsWith("x")) {
+                emit(x + " = 0;");
+            } else {
+                emit(x + " = rv_uninit();");
+            }
         }
     }
 
@@ -1894,6 +2042,11 @@ private:
             }
             return;
         }
+        string nv = natVarOf(target);
+        if (nv != "") {
+            natVarAssign(nv, natVarTag(unwrapName(target)), op, value);
+            return;
+        }
         // R-8.2: erst das Ziel, dann der Wert
         if (target.kind != "name") {
             checkPlace(target, true);
@@ -1924,6 +2077,29 @@ private:
         string old = tmp();
         emit(old + " = *" + s + "; *" + s + " = " + res + ";");
         emit("if (" + old + ".tag == RT_STR) rt_drop(" + old + ");");
+    }
+
+    static string unwrapName(Node e) {
+        if (e.kind == "paren") {
+            return unwrapName(e.kids[0]);
+        }
+        return e.text;
+    }
+
+    // Zuweisung an eine native C-Variable mit einem Wert, der nicht nativ geht
+    void natVarAssign(string nv, string tag, string op, Node value) mut {
+        if (op == "=") {
+            string v = store(value);
+            emit(nv + " = RN(" + v + ", " + tag + ");");
+            return;
+        }
+        string cur = tmp();
+        emit(cur + " = rn_box(" + nv + ", " + tag + ");");
+        string rhs = eval(value);
+        string res = tmp();
+        call("rt_arith(&" + res + ", " + arithOp(op.substring(0, 1)) + ", " + cur + ", " + rhs + ")");
+        call("rt_convert_exact(&" + res + ", " + tag + ")");
+        emit(nv + " = RN(" + res + ", " + tag + ");");
     }
 
     static string arithOp(string op) {
@@ -1964,6 +2140,11 @@ private:
         }
         if (e.kind == "name") {
             string cv = lookup(e.text);
+            if (cv.startsWith("x")) {
+                // native C-Variable ohne rv-Ort (darf hier nicht ankommen, M7)
+                emit("st = rt_internal(" + cstr(e.text + ": native Variable als Ort") + "); goto " + target() + ";");
+                return "((rv*)NULL)";
+            }
             if (cv != "") {
                 return "(&" + cv + ")";
             }
@@ -2086,6 +2267,9 @@ private:
         if (e.kind == "name") {
             string cv = lookup(e.text);
             if (cv != "") {
+                if (cv.startsWith("x")) {
+                    return "";
+                }
                 return cv;
             }
             i64 idx = fieldIndex(f.cls, e.text);
@@ -2129,6 +2313,10 @@ private:
         }
         if (t.kind != "name" && rootVar(t) != "") {
             return "";
+        }
+        string nv = natVarOf(t);
+        if (nv != "") {
+            return nv;
         }
         return rvPlace(t);
     }
@@ -2174,7 +2362,7 @@ private:
             return natOk(e.kids[0]);
         }
         if (k == "name") {
-            return rvPlace(e) != "";
+            return natVar(e.text) != "" || rvPlace(e) != "";
         }
         if (k == "member") {
             if (rvPlace(e) != "") {
@@ -2289,6 +2477,12 @@ private:
                 return "1";
             }
             return "0";
+        }
+        if (k == "name") {
+            string nv = natVar(e.text);
+            if (nv != "") {
+                return nv;
+            }
         }
         string place = rvPlace(e);
         if ((k == "name" || k == "member") && place != "") {
@@ -2423,12 +2617,12 @@ private:
             string tag = ctag(natPrim(t));
             string x = nat(v);
             if (es.text == "=") {
-                emit(place + " = rn_box(" + x + ", " + tag + ");");
+                emit(natSet(place, x, tag));
                 return;
             }
             string n = natTmp();
-            call("rn_arith(&" + n + ", " + arithOp(es.text.substring(0, 1)) + ", RN(" + place + ", " + tag + "), " + x + ", " + tag + ")");
-            emit(place + " = rn_box(" + n + ", " + tag + ");");
+            call("rn_arith(&" + n + ", " + arithOp(es.text.substring(0, 1)) + ", " + natGet(place, tag) + ", " + x + ", " + tag + ")");
+            emit(natSet(place, n, tag));
             return;
         }
         ref Node x0 = es.kids[0];
@@ -2440,8 +2634,8 @@ private:
             d = "-1";
         }
         string n = natTmp();
-        call("rn_incdec(&" + n + ", RN(" + place + ", " + tag + "), " + d + ", " + tag + ")");
-        emit(place + " = rn_box(" + n + ", " + tag + ");");
+        call("rn_incdec(&" + n + ", " + natGet(place, tag) + ", " + d + ", " + tag + ")");
+        emit(natSet(place, n, tag));
     }
 
     bool natStmtOk(Node s) {
@@ -2571,6 +2765,11 @@ private:
     string transfer(Node e) mut {
         if (e.kind == "name") {
             string cv = lookup(e.text);
+            if (cv.startsWith("x")) {
+                string r = tmp();
+                emit(r + " = rn_box(" + cv + ", " + natVarTag(e.text) + ");");
+                return r;
+            }
             if (cv != "") {
                 string r = tmp();
                 if (plainPrim(e)) {
@@ -2743,6 +2942,20 @@ private:
             return r;
         }
         if (k == "postinc" || k == "postdec") {
+            string xv = natVarOf(e.kids[0]);
+            if (xv != "") {
+                string tag = natVarTag(unwrapName(e.kids[0]));
+                string cur = tmp();
+                emit(cur + " = rn_box(" + xv + ", " + tag + ");");
+                string n = natTmp();
+                string d = "1";
+                if (k == "postdec") {
+                    d = "-1";
+                }
+                call("rn_incdec(&" + n + ", " + xv + ", " + d + ", " + tag + ")");
+                emit(xv + " = " + n + ";");
+                return cur;
+            }
             string s = slot(e.kids[0]);
             string cur = tmp();
             emit(cur + " = *" + s + ";");
@@ -2836,6 +3049,10 @@ private:
     string name(Node n) mut {
         string cv = lookup(n.text);
         string r = tmp();
+        if (cv.startsWith("x")) {
+            emit(r + " = rn_box(" + cv + ", " + natVarTag(n.text) + ");");
+            return r;
+        }
         if (cv != "") {
             emit(r + " = rv_view(" + cv + ");");
             return r;
@@ -2911,6 +3128,19 @@ private:
             return r;
         }
         // ++x, --x
+        string nv = natVarOf(x);
+        if (nv != "") {
+            string tag = natVarTag(unwrapName(x));
+            string n = natTmp();
+            string d = "1";
+            if (op == "--") {
+                d = "-1";
+            }
+            call("rn_incdec(&" + n + ", " + nv + ", " + d + ", " + tag + ")");
+            emit(nv + " = " + n + ";");
+            emit(r + " = rn_box(" + n + ", " + tag + ");");
+            return r;
+        }
         string s = slot(x);
         string cur = tmp();
         emit(cur + " = *" + s + ";");
@@ -3470,6 +3700,7 @@ private:
         }
         emit("*ret = rv_void();");
         emit("if ((st = rt_enter(\"Lambda\")) != 0) return st;");
+        enableNat(body);
         pushScope();
         for (i64 i = 0; i < params.kids.length; i++) {
             i64 v = declare(params.kids[i].kids[1].text);
