@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 /* ---------------------------------------------------------------- Status */
 #define ST_OK 0
@@ -212,7 +213,16 @@ int rt_is_num_tag(uint8_t t);
 static inline int rt_is_prim(rv v) { return v.tag >= RT_BOOL && v.tag <= RT_STR; }
 
 /* Strings */
-rv rt_lit(RStr** cache, const char* s, int64_t len);
+rv rt_lit_new(RStr** cache, const char* s, int64_t len);
+/* Literal: angelegt beim ersten Gebrauch, danach inline (M7) */
+static inline rv rt_lit(RStr** cache, const char* s, int64_t len) {
+    if (*cache) {
+        rv r = rv_make(RT_STR);
+        r.v.p = *cache;
+        return r;
+    }
+    return rt_lit_new(cache, s, len);
+}
 rv rt_str_from(const char* s, int64_t len);     /* neuer String (own) */
 rv rt_str_c(const char* s);
 RStr* rt_s(rv v);
@@ -253,6 +263,13 @@ static inline int rt_owning(rv v) {
 
 static inline int rt_drop(rv v) {
     if (v.tag < RT_STR || v.tag == RT_ENUM || v.tag == RT_SLICE) return ST_OK;
+    if (v.tag == RT_STR) {
+        /* M7: nur das Freigeben (Zähler 1 -> 0) geht an rt_drop_slow */
+        if (v.form != F_OWN) return ST_OK;
+        RStr* s = (RStr*)v.v.p;
+        if (s->rc > 1) { s->rc--; return ST_OK; }
+        if (s->rc <= 0) return ST_OK;
+    }
     return rt_drop_slow(v);
 }
 
@@ -271,6 +288,15 @@ void rt_tdiscard(int64_t mark);
 int rt_combine(int st, int d);
 static inline rv rt_promote(rv v) {
     if (v.tag < RT_STR) return v;
+    if (v.tag == RT_STR) {
+        /* M7: wie rt_promote_slow, inline */
+        if (v.form == F_BORROW) {
+            RStr* s = (RStr*)v.v.p;
+            if (s->rc >= 0) s->rc++;
+            v.form = F_OWN;
+        }
+        return v;
+    }
     return rt_promote_slow(v);
 }
 rv rt_own_copy(rv v);
@@ -422,6 +448,13 @@ static inline int rt_arith(rv* out, int op, rv a, rv b) {
 static inline int rt_equal(int* out, rv a, rv b) {
     if (a.tag == b.tag && ((a.tag >= RT_BOOL && a.tag <= RT_U64) || a.tag == RT_NULL)) {
         *out = a.v.i == b.v.i;
+        return ST_OK;
+    }
+    if (a.tag == RT_STR && b.tag == RT_STR) {
+        /* M7: wie rt_equal_slow, inline */
+        RStr* x = (RStr*)a.v.p;
+        RStr* y = (RStr*)b.v.p;
+        *out = x == y || (x->len == y->len && memcmp(x->data, y->data, (size_t)x->len) == 0);
         return ST_OK;
     }
     if (a.tag >= RT_I8 && a.tag <= RT_I64 && b.tag >= RT_I8 && b.tag <= RT_I64) {

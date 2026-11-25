@@ -580,7 +580,7 @@ rv rt_str_from(const char* p, int64_t len) {
 
 rv rt_str_c(const char* p) { return rt_str_from(p, (int64_t)strlen(p)); }
 
-rv rt_lit(RStr** cache, const char* p, int64_t len) {
+rv rt_lit_new(RStr** cache, const char* p, int64_t len) {
     if (!*cache) {
         RStr* s = str_alloc(len);
         memcpy(s->data, p, (size_t)len);
