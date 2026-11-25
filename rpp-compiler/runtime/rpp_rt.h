@@ -584,6 +584,17 @@ enum {
 };
 int rt_bm_id(const char* name);
 int rt_bm(rv* out, rv recv, int id, int n, rv* args);
+/* push auf einen Vektor ohne Verteiler (M7); andere Empfänger wie rt_bm */
+RN_INLINE int rt_bm_push(rv* out, rv recv, rv x) {
+    if (recv.tag == RT_OBJ && !((RObj*)recv.v.p)->cls) {
+        RObj* o = (RObj*)recv.v.p;
+        if (o->len < o->cap) o->slots[o->len++] = x;
+        else rt_vec_push(o, x);
+        *out = rv_void();
+        return ST_OK;
+    }
+    return rt_bm(out, recv, BM_push, 1, &x);
+}
 int rt_builtin_static(rv* out, uint8_t ptag, const char* name, int n, rv* args);
 int rt_prim_mixin(rv* out, const char* name, rv v, rv* args, int* handled);
 int rt_hash(int64_t* out, rv v);

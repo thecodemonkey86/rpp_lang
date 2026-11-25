@@ -3580,7 +3580,10 @@ private:
             i64[] none = [];
             string arr = args(argsNode, t.params, none);
             string bid = builtinMethodId(t.name);
-            if (bid != "") {
+            if (bid == "BM_push" && argsNode.kids.length == 1) {
+                // Vektor: inline ohne Verteiler (M7)
+                call("rt_bm_push(&" + r + ", " + recv + ", (" + arr + ")[0])");
+            } else if (bid != "") {
                 call("rt_bm(&" + r + ", " + recv + ", " + bid + ", " + argsNode.kids.length.toString() + ", " + arr + ")");
             } else {
                 call("rt_builtin_method(&" + r + ", " + recv + ", " + cstr(t.name) + ", " + argsNode.kids.length.toString() + ", " + arr + ")");
