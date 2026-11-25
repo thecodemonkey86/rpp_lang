@@ -152,6 +152,52 @@ public:
         return c;
     }
 
+    // Vereinigung in einem Durchlauf über beide sortierten Listen; bei gleichem Schlüssel gilt
+    // der Wert aus b. Ist single nicht leer, bekommt ein Eintrag, der nur in einer der beiden
+    // steht und den Wert "R-5.3" hat, stattdessen single (Moves, die nur auf einem Weg geschahen).
+    static IdMap unite(IdMap a, IdMap b, string single) {
+        IdMap c = new IdMap();
+        i64 i = 0;
+        i64 j = 0;
+        i64 na = a.keys.length;
+        i64 nb = b.keys.length;
+        while (i < na || j < nb) {
+            if (j >= nb || (i < na && a.keys[i] < b.keys[j])) {
+                c.keys.push(a.keys[i]);
+                if (single != "" && a.vals[i] == "R-5.3") {
+                    c.vals.push(single);
+                } else {
+                    c.vals.push(a.vals[i]);
+                }
+                i++;
+            } else if (i >= na || b.keys[j] < a.keys[i]) {
+                c.keys.push(b.keys[j]);
+                if (single != "" && b.vals[j] == "R-5.3") {
+                    c.vals.push(single);
+                } else {
+                    c.vals.push(b.vals[j]);
+                }
+                j++;
+            } else {
+                c.keys.push(b.keys[j]);
+                c.vals.push(b.vals[j]);
+                i++;
+                j++;
+            }
+        }
+        return c;
+    }
+
+    // Zuordnung jeder Nummer aus ids zu v
+    static IdMap uniform(IdSet ids, string v) {
+        IdMap c = new IdMap();
+        for (i64 x : ids.items) {
+            c.keys.push(x);
+            c.vals.push(v);
+        }
+        return c;
+    }
+
     bool sameKeys(IdMap o) {
         if (keys.length != o.keys.length) {
             return false;
@@ -205,30 +251,18 @@ public:
         }
         Flow r = new Flow();
         r.nonnull = IdSet::inter(nonnull, o.nonnull);
-        r.lost = o.lost.dup();
-        for (i64 i = 0; i < lost.keys.length; i++) {
-            r.lost.put(lost.keys[i], lost.vals[i]);
+        // lost: o.lost, darüber lost, darüber nullRule für jede Verengung, die nur auf einem
+        // Weg galt (wie flow.rs: Kopie plus put je Eintrag, hier in je einem Durchlauf)
+        IdSet oneSided = IdSet::unite(IdSet::minus(nonnull, o.nonnull), IdSet::minus(o.nonnull, nonnull));
+        IdMap both = IdMap::unite(o.lost, lost, "");
+        if (oneSided.items.length == 0) {
+            r.lost = both;
+        } else {
+            r.lost = IdMap::unite(both, IdMap::uniform(oneSided, nullRule), "");
         }
-        for (i64 x : nonnull.items) {
-            if (!o.nonnull.has(x)) {
-                r.lost.put(x, nullRule);
-            }
-        }
-        for (i64 x : o.nonnull.items) {
-            if (!nonnull.has(x)) {
-                r.lost.put(x, nullRule);
-            }
-        }
-        r.moved = o.moved.dup();
-        for (i64 i = 0; i < moved.keys.length; i++) {
-            r.moved.put(moved.keys[i], moved.vals[i]);
-        }
-        for (i64 i = 0; i < r.moved.keys.length; i++) {
-            i64 k = r.moved.keys[i];
-            if (moved.has(k) != o.moved.has(k) && r.moved.vals[i] == "R-5.3") {
-                r.moved.vals[i] = moveRule;
-            }
-        }
+        // moved: o.moved, darüber moved; ein Move nach R-5.3, der nur auf einem Weg geschah,
+        // bekommt moveRule
+        r.moved = IdMap::unite(o.moved, moved, moveRule);
         r.unassigned = IdSet::unite(unassigned, o.unassigned);
         return r;
     }
