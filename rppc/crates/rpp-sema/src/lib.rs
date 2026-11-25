@@ -43,7 +43,7 @@ impl Diag {
 
 impl std::fmt::Display for Diag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let kind = if self.warning { "Warnung" } else { "Fehler" };
+        let kind = if self.warning { "Warning" } else { "Error" };
         let mut rules = self.rule.to_string();
         for a in &self.also {
             rules.push_str(", ");

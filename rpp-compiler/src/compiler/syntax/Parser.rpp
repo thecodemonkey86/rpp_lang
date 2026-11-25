@@ -11,7 +11,7 @@ using compiler.lexer.Kind;
 
 export class ParseFail : Exception {
 public:
-    constructor() : base("Syntaxfehler") { }
+    constructor() : base("Syntax error") { }
 }
 
 export class Parser {
@@ -99,20 +99,20 @@ private:
         switch (t.kind) {
             case Str: return "'\"" + t.text + "\"'";
             case Char: return "''" + t.text + "''";
-            case Eof: return "Dateiende";
+            case Eof: return "end of file";
             default: return "'" + t.text + "'";
         }
     }
 
     // Fehlschlag festhalten und die Exception liefern, die der Aufrufer wirft.
     ParseFail failure(string expected) mut {
-        string found = "gefunden " + shown();
+        string found = "found " + shown();
         if (toks[idx(0)].kind == Kind::Error) {
             found = toks[idx(0)].text;
         }
         if (farPos < pos) {
             farPos = pos;
-            farMsg = expected + " erwartet, " + found;
+            farMsg = "Expected " + expected + ", " + found;
         }
         return new ParseFail();
     }
@@ -150,7 +150,7 @@ private:
             bump();
             return n;
         }
-        throw failure("Name");
+        throw failure("name");
     }
 
     Node qualifiedName() mut {
@@ -236,7 +236,7 @@ private:
             n.add(vs);
             return n;
         }
-        throw failure("Typdeklaration");
+        throw failure("type declaration");
     }
 
     Node enumVariant() mut {
@@ -253,7 +253,7 @@ private:
             bool neg = eatP("-");
             i64 i = idx(0);
             if (toks[i].kind != Kind::Int) {
-                throw failure("Ganzzahl");
+                throw failure("integer");
             }
             string value = toks[i].text;
             if (neg) {
@@ -497,7 +497,7 @@ private:
         if (isIdent(0)) {
             return typeName(afterAs);
         }
-        throw failure("Typ");
+        throw failure("type");
     }
 
     Node typeName(bool afterAs) mut {
@@ -805,7 +805,7 @@ private:
             return a;
         }
         if (target.kind == "unary" && target.text != "++" && target.text != "--") {
-            throw failure("Zuweisung");
+            throw failure("assignment");
         }
         Node e = node("eval", "");
         e.add(target);
@@ -970,7 +970,7 @@ private:
         }
         if (negative) {
             bump();
-            throw failure("Literal");
+            throw failure("literal");
         }
         Node p = node("pname", "");
         i64 save = pos;
@@ -1012,7 +1012,7 @@ private:
             f.add(block());
             t.add(f);
         } else if (catches == 0) {
-            throw failure("'catch' oder 'finally'");
+            throw failure("'catch' or 'finally'");
         }
         return t;
     }
@@ -1340,7 +1340,7 @@ private:
             s.add(staticRef());
             return s;
         }
-        throw failure("Ausdruck");
+        throw failure("expression");
     }
 
 public:
@@ -1387,7 +1387,7 @@ public:
     // Position und Meldung des Fehlers nach einer ParseFail (wie Parser::error in rppc)
     (i32, i32, string) error() {
         i64 p = pos;
-        string msg = "Syntaxfehler";
+        string msg = "Syntax error";
         if (farPos >= 0) {
             p = farPos;
             msg = farMsg;
@@ -1398,24 +1398,24 @@ public:
         return (toks[p].line, toks[p].col, msg);
     }
 
-    // Wie Display von SyntaxError: "Zeile l:c Meldung"
+    // Wie Display von SyntaxError: "Line l:c message"
     string errorText() {
         (i32 l, i32 c, string msg) = error();
-        return "Zeile " + l.toString() + ":" + c.toString() + " " + msg;
+        return "Line " + l.toString() + ":" + c.toString() + " " + msg;
     }
 
     static string badStatement() {
-        return "Ausdruck ist keine gültige Anweisung (nur Zuweisung, Aufruf, ++ und --)";
+        return "Expression cannot be used as a statement (only assignments, calls, ++ and -- are allowed)";
     }
 
     // Erlaubte Formen von Ausdrucksanweisungen (Kapitel 8, R-8.12): der erste Verstoß
-    // als "Zeile l:c Meldung", sonst "".
+    // als "Line l:c message", sonst "".
     static string check(Node unit) {
         (i32 l, i32 c) = firstBad(unit, 0, 0);
         if (l == 0) {
             return "";
         }
-        return "Zeile " + l.toString() + ":" + c.toString() + " " + badStatement();
+        return "Line " + l.toString() + ":" + c.toString() + " " + badStatement();
     }
 
     static (i32, i32) firstBad(Node n, i32 sl, i32 sc) {

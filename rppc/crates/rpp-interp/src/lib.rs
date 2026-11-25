@@ -59,7 +59,7 @@ pub fn run(p: &'static Program, opts: Options) -> Outcome {
         Ok(o) => o,
         Err(e) => {
             let msg = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
-            Outcome { stdout: String::new(), stderr: format!("interner Fehler des Interpreters: {msg}"), exit: 3 }
+            Outcome { stdout: String::new(), stderr: format!("Internal interpreter error: {msg}"), exit: 3 }
         }
     }
 }
@@ -425,8 +425,8 @@ impl Interp {
     fn check_lock(&self, o: &ORef, mutable: bool) -> R<()> {
         let b = o.lock.get();
         if (!mutable && b == -1) || (mutable && b != 0) {
-            let how = if b == -1 { "schreibend" } else { "lesend" };
-            return Err(self.fatal("BorrowError", format!("das shared-Objekt ist {how} gesperrt")));
+            let how = if b == -1 { "writing" } else { "reading" };
+            return Err(self.fatal("BorrowError", format!("The shared object is locked for {how}")));
         }
         Ok(())
     }
@@ -452,11 +452,11 @@ impl Interp {
         }
     }
 
-    /// Ort eines Programmfehlers in der Meldung nennen (Zeile im Quelltext).
+    /// Ort eines Programmfehlers in der Meldung nennen (line im Quelltext).
     fn at(&self, f: Flow, e: &ast::Expr) -> Flow {
         match f {
             Flow::Fatal(mut x) => {
-                x.msg = format!("{} (Zeile {})", x.msg, e.span.line);
+                x.msg = format!("{} (line {})", x.msg, e.span.line);
                 Flow::Fatal(x)
             }
             other => other,
@@ -571,7 +571,7 @@ impl Interp {
             // V-11: Eine Exception, die einen Destruktor verlässt, beendet das Programm.
             Err(Flow::Throw(ex, _)) => {
                 let msg = self.describe(&ex);
-                Err(self.fatal("DestructorError", format!("Exception verlässt einen Destruktor: {msg}")))
+                Err(self.fatal("DestructorError", format!("An exception escaped a destructor: {msg}")))
             }
             Err(e) => Err(e),
         }
@@ -579,7 +579,7 @@ impl Interp {
 
     fn enter(&mut self, f: Frame) -> R<()> {
         if self.frames.len() >= MAX_DEPTH {
-            return Err(self.fatal("StackOverflowError", format!("mehr als {MAX_DEPTH} verschachtelte Aufrufe")));
+            return Err(self.fatal("StackOverflowError", format!("More than {MAX_DEPTH} nested calls")));
         }
         self.frames.push(f);
         Ok(())
@@ -614,7 +614,7 @@ impl Interp {
             })
         });
         let Some((file, m)) = main else {
-            return Outcome { stdout: String::new(), stderr: "kein main".into(), exit: 2 };
+            return Outcome { stdout: String::new(), stderr: "Missing main".into(), exit: 2 };
         };
         let argv: Vec<Value> = args.iter().map(|a| Value::Str(Rc::from(a.as_str()))).collect();
         let vec = self.new_vec(argv);
@@ -626,7 +626,7 @@ impl Interp {
         if self.check && r.is_ok() && !self.shared_used {
             let left = self.heap.iter().filter(|o| o.alive.get()).count();
             if left > 0 {
-                r = Err(self.fatal("InvariantViolation", format!("Leck ohne shared: {left} Objekte leben nach dem Ende von main")));
+                r = Err(self.fatal("InvariantViolation", format!("Leak without shared ownership: {left} objects remain live after main returns")));
             }
         }
         let exit = match r {
@@ -637,21 +637,21 @@ impl Interp {
                 self.err.push_str(&format!("{name}: {msg}\n"));
                 if !self.release {
                     for t in trace {
-                        self.err.push_str(&format!("    bei {t}\n"));
+                        self.err.push_str(&format!("    at {t}\n"));
                     }
                 }
                 let _ = self.drop_value(ex);
                 1
             }
             Err(Flow::Fatal(f)) if f.name == "InvariantViolation" => {
-                self.err.push_str(&format!("interner Fehler (Prüfmodus): {}\n", f.msg));
+                self.err.push_str(&format!("Internal error (invariant checking): {}\n", f.msg));
                 3
             }
             Err(Flow::Fatal(f)) => {
                 self.err.push_str(&format!("{}: {}\n", f.name, f.msg));
                 if !self.release {
                     for t in f.trace {
-                        self.err.push_str(&format!("    bei {t}\n"));
+                        self.err.push_str(&format!("    at {t}\n"));
                     }
                 }
                 2
@@ -702,23 +702,23 @@ impl Interp {
         for (i, f) in self.frames.iter().enumerate() {
             for (n, c) in f.scopes.iter().flatten().chain(f.env.iter()) {
                 if seen_cells.insert(Rc::as_ptr(c)) {
-                    stack.push((c.borrow().clone(), format!("Variable {n} in Rahmen {i}")));
+                    stack.push((c.borrow().clone(), format!("variable {n} in frame {i}")));
                 }
             }
             if let Some(v) = &f.this {
-                stack.push((v.clone(), format!("this in Rahmen {i}")));
+                stack.push((v.clone(), format!("this in frame {i}")));
             }
         }
         for v in self.temps.iter().flatten() {
-            stack.push((v.clone(), "Zwischenwert".into()));
+            stack.push((v.clone(), "temporary value".into()));
         }
         for v in self.statics.values() {
-            stack.push((v.clone(), "statisches Feld".into()));
+            stack.push((v.clone(), "static field".into()));
         }
         let live: Vec<ORef> = self.heap.iter().filter(|o| o.alive.get() && !o.dying.get()).cloned().collect();
         for o in &live {
             for (k, v) in o.slots.borrow().iter().enumerate() {
-                stack.push((v.clone(), format!("Feld {k} eines Objekts")));
+                stack.push((v.clone(), format!("object field {k}")));
             }
         }
         while let Some((v, wo)) = stack.pop() {
@@ -727,7 +727,7 @@ impl Interp {
                 Value::Obj(o, _) | Value::Slice(o, _, _) if form != Form::Weak => {
                     if !o.alive.get() && !o.dying.get() {
                         let rule = if form == Form::Borrow { "I-4" } else { "I-2" };
-                        problems.push(format!("{rule}: {wo} verweist auf ein freigegebenes Objekt"));
+                        problems.push(format!("{rule}: {wo} refers to a freed object"));
                         continue;
                     }
                     match form {
@@ -740,7 +740,7 @@ impl Interp {
                 Value::Func(c) if c.own => {
                     for (n, cell) in &c.env {
                         if seen_cells.insert(Rc::as_ptr(cell)) {
-                            stack.push((cell.borrow().clone(), format!("erfasste Variable {n}")));
+                            stack.push((cell.borrow().clone(), format!("captured variable {n}")));
                         }
                     }
                 }
@@ -750,19 +750,19 @@ impl Interp {
         for o in &live {
             let ptr = Rc::as_ptr(o);
             let (n_own, n_sh) = (own.get(&ptr).copied().unwrap_or(0), sh.get(&ptr).copied().unwrap_or(0));
-            let what = o.class.map(|d| self.p.defs[d].name.clone()).unwrap_or_else(|| "Vektor".into());
+            let what = o.class.map(|d| self.p.defs[d].name.clone()).unwrap_or_else(|| "vector".into());
             if o.rc.get() == 0 {
                 if n_own != 1 || n_sh != 0 {
-                    problems.push(format!("I-1: {what} hat {n_own} own- und {n_sh} shared-Verweise"));
+                    problems.push(format!("I-1: {what} has {n_own} own references and {n_sh} shared references"));
                 }
             } else {
                 self.shared_used = true;
                 if n_own != 0 || n_sh != o.rc.get() {
-                    problems.push(format!("I-1: shared-{what} hat rc={}, aber {n_sh} shared- und {n_own} own-Verweise", o.rc.get()));
+                    problems.push(format!("I-1: shared {what} has rc={}, with {n_sh} shared references and {n_own} own references", o.rc.get()));
                 }
             }
             if o.lock.get() != 0 && o.rc.get() < 1 {
-                problems.push(format!("I-5: gesperrtes {what} mit rc={}", o.rc.get()));
+                problems.push(format!("I-5: locked {what} with rc={}", o.rc.get()));
             }
         }
         self.heap.retain(|o| o.alive.get());
@@ -1195,13 +1195,13 @@ impl Interp {
                     Value::Obj(o, _) => {
                         let len = o.slots.borrow().len();
                         if i < 0 || i as usize >= len {
-                            return Err(self.fatal("IndexError", format!("Index {i} außerhalb von 0..{len}")));
+                            return Err(self.fatal("IndexError", format!("Index {i} is outside 0..{len}")));
                         }
                         Ok(Slot::Field(o, i as usize))
                     }
                     Value::Slice(o, a, b) => {
                         if i < 0 || a + i as usize >= b {
-                            return Err(self.fatal("IndexError", format!("Index {i} außerhalb von 0..{}", b - a)));
+                            return Err(self.fatal("IndexError", format!("Index {i} is outside 0..{}", b - a)));
                         }
                         Ok(Slot::Field(o, a + i as usize))
                     }
@@ -1457,7 +1457,7 @@ impl Interp {
         if ty::int_fits(v, p) || self.release {
             Ok(make_int(v, p))
         } else {
-            Err(self.fatal("OverflowError", format!("Überlauf: {v} passt nicht in {}", ty::prim_name(p))))
+            Err(self.fatal("OverflowError", format!("Overflow: {v} is outside the range of {}", ty::prim_name(p))))
         }
     }
 
@@ -1621,7 +1621,7 @@ impl Interp {
                         let n = s.chars().count();
                         match (i >= 0).then(|| s.chars().nth(i as usize)).flatten() {
                             Some(c) => Ok(Value::Char(c)),
-                            None => Err(self.fatal("IndexError", format!("Index {i} außerhalb von 0..{n}"))),
+                            None => Err(self.fatal("IndexError", format!("Index {i} is outside 0..{n}"))),
                         }
                     }
                     _ => {
@@ -1647,7 +1647,7 @@ impl Interp {
                     None => len as i128,
                 };
                 if a < 0 || b < a || b as usize > len {
-                    return Err(self.fatal("IndexError", format!("Bereich {a}..{b} außerhalb von 0..{len}")));
+                    return Err(self.fatal("IndexError", format!("Range {a}..{b} is outside 0..{len}")));
                 }
                 Ok(Value::Slice(o, base + a as usize, base + b as usize))
             }
@@ -1668,13 +1668,13 @@ impl Interp {
             Value::Obj(o, _) => {
                 let len = o.slots.borrow().len();
                 if i < 0 || i as usize >= len {
-                    return Err(self.fatal("IndexError", format!("Index {i} außerhalb von 0..{len}")));
+                    return Err(self.fatal("IndexError", format!("Index {i} is outside 0..{len}")));
                 }
                 Ok(Slot::Field(o.clone(), i as usize))
             }
             Value::Slice(o, a, b) => {
                 if i < 0 || a + i as usize >= *b {
-                    return Err(self.fatal("IndexError", format!("Index {i} außerhalb von 0..{}", b - a)));
+                    return Err(self.fatal("IndexError", format!("Index {i} is outside 0..{}", b - a)));
                 }
                 Ok(Slot::Field(o.clone(), a + i as usize))
             }
@@ -1810,7 +1810,7 @@ impl Interp {
             let mut n = b.as_i128().unwrap_or(0);
             if n < 0 || n >= bits {
                 if !self.release {
-                    return Err(self.fatal("OverflowError", format!("Schiebeweite {n} außerhalb von 0..{bits}")));
+                    return Err(self.fatal("OverflowError", format!("Shift count {n} is outside 0..{bits}")));
                 }
                 n = n.rem_euclid(bits);
             }
@@ -1850,7 +1850,7 @@ impl Interp {
             B::Mul => x * y,
             B::Div | B::Rem => {
                 if y == 0 {
-                    return Err(self.fatal("DivisionError", "Division durch null"));
+                    return Err(self.fatal("DivisionError", "Division by zero"));
                 }
                 if op == B::Div {
                     x / y
@@ -1936,7 +1936,7 @@ impl Interp {
                     return Ok(Value::Enum(d, i, Vec::new()));
                 }
             }
-            return Err(self.fatal("CastError", format!("{n} ist kein Wert von {}", def.name)));
+            return Err(self.fatal("CastError", format!("{n} is not a value of {}", def.name)));
         }
         let Some(p) = prim_of(t) else { return Ok(v) };
         if let Value::Enum(d, i, _) = &v {
@@ -1954,7 +1954,7 @@ impl Interp {
                 let n = v.as_i128().unwrap_or(-1);
                 match u32::try_from(n).ok().and_then(char::from_u32) {
                     Some(c) => Ok(Value::Char(c)),
-                    None => Err(self.fatal("CastError", format!("{n} ist kein Unicode-Zeichen"))),
+                    None => Err(self.fatal("CastError", format!("{n} is not a Unicode character"))),
                 }
             }
             P::Byte => Ok(Value::Byte(v.as_i128().unwrap_or(0) as u8)),
@@ -1966,7 +1966,7 @@ impl Interp {
                         let x = v.as_f64().unwrap_or(0.0);
                         if x.is_nan() || x.trunc() < lo as f64 || x.trunc() > hi as f64 {
                             if !self.release {
-                                return Err(self.fatal("CastError", format!("{} passt nicht in {}", fmt_f64(x), ty::prim_name(p))));
+                                return Err(self.fatal("CastError", format!("{} is outside the range of {}", fmt_f64(x), ty::prim_name(p))));
                             }
                             let s = if x.is_nan() { 0 } else if x < 0.0 { lo } else { hi };
                             return Ok(make_int(s, p));
@@ -1976,7 +1976,7 @@ impl Interp {
                     _ => {
                         let n = v.as_i128().unwrap_or(0);
                         if (n < lo || n > hi) && !self.release {
-                            return Err(self.fatal("CastError", format!("{n} passt nicht in {}", ty::prim_name(p))));
+                            return Err(self.fatal("CastError", format!("{n} is outside the range of {}", ty::prim_name(p))));
                         }
                         Ok(make_int(n, p))
                     }
@@ -2478,7 +2478,7 @@ impl Interp {
             while lo < hi {
                 let mid = lo + (hi - lo) / 2;
                 let item = items.slots.borrow().get(mid).map(Value::view)
-                    .ok_or_else(|| self.fatal("IndexError", "ungültiger Bereich bei partitionPoint"))?;
+                    .ok_or_else(|| self.fatal("IndexError", "Invalid range for partitionPoint"))?;
                 if self.call_closure(predicate, vec![item])?.as_bool() {
                     lo = mid + 1;
                 } else {
@@ -2507,7 +2507,7 @@ impl Interp {
                     let (a, b) = (args[0].as_i128().unwrap_or(0), args[1].as_i128().unwrap_or(0));
                     let n = st.chars().count() as i128;
                     if a < 0 || b < a || b > n {
-                        return Err(self.fatal("IndexError", format!("Bereich {a}..{b} außerhalb von 0..{n}")));
+                        return Err(self.fatal("IndexError", format!("Range {a}..{b} is outside 0..{n}")));
                     }
                     s(st.chars().skip(a as usize).take((b - a) as usize).collect())
                 }
@@ -2523,7 +2523,7 @@ impl Interp {
                     let i = args[0].as_i128().unwrap_or(-1);
                     match (i >= 0).then(|| st.as_bytes().get(i as usize)).flatten() {
                         Some(b) => Value::Byte(*b),
-                        None => return Err(self.fatal("IndexError", format!("Index {i} außerhalb von 0..{}", st.len()))),
+                        None => return Err(self.fatal("IndexError", format!("Index {i} is outside 0..{}", st.len()))),
                     }
                 }
                 _ => return Err(self.internal(format!("string.{name}"))),
@@ -2588,7 +2588,7 @@ impl Interp {
             "insert" => {
                 let i = args[0].as_i128().unwrap_or(-1);
                 if i < 0 || i as usize > len {
-                    return Err(self.fatal("IndexError", format!("Index {i} außerhalb von 0..{}", len + 1)));
+                    return Err(self.fatal("IndexError", format!("Index {i} is outside 0..{}", len + 1)));
                 }
                 let v = args.remove(1);
                 o.slots.borrow_mut().insert(i as usize, v);
@@ -2596,12 +2596,12 @@ impl Interp {
             }
             "pop" => match o.slots.borrow_mut().pop() {
                 Some(v) => Ok(v),
-                None => Err(self.fatal("IndexError", "pop auf einem leeren Vektor")),
+                None => Err(self.fatal("IndexError", "Cannot pop from an empty vector")),
             },
             "remove" => {
                 let i = args[0].as_i128().unwrap_or(-1);
                 if i < 0 || i as usize >= len {
-                    return Err(self.fatal("IndexError", format!("Index {i} außerhalb von 0..{len}")));
+                    return Err(self.fatal("IndexError", format!("Index {i} is outside 0..{len}")));
                 }
                 Ok(o.slots.borrow_mut().remove(i as usize))
             }

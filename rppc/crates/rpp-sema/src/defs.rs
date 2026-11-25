@@ -307,7 +307,7 @@ impl Program {
                 let full = def.full_name();
                 if let Some(&other) = self.by_full.get(&full) {
                     if self.defs[other].project == project {
-                        self.error(f, name.span, "R-11.4", format!("Typ {full} ist schon deklariert"));
+                        self.error(f, name.span, "R-11.4", format!("Type {full} is already declared"));
                         continue;
                     }
                 }
@@ -352,7 +352,7 @@ impl Program {
             }
         }
         if found.len() > 1 {
-            self.error(file, span, "R-11.8", format!("{name} ist mehrdeutig: {}", found.join(", ")));
+            self.error(file, span, "R-11.8", format!("{name} is ambiguous: {}", found.join(", ")));
             return None;
         }
         if let Some(full) = found.first() {
@@ -393,12 +393,12 @@ impl Program {
     fn resolve_type_arg(&mut self, file: usize, scope: &[ParamId], a: &TypeArg, span: Span) -> Ty {
         match a {
             TypeArg::Void => {
-                self.error(file, span, "R-4.45", "void ist hier kein Typargument");
+                self.error(file, span, "R-4.45", "void cannot be used as a type argument here");
                 Ty::Error
             }
             TypeArg::Type { ty, mutable } => {
                 if *mutable {
-                    self.error(file, ty.span, "R-10.13", "mut ist nur an Parametern von Func erlaubt");
+                    self.error(file, ty.span, "R-10.13", "mut is allowed only on Func parameters");
                 }
                 self.resolve_type(file, scope, ty)
             }
@@ -428,7 +428,7 @@ impl Program {
             if let Some(d) = d {
                 let from = self.ws.files[file].project;
                 if let Err(rule) = self.visibility(d, from) {
-                    self.error(file, tn.name.span(), rule, format!("{full} ist hier nicht verwendbar"));
+                    self.error(file, tn.name.span(), rule, format!("{full} cannot be used here"));
                     return Ty::Error;
                 }
             }
@@ -436,7 +436,7 @@ impl Program {
         };
         let Some(def) = def else {
             if !self.diags.iter().any(|d| d.span == parts[0].span) {
-                self.error(file, tn.name.span(), "R-11.8", format!("unbekannter Typ {}", tn.name.to_dotted()));
+                self.error(file, tn.name.span(), "R-11.8", format!("Unknown type {}", tn.name.to_dotted()));
             }
             return Ty::Error;
         };
@@ -444,7 +444,7 @@ impl Program {
         let want = self.defs[def].tparams.len();
         if args.len() != want {
             self.error(file, tn.name.span(), "R-7.23", format!(
-                "{} erwartet {want} Typargumente, nicht {}", self.defs[def].name, args.len()));
+                "{} expects {want} type arguments, got {}", self.defs[def].name, args.len()));
             return Ty::Error;
         }
         if !args.is_empty() {
@@ -467,7 +467,7 @@ impl Program {
             let last = i + 1 == n;
             match a {
                 TypeArg::Void if !last => {
-                    self.error(file, span, "R-4.37", "void steht in Func nur an letzter Stelle");
+                    self.error(file, span, "R-4.37", "void is allowed only as the last type argument to Func");
                     return Ty::Error;
                 }
                 TypeArg::Void => return Ty::Func(params, Box::new(Ty::Void)),
@@ -475,7 +475,7 @@ impl Program {
                     let t = self.resolve_type(file, scope, ty);
                     if last {
                         if *mutable {
-                            self.error(file, ty.span, "R-10.13", "mut ist am Rückgabetyp von Func nicht erlaubt");
+                            self.error(file, ty.span, "R-10.13", "mut is not allowed on the return type of Func");
                             return Ty::Error;
                         }
                         return Ty::Func(params, Box::new(t));
@@ -527,7 +527,7 @@ impl Program {
                 let t = self.resolve_named(file, &scope, &b, b.name.span());
                 if let Ty::Named(bd, _) = &t {
                     if self.defs[*bd].kind != DefKind::Class {
-                        self.error(file, b.name.span(), "R-7.12", format!("{} ist keine Klasse", self.defs[*bd].name));
+                        self.error(file, b.name.span(), "R-7.12", format!("{} is not a class", self.defs[*bd].name));
                     } else {
                         self.defs[def].base = Some(t);
                     }
@@ -538,7 +538,7 @@ impl Program {
                     let t = self.resolve_named(file, &scope, tn, tn.name.span());
                     if let Ty::Named(md, _) = &t {
                         if self.defs[*md].kind != DefKind::Mixin {
-                            self.error(file, tn.name.span(), "R-7.20", format!("{} ist kein Mixin", self.defs[*md].name));
+                            self.error(file, tn.name.span(), "R-7.20", format!("{} is not a mixin", self.defs[*md].name));
                             continue;
                         }
                         self.defs[def].imports.push((t, tn.name.span()));
@@ -556,7 +556,7 @@ impl Program {
                     let last = *cycle.iter().max_by_key(|&&d| (self.defs[d].file, self.defs[d].span)).unwrap();
                     if last == def {
                         let (f, s) = (self.defs[def].file, self.defs[def].span);
-                        self.error(f, s, "R-7.12", format!("Vererbungszyklus über {}", self.defs[def].name));
+                        self.error(f, s, "R-7.12", format!("Inheritance cycle through {}", self.defs[def].name));
                     }
                     break;
                 }
@@ -617,12 +617,12 @@ impl Program {
                     let mut names = HashSet::new();
                     for v in &e.variants {
                         if !names.insert(v.name.name.clone()) {
-                            self.error(file, v.name.span, "R-4.25", format!("Variante {} ist doppelt", v.name.name));
+                            self.error(file, v.name.span, "R-4.25", format!("Variant {} is declared more than once", v.name.name));
                         }
                         let (fields, value) = match &v.payload {
                             ast::VariantPayload::Data(ps) => {
                                 if has_value {
-                                    self.error(file, v.name.span, "R-4.25", "ein Enum mit Zahlwerten hat keine Varianten mit Daten");
+                                    self.error(file, v.name.span, "R-4.25", "An enum with numeric values cannot have variants with payloads");
                                 }
                                 (self.params(file, &[], ps), None)
                             }
@@ -630,7 +630,7 @@ impl Program {
                                 let val = int_value(text.trim_start_matches('-')).map(|x| if text.starts_with('-') { -x } else { x });
                                 match val {
                                     Some(x) if x >= i32::MIN as i128 && x <= i32::MAX as i128 => next = x as i64,
-                                    _ => self.error(file, v.name.span, "R-4.26", "Zahlwert außerhalb von i32"),
+                                    _ => self.error(file, v.name.span, "R-4.26", "Numeric value is outside the range of i32"),
                                 }
                                 (Vec::new(), Some(next))
                             }
@@ -639,7 +639,7 @@ impl Program {
                         if let Some(x) = value {
                             if let Some(other) = seen.insert(x, v.name.name.clone()) {
                                 self.error(file, v.name.span, "R-4.26", format!(
-                                    "{} hat denselben Wert {x} wie {other}", v.name.name));
+                                    "{} has the same value {x} as {other}", v.name.name));
                             }
                             next = x + 1;
                         }
@@ -656,7 +656,7 @@ impl Program {
                             ClassMember::Field(f) => {
                                 let ty = self.resolve_type(file, &class_scope, &f.ty);
                                 if f.is_static && ty.mentions_param() {
-                                    self.error(file, f.name.span, "R-7.27", "eine statische Konstante darf nicht von einem Typ-Parameter abhängen");
+                                    self.error(file, f.name.span, "R-7.27", "A static constant cannot depend on a type parameter");
                                 }
                                 self.defs[def].fields.push(FieldInfo {
                                     name: f.name.name.clone(),
@@ -823,12 +823,12 @@ impl Program {
                 }
                 if self.tparams[*tp].needs_new && !self.satisfies_new(arg) {
                     self.error(p.file, p.span, "R-7.25", format!(
-                        "{} hat keinen sichtbaren parameterlosen Konstruktor (new())", self.show(arg)));
+                        "{} has no accessible parameterless constructor (new())", self.show(arg)));
                 }
                 for c in self.tparams[*tp].constraints.clone() {
                     let c = c.subst(&map);
                     if !self.satisfies(arg, &c) {
-                        self.error(p.file, p.span, "R-7.26", format!("{} erfüllt {} nicht", self.show(arg), self.show(&c)));
+                        self.error(p.file, p.span, "R-7.26", format!("{} does not satisfy {}", self.show(arg), self.show(&c)));
                     }
                 }
             }
@@ -862,30 +862,30 @@ impl Program {
             let pspan = unit.package.as_ref().map_or(Span { line: 1, col: 0 }, |q| q.span());
             if let Some(expected) = self.ws.files[f].expected_package.clone() {
                 if expected != package {
-                    let shown = if expected.is_empty() { "keine package-Zeile (Wurzelpaket)".to_string() } else { format!("package {expected};") };
-                    self.error(f, pspan, "R-11.2", format!("die Datei verlangt {shown}"));
+                    let shown = if expected.is_empty() { "no package declaration (root package)".to_string() } else { format!("package {expected};") };
+                    self.error(f, pspan, "R-11.2", format!("The file requires {shown}"));
                 } else if lib && !is_std && !(package == pname || package.starts_with(&format!("{pname}."))) {
-                    self.error(f, pspan, "R-11.18", format!("Pakete der Bibliothek {pname} beginnen mit {pname}"));
+                    self.error(f, pspan, "R-11.18", format!("Packages in library {pname} must start with {pname}"));
                 }
             } else if lib && !proj_single && !is_std && package != pname && !package.starts_with(&format!("{pname}.")) {
-                self.error(f, pspan, "R-11.18", format!("Pakete der Bibliothek {pname} beginnen mit {pname}"));
+                self.error(f, pspan, "R-11.18", format!("Packages in library {pname} must start with {pname}"));
             }
             // using (R-11.7, R-11.8, R-11.12)
             for u in &unit.usings {
                 let full = u.target.to_dotted();
                 match self.by_full.get(&full).copied() {
                     None => {
-                        self.error(f, u.span, "R-11.7", format!("unbekannter Typ {full}"));
+                        self.error(f, u.span, "R-11.7", format!("Unknown type {full}"));
                     }
                     Some(d) => {
                         if let Err(rule) = self.visibility(d, project) {
-                            self.error(f, u.span, rule, format!("{full} ist hier nicht verwendbar"));
+                            self.error(f, u.span, rule, format!("{full} cannot be used here"));
                         }
                         if let Some(alias) = &u.alias {
                             let own = self.defs.iter().any(|x| x.project == project && x.package == package && x.name == alias.name);
                             if own {
                                 self.error(f, u.span, "R-11.8", format!(
-                                    "der Name {} verdeckt einen Typ des eigenen Pakets", alias.name));
+                                    "The name {} shadows a type in its own package", alias.name));
                             }
                         }
                     }
@@ -905,23 +905,23 @@ impl Program {
             let main_file = self.ws.projects[pi].main_file.clone();
             if kind == ProjectKind::Library {
                 for (f, s) in &list {
-                    self.diags.push(Diag::error(&self.ws.files[*f].path.clone(), *s, "R-11.14", "eine Bibliothek hat keine main"));
+                    self.diags.push(Diag::error(&self.ws.files[*f].path.clone(), *s, "R-11.14", "A library cannot declare main"));
                 }
                 continue;
             }
             for (k, (f, s)) in list.iter().enumerate() {
                 let path = self.ws.files[*f].path.clone();
                 if k > 0 {
-                    self.diags.push(Diag::error(&path, *s, "R-11.14", "ein Programm hat genau eine main"));
+                    self.diags.push(Diag::error(&path, *s, "R-11.14", "An executable must declare exactly one main"));
                 } else if let Some(mf) = &main_file {
                     if !self.ws.projects[pi].single_file && *mf != path {
-                        self.diags.push(Diag::error(&path, *s, "R-11.14", "main steht nicht in der Datei, die rpp.yaml nennt"));
+                        self.diags.push(Diag::error(&path, *s, "R-11.14", "main is not in the file specified by rpp.yaml"));
                     }
                 }
             }
             if list.is_empty() && !self.ws.projects[pi].single_file {
                 if let Some(y) = self.ws.projects[pi].yaml.clone() {
-                    self.diags.push(Diag::error(&y, Span { line: 1, col: 0 }, "R-11.14", "das Programm hat keine main"));
+                    self.diags.push(Diag::error(&y, Span { line: 1, col: 0 }, "R-11.14", "The executable has no main"));
                 }
             }
         }
@@ -1006,10 +1006,10 @@ impl Program {
         let file = self.defs[def].file;
         for m in self.defs[def].methods.clone() {
             if m.is_static {
-                self.error(file, m.span, "R-7.18", "ein Mixin hat keine statischen Methoden");
+                self.error(file, m.span, "R-7.18", "A mixin cannot declare static methods");
             }
             if m.nodiscard && m.ret == Ret::Void {
-                self.error(file, m.span, "R-8.15", "nodiscard an einer void-Methode");
+                self.error(file, m.span, "R-8.15", "nodiscard is not allowed on a void method");
             }
         }
     }
@@ -1034,21 +1034,21 @@ impl Program {
         }
         for f in &d.fields {
             if seen_fields.contains_key(&f.name) {
-                self.error(file, f.span, "R-7.1", format!("Feld {} ist schon deklariert", f.name));
+                self.error(file, f.span, "R-7.1", format!("Field {} is already declared", f.name));
             }
             seen_fields.insert(f.name.clone(), f.span);
         }
         for m in &d.methods {
             if let Some(fs) = d.fields.iter().find(|f| f.name == m.name) {
                 let at = if fs.span > m.span { fs.span } else { m.span };
-                self.error(file, at, "R-7.1", format!("Feld und Methode heißen beide {}", m.name));
+                self.error(file, at, "R-7.1", format!("A field and a method share the name {}", m.name));
             }
         }
 
         // V-8.2: nodiscard an void
         for m in &d.methods {
             if m.nodiscard && m.ret == Ret::Void {
-                self.error(file, m.span, "R-8.15", "nodiscard an einer void-Methode");
+                self.error(file, m.span, "R-8.15", "nodiscard is not allowed on a void method");
             }
         }
 
@@ -1059,19 +1059,19 @@ impl Program {
                     continue;
                 }
                 let msg = if !same_params(&o.params, &m.params) {
-                    "unterscheidet sich nur in Besitzform oder Borrow-Markierung der Parameter"
+                    "differs only in the ownership or borrowing of its parameters"
                 } else if o.ret != m.ret {
-                    "unterscheidet sich nur im Rückgabetyp"
+                    "differs only in return type"
                 } else {
-                    "ist doppelt deklariert"
+                    "is declared more than once"
                 };
-                self.error(file, m.span, "R-7.16", format!("Methode {} {msg}", m.name));
+                self.error(file, m.span, "R-7.16", format!("Method {} {msg}", m.name));
                 break;
             }
         }
         for (i, c) in d.ctors.iter().enumerate() {
             if d.ctors[..i].iter().any(|o| same_param_types(&o.params, &c.params)) {
-                self.error(file, c.span, "R-7.16", "Konstruktor mit denselben Parametertypen ist doppelt");
+                self.error(file, c.span, "R-7.16", "A constructor with the same parameter types is already declared");
             }
         }
 
@@ -1103,24 +1103,24 @@ impl Program {
             match base_m {
                 Some(b) => {
                     if b.nodiscard && !m.nodiscard {
-                        self.error(file, m.span, "R-8.15", format!("{} muss nodiscard übernehmen", m.name));
+                        self.error(file, m.span, "R-8.15", format!("{} must retain nodiscard", m.name));
                     } else if !b.overridable() {
-                        self.error(file, m.span, "R-7.13", format!("{} ist in der Basisklasse nicht virtual", m.name));
+                        self.error(file, m.span, "R-7.13", format!("{} is not virtual in the base class", m.name));
                     } else if !is_override {
-                        self.error(file, m.span, "R-7.13", format!("{} überschreibt eine geerbte Methode und braucht override", m.name));
+                        self.error(file, m.span, "R-7.13", format!("{} overrides an inherited method and requires override", m.name));
                     } else if !same_params(&b.params, &m.params) || b.mut_this != m.mut_this {
-                        self.error(file, m.span, "R-7.13", format!("{} überschreibt mit anderer Borrow-Markierung", m.name));
+                        self.error(file, m.span, "R-7.13", format!("{} overrides a method with different borrowing", m.name));
                     } else if access_rank(m.access) < access_rank(b.access) {
-                        self.error(file, m.span, "R-7.13", format!("{} darf beim Überschreiben nicht weniger sichtbar werden", m.name));
+                        self.error(file, m.span, "R-7.13", format!("{} cannot reduce visibility when overriding a method", m.name));
                     }
                 }
                 None => match mix_m {
                     Some(b) if b.has_body && !is_override => {
-                        self.error(file, m.span, "R-7.21", format!("{} kommt auch aus einem Mixin; nötig ist override", m.name));
+                        self.error(file, m.span, "R-7.21", format!("{} is also provided by a mixin and requires override", m.name));
                     }
                     Some(_) => {}
                     None if is_override => {
-                        self.error(file, m.span, "R-7.13", format!("{} überschreibt nichts", m.name));
+                        self.error(file, m.span, "R-7.13", format!("{} does not override a method", m.name));
                     }
                     None => {}
                 },
@@ -1140,7 +1140,7 @@ impl Program {
                     let conflict = bodies.iter().any(|(o, _)| o.owner != m.owner && o.name == m.name && same_param_types(&o.params, &m.params));
                     let resolved = d.methods.iter().any(|c| c.name == m.name && same_param_types(&c.params, &m.params) && c.modifier == Some(MethodModifier::Override));
                     if conflict && !resolved {
-                        self.error(file, *ispan, "R-7.21", format!("{} kommt aus zwei Mixins", m.name));
+                        self.error(file, *ispan, "R-7.21", format!("{} is provided by two mixins", m.name));
                     }
                     if !bodies.iter().any(|(o, _)| o.owner == m.owner && o.name == m.name && same_param_types(&o.params, &m.params)) {
                         bodies.push((m, *ispan));
@@ -1161,7 +1161,7 @@ impl Program {
                     }) || d.is_abstract;
                     if !ok {
                         self.error(file, *ispan, "R-7.20", format!(
-                            "die Anforderung {} von {} ist nicht erfüllt", r.name, self.defs[*md].name));
+                            "The requirement {} of {} is not satisfied", r.name, self.defs[*md].name));
                     }
                 }
             }
@@ -1171,7 +1171,7 @@ impl Program {
         if !d.is_abstract {
             let own_abstract = d.methods.iter().find(|m| m.modifier == Some(MethodModifier::Abstract));
             if let Some(m) = own_abstract {
-                self.error(file, m.span, "R-7.14", format!("{} ist abstrakt, die Klasse aber nicht", m.name));
+                self.error(file, m.span, "R-7.14", format!("{} is abstract, but its class is not", m.name));
             } else if let Some(b) = &d.base {
                 let mut names: Vec<String> = Vec::new();
                 for t in std::iter::once(b.clone()).chain(self.supertypes(b)) {
@@ -1182,7 +1182,7 @@ impl Program {
                 for n in names {
                     let implemented = self.methods_of(&self_ty, &n).iter().all(|m| m.has_body);
                     if !implemented {
-                        self.error(file, d.span, "R-7.14", format!("{n} ist abstrakt; die Klasse muss abstract sein"));
+                        self.error(file, d.span, "R-7.14", format!("{n} is abstract, so the class must be abstract"));
                         break;
                     }
                 }
@@ -1210,11 +1210,11 @@ impl Program {
             found
         };
         if ancestor_copy && d.copy.is_none() {
-            self.error(file, d.span, "R-7.11", format!("{} braucht ein eigenes copy, weil die Basisklasse eines hat", d.name));
+            self.error(file, d.span, "R-7.11", format!("{} must define copy because its base class defines it", d.name));
         }
         if let (Some(cs), Some(b)) = (d.copy, base_def) {
             if self.defs[b].copy.is_none() {
-                self.error(file, cs, "R-7.10", "copy in der Unterklasse verlangt copy in der Basisklasse");
+                self.error(file, cs, "R-7.10", "copy in a subclass requires copy in its base class");
             }
         }
 
@@ -1224,11 +1224,11 @@ impl Program {
             if !base_default {
                 for c in d.ctors.iter().filter(|c| !c.calls_base) {
                     self.error(file, c.span, "R-7.6", format!(
-                        "{} hat keinen parameterlosen Konstruktor; nötig ist : base(…)", self.defs[b].name));
+                        "{} has no parameterless constructor. Use : base(…)", self.defs[b].name));
                 }
                 if d.ctors.is_empty() {
                     self.error(file, d.span, "R-7.6", format!(
-                        "{} hat keinen parameterlosen Konstruktor; nötig ist ein Konstruktor mit : base(…)", self.defs[b].name));
+                        "{} has no parameterless constructor. Declare a constructor with : base(…)", self.defs[b].name));
                 }
             }
         }
@@ -1262,7 +1262,7 @@ impl Program {
             for n in named {
                 let nd = &self.defs[n];
                 if nd.project == d.project && !nd.export && reported.insert(span) {
-                    let msg = format!("{} ist nicht exportiert, steht aber in der Schnittstelle von {}", nd.name, d.name);
+                    let msg = format!("{} is not exported but appears in the interface of {}", nd.name, d.name);
                     self.error(file, span, "R-11.11", msg);
                 }
             }

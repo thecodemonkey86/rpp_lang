@@ -74,18 +74,18 @@ for b in range(0, len(paths), 80):
 
 diff = same_line = other_line = rejected = 0
 for name, a in antlr.items():
-    r = rust.get(name, "fehlt")
+    r = rust.get(name, "missing")
     if (a is None) != (r is None):
         diff += 1
         if diff <= 15:
-            print(f"UNTERSCHIED {name}: ANTLR {'ok' if a is None else a!r} | rppc {'ok' if r is None else r}")
+            print(f"MISMATCH {name}: ANTLR {'ok' if a is None else a!r} | rppc {'ok' if r is None else r}")
     elif a is not None:
         rejected += 1
-        line = int(re.search(r"Zeile (\d+)", a).group(1))
+        line = int(re.search(r"Line (\d+)", a).group(1))
         if line == r[0]:
             same_line += 1
         else:
             other_line += 1
-print(f"{N} Mutanten (Seed {SEED}): {N - rejected - diff} von beiden akzeptiert, {rejected} von beiden abgelehnt, "
-      f"{diff} Unterschiede; erste Fehlerzeile gleich bei {same_line} von {rejected}")
+print(f"{N} mutants (seed {SEED}): both accepted {N - rejected - diff}, both rejected {rejected}, "
+      f"{diff} mismatches. First error line matched in {same_line} of {rejected}")
 shutil.rmtree(OUT, ignore_errors=True)

@@ -139,18 +139,18 @@ pub fn defs(input: &std::path::Path, std_dir: &std::path::Path, release: bool) -
         }
     }
     for d in &p.diags {
-        let _ = writeln!(out, "fehler {}:{}:{} [{}] {}", display_path(&d.file, &base), d.span.line, d.span.col, d.rule, d.message);
+        let _ = writeln!(out, "error {}:{}:{} [{}] {}", display_path(&d.file, &base), d.span.line, d.span.col, d.rule, d.message);
     }
     out
 }
 
-/// Alle Meldungen von `analyze` (Deklarationen und Rümpfe), zum Vergleich mit `rppcc pruefe`.
+/// Alle Meldungen von `analyze` (Deklarationen und Rümpfe), zum Vergleich mit `rppcc diagnose`.
 pub fn pruefe(input: &std::path::Path, std_dir: &std::path::Path) -> String {
     let base = input_dir(input);
     let p = rpp_sema::analyze(input, std_dir, false);
     let mut out = String::new();
     for d in &p.diags {
-        let kind = if d.warning { "warnung" } else { "fehler" };
+        let kind = if d.warning { "warning" } else { "error" };
         let mut rules = d.rule.to_string();
         for a in &d.also {
             rules.push_str(", ");

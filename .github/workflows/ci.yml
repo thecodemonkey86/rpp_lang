@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test the Rust workspace
+        run: cargo test --locked --workspace --manifest-path rppc/Cargo.toml
+      - name: Build the reference interpreter
+        run: cargo build --locked --manifest-path rppc/Cargo.toml
+      - name: Run syntax tests
+        run: cargo run --locked --manifest-path rppc/Cargo.toml -- syntaxtest .
+      - name: Run language conformance tests
+        run: cargo run --locked --manifest-path rppc/Cargo.toml -- test .
+      - name: Check English CLI output
+        run: python .github/scripts/check.py cli
+      - name: Build and run native smoke tests
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            & ./.github/scripts/enter-msvc.ps1
+          }
+          python .github/scripts/check.py native

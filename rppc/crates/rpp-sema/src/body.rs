@@ -274,7 +274,7 @@ impl<'p> Checker<'p> {
         self.frames.push(Frame::new(Some(Ret::Val(Ty::Prim(P::I32))), false));
         self.new_local(&m.args.name, Ty::Vector(Box::new(Ty::Prim(P::String))), LocalKind::Param(Mode::Read));
         if self.block(&m.body) {
-            self.err(m.body.end, "R-8.26", "main endet ohne return");
+            self.err(m.body.end, "R-8.26", "main ends without returning a value");
         }
         self.frames.pop();
     }
@@ -297,7 +297,7 @@ impl<'p> Checker<'p> {
                         self.p.rt.base_ctors.insert((file, span), m);
                     }
                 }
-                _ => self.err(span, "R-7.6", "die Klasse hat keine Basisklasse"),
+                _ => self.err(span, "R-7.6", "The class has no base class"),
             }
         }
         self.block(body);
@@ -330,7 +330,7 @@ impl<'p> Checker<'p> {
         let set = assigned_fields(&body.stmts);
         let missing: Vec<&String> = needed.iter().filter(|n| !set.contains(n.as_str()) && !set.contains("*")).collect();
         if let Some(first) = missing.first() {
-            self.err(body.end, "R-7.7", format!("Feld {first} wird im Konstruktor nicht auf jedem Weg gesetzt"));
+            self.err(body.end, "R-7.7", format!("Field {first} is not initialized on every path through the constructor"));
         }
     }
 
@@ -368,7 +368,7 @@ impl<'p> Checker<'p> {
             self.p.rt.decls.insert((file, name.span), ty.clone());
         }
         if self.find_local(&name.name).is_some() {
-            self.err(name.span, "R-8.17", format!("{} verdeckt eine sichtbare Variable", name.name));
+            self.err(name.span, "R-8.17", format!("{} shadows a visible variable", name.name));
         }
         self.new_local(&name.name, ty, kind)
     }
@@ -559,9 +559,9 @@ impl<'p> Checker<'p> {
         }
         let Some(l) = self.loans.iter().rev().find(|l| l.conflicts(mutable, p)).cloned() else { return };
         let rule = l.rule;
-        let how = if l.mutable { "veränderbar" } else { "lesend" };
-        let what = if mutable { "verändert" } else { "gelesen" };
-        self.err(span, rule, format!("{} ist {how} geliehen und kann hier nicht {what} werden", l.what));
+        let how = if l.mutable { "borrowed mutably" } else { "borrowed read-only" };
+        let what = if mutable { "modified" } else { "read" };
+        self.err(span, rule, format!("{} is {how} and cannot be {what} here", l.what));
     }
 
     fn push_loan(&mut self, place: Place, mutable: bool, until: Until, rule: &'static str) {
@@ -574,7 +574,7 @@ impl<'p> Checker<'p> {
     fn writable(&mut self, p: &Place, span: Span, rule: &'static str) -> bool {
         if p.root == THIS {
             if !self.this_mut {
-                self.err(span, rule, "this ist in dieser Methode nur lesend geliehen (Methode ohne mut)");
+                self.err(span, rule, "this is borrowed read-only in a method without mut");
                 return false;
             }
             return true;
@@ -584,7 +584,7 @@ impl<'p> Checker<'p> {
             return true;
         }
         if self.captured_by_own_lambda(l.id) {
-            self.err(span, "R-10.11", format!("{} ist im own-Lambda erfasst und unveränderlich", l.name));
+            self.err(span, "R-10.11", format!("{} is captured by the own lambda and is immutable", l.name));
             return false;
         }
         let ok = match l.kind {
@@ -593,7 +593,7 @@ impl<'p> Checker<'p> {
             _ => true,
         };
         if !ok {
-            self.err(span, rule, format!("{} ist nur lesend geliehen", l.name));
+            self.err(span, rule, format!("{} is borrowed read-only", l.name));
         }
         ok
     }
@@ -640,7 +640,7 @@ impl<'p> Checker<'p> {
                 if Self::is_shared(&l.ty) && dest_plain && self.movable(dest) {
                     let mut a = vec!["V-9"];
                     a.extend_from_slice(also);
-                    self.err_also(e.span, "R-5.3", a, format!("{} ist shared; aus shared wird nie own (copy({}) verwenden)", n.name, n.name));
+                    self.err_also(e.span, "R-5.3", a, format!("{} is shared and cannot become own (use copy({}))", n.name, n.name));
                     return;
                 }
                 if !self.movable(&l.ty) {
@@ -651,16 +651,16 @@ impl<'p> Checker<'p> {
                     if matches!(l.ty.core(), Ty::Func(..)) {
                         a.push("R-10.16");
                     }
-                    self.err_also(e.span, "R-5.3", a, format!("{} ist nur geliehen und kann nicht verschoben oder gespeichert werden", n.name));
+                    self.err_also(e.span, "R-5.3", a, format!("{} is borrowed and cannot be moved or stored", n.name));
                     return;
                 }
                 let frames = self.capturing_frames(l.id);
                 if !frames.is_empty() {
                     let own = frames.clone().any(|f| self.frames[f].own_lambda);
                     let (rule, msg) = if own {
-                        ("R-10.11", format!("{} ist im own-Lambda erfasst und kann nicht verschoben werden", n.name))
+                        ("R-10.11", format!("{} is captured by the own lambda and cannot be moved", n.name))
                     } else {
-                        ("R-10.7", format!("ein normales Lambda erfasst {} nur geliehen; ein Move ist nicht möglich", n.name))
+                        ("R-10.7", format!("A regular lambda borrows {} and cannot move it", n.name))
                     };
                     self.err(e.span, rule, msg);
                     return;
@@ -672,7 +672,7 @@ impl<'p> Checker<'p> {
                 }
             }
             E::Call { .. } if self.ref_calls.contains(&e.span) && self.movable(vt) => {
-                self.err_also(e.span, "R-5.24", also.to_vec(), "der Aufruf liefert einen Borrow; er wird mit ref gebunden und kann nicht verschoben werden");
+                self.err_also(e.span, "R-5.24", also.to_vec(), "The call returns a borrow. Bind it with ref; it cannot be moved");
             }
             E::Name(_) | E::Member { .. } | E::Index { .. } | E::This => {
                 if !self.movable(vt) || matches!(e.kind, E::Member { safe: true, .. }) {
@@ -684,9 +684,9 @@ impl<'p> Checker<'p> {
                 }
                 a.extend_from_slice(also);
                 let msg = match e.kind {
-                    E::This => "this kann nicht verschoben werden".to_string(),
-                    E::Index { .. } => "aus einem Element kann nicht verschoben werden (pop() oder remove() verwenden)".to_string(),
-                    _ => "aus einem Feld kann nicht verschoben werden (replace, take oder copy verwenden)".to_string(),
+                    E::This => "this cannot be moved".to_string(),
+                    E::Index { .. } => "Cannot move out of an element (use pop() or remove())".to_string(),
+                    _ => "Cannot move out of a field (use replace, take, or copy)".to_string(),
                 };
                 self.err_also(e.span, "R-5.3", a, msg);
             }
@@ -831,7 +831,7 @@ impl<'p> Checker<'p> {
             _ if rule == "R-4.41" => vec!["V-6", "V-13"],
             _ => Vec::new(),
         };
-        let msg = format!("{} passt nicht zu {}", self.show(from), self.show(to));
+        let msg = format!("{} is incompatible with {}", self.show(from), self.show(to));
         self.err_also(span, rule, also, msg);
         false
     }
@@ -852,7 +852,7 @@ impl<'p> Checker<'p> {
         let mut warned = false;
         for s in list {
             if !completes && !warned {
-                self.warn(s.span, "R-8.27", "unerreichbarer Code");
+                self.warn(s.span, "R-8.27", "Unreachable code");
                 warned = true;
             }
             if !self.stmt(s) {
@@ -873,7 +873,7 @@ impl<'p> Checker<'p> {
     fn cond(&mut self, e: &ast::Expr) -> (BTreeSet<LocalId>, BTreeSet<LocalId>) {
         let t = self.expr(e, Some(&Ty::Prim(P::Bool)));
         if !t.is_error() && !t.is_bool() {
-            let msg = format!("Bedingung hat den Typ {}, nicht bool", self.show(&t));
+            let msg = format!("Condition has type {}, expected bool", self.show(&t));
             self.err(e.span, "R-4.3", msg);
         }
         self.facts(e)
@@ -913,11 +913,11 @@ impl<'p> Checker<'p> {
                 self.last_call = None;
                 let t = self.expr(e, None);
                 if !is_call {
-                    self.err(e.span, "R-8.14", "discard verlangt einen Aufruf");
+                    self.err(e.span, "R-8.14", "discard requires a call");
                 } else if t == Ty::Void {
-                    self.err(e.span, "R-8.14", "der Aufruf liefert keinen Wert, den discard verwerfen könnte");
+                    self.err(e.span, "R-8.14", "The call returns no value to discard");
                 } else if self.last_call.is_some_and(|c| c.nodiscard) {
-                    self.err(e.span, "R-8.15", "das Ergebnis einer nodiscard-Methode darf nicht verworfen werden");
+                    self.err(e.span, "R-8.15", "The result of a nodiscard method cannot be discarded");
                 }
                 true
             }
@@ -995,7 +995,7 @@ impl<'p> Checker<'p> {
                 let it = self.expr(iter, None);
                 if Self::nullable(&it) && !it.is_error() {
                     let also = self.null_reason(iter);
-                    let msg = format!("{} ist nullbar und nicht geprüft", self.show(&it));
+                    let msg = format!("{} is nullable and has not been checked", self.show(&it));
                     self.err_also(iter.span, "R-6.2", also, msg);
                 }
                 let it = Self::strip_null(&it);
@@ -1016,7 +1016,7 @@ impl<'p> Checker<'p> {
                     ast::VarType::Type(t) => {
                         let t = self.resolve(t);
                         if !el.is_error() && !self.assignable(&el, &t) {
-                            let msg = format!("Elemente vom Typ {} passen nicht zu {}", self.show(&el), self.show(&t));
+                            let msg = format!("Elements of type {} are incompatible with {}", self.show(&el), self.show(&t));
                             self.err(name.span, "R-8.23", msg);
                         }
                         t
@@ -1034,17 +1034,17 @@ impl<'p> Checker<'p> {
             S::Switch { subject, cases } => self.switch(subject, cases, s.span),
             S::Return { value, borrow_mut } => {
                 if self.frame().in_finally > 0 {
-                    self.err(s.span, "R-9.10", "return verlässt einen finally-Block");
+                    self.err(s.span, "R-9.10", "return would exit a finally block");
                 }
                 let ret = self.frame().ret.clone();
                 match (ret, value) {
                     (Some(Ret::Void), Some(v)) => {
                         self.expr(v, None);
-                        self.err(v.span, "R-8.26", "eine void-Methode gibt keinen Wert zurück");
+                        self.err(v.span, "R-8.26", "A void method cannot return a value");
                     }
                     (Some(Ret::Void), None) => {}
                     (Some(r), None) => {
-                        let msg = format!("return braucht einen Wert vom Typ {}", self.show(&r.ty()));
+                        let msg = format!("return requires a value of type {}", self.show(&r.ty()));
                         self.err(s.span, "R-8.26", msg);
                     }
                     (Some(Ret::Ref(rt, m)), Some(v)) => {
@@ -1055,14 +1055,14 @@ impl<'p> Checker<'p> {
                         let through_shared = !matches!(v.kind, E::This | E::Name(_)) && Self::is_shared(&t) && !Self::is_shared(&rt);
                         match self.place_of(v) {
                             _ if through_shared => {
-                                self.err_also(v.span, "R-5.23", vec!["V-2"], "ein Borrow auf ein shared-Feld kann nicht zurückgegeben werden");
+                                self.err_also(v.span, "R-5.23", vec!["V-2"], "Cannot return a borrow of a shared field");
                             }
                             Some(pl) if pl.root == THIS => {
                                 if m || *borrow_mut {
                                     self.writable(&pl, v.span, "R-5.23");
                                 }
                             }
-                            _ => self.err(v.span, "R-5.23", "eine Methode gibt nur Borrows zurück, die von this ausgehen"),
+                            _ => self.err(v.span, "R-5.23", "A method can return only borrows derived from this"),
                         }
                     }
                     (Some(r), Some(v)) => {
@@ -1097,7 +1097,7 @@ impl<'p> Checker<'p> {
                     } else {
                         "R-8.25"
                     };
-                    self.err(s.span, rule, format!("{word} außerhalb einer Schleife"));
+                    self.err(s.span, rule, format!("{word} outside a loop"));
                 }
                 let state = self.flow.clone();
                 if is_break {
@@ -1111,12 +1111,12 @@ impl<'p> Checker<'p> {
             }
             S::Throw(e) => {
                 if self.frame().in_finally > 0 {
-                    self.err(s.span, "R-9.10", "throw verlässt einen finally-Block");
+                    self.err(s.span, "R-9.10", "throw would exit a finally block");
                 }
                 let t = self.expr(e, None);
                 self.require_exception(&t, e.span, "R-9.5");
                 if Self::is_shared(&t) || Self::nullable(&t) {
-                    let msg = format!("throw verlangt einen own-Wert, nicht {}", self.show(&t));
+                    let msg = format!("throw requires an own value, got {}", self.show(&t));
                     self.err(e.span, "R-9.5", msg);
                 } else {
                     let reason = match &e.kind {
@@ -1161,7 +1161,7 @@ impl<'p> Checker<'p> {
             self.require_exception(&t, c.ty.span, "R-9.6");
             // R-9.7: catch hinter dem catch einer Oberklasse ist unerreichbar.
             if !t.is_error() && seen.iter().any(|s| self.p.upcasts(t.unformed(), s.unformed())) {
-                self.warn(c.ty.span, "R-8.27", "dieser catch ist unerreichbar: ein catch für eine Oberklasse steht davor");
+                self.warn(c.ty.span, "R-8.27", "This catch is unreachable because a catch for a base class precedes it");
             }
             seen.push(t.clone());
             self.flow = entry.clone();
@@ -1219,7 +1219,7 @@ impl<'p> Checker<'p> {
             _ => false,
         };
         if !ok {
-            let msg = format!("{} ist keine Exception", self.show(t));
+            let msg = format!("{} is not an Exception", self.show(t));
             self.err(span, rule, msg);
         }
     }
@@ -1265,23 +1265,23 @@ impl<'p> Checker<'p> {
             }
             ast::VarType::Var => match &d.init {
                 None => {
-                    self.err(span, "R-4.48", "var verlangt einen Initialisierer");
+                    self.err(span, "R-4.48", "var requires an initializer");
                     (Ty::Error, Some(Ty::Error))
                 }
                 Some(init) => {
                     if let E::Lambda { own: false, .. } = init.kind {
-                        self.err(init.span, "R-10.4", "ein normales Lambda braucht einen Funktionstyp aus dem Zusammenhang");
+                        self.err(init.span, "R-10.4", "A regular lambda requires a function type from context");
                         (Ty::Error, Some(Ty::Error))
                     } else {
                         let t = self.expr(init, None);
                         match t {
                             Ty::Null => {
-                                self.err(init.span, "R-4.40", "null braucht einen nullbaren Typ aus dem Zusammenhang");
+                                self.err(init.span, "R-4.40", "null requires a nullable type from context");
                                 (Ty::Error, Some(Ty::Error))
                             }
                             Ty::Void => {
                                 let also = if has_safe_access(init) { vec!["R-6.17"] } else { Vec::new() };
-                                self.err_also(init.span, "R-4.45", also, "eine Variable kann nicht den Typ void haben");
+                                self.err_also(init.span, "R-4.45", also, "A variable cannot have type void");
                                 (Ty::Error, Some(Ty::Error))
                             }
                             t => (t.clone(), Some(t)),
@@ -1327,7 +1327,7 @@ impl<'p> Checker<'p> {
                 self.keep_loans(mark);
             }
             None if it.is_error() || matches!(target.kind, E::Member { safe: true, .. }) => {}
-            None => self.err(init.span, "R-5.17", "ref verlangt einen Ort (Variable, Feld oder Element), keinen temporären Wert"),
+            None => self.err(init.span, "R-5.17", "ref requires a location (variable, field, or element), not a temporary value"),
         }
         let id = self.declare(name, t.clone(), LocalKind::Ref(mutable));
         self.assigned(id, &it);
@@ -1369,7 +1369,7 @@ impl<'p> Checker<'p> {
         let mut fields: Vec<(String, Ty, Access, DefId)> = Vec::new();
         let mut ok = true;
         if Self::is_shared(&it) || weak_inner(&it).is_some() {
-            let msg = format!("zerlegen lässt sich nur ein own-Objekt, nicht {}", self.show(&it));
+            let msg = format!("Destructuring requires an own object, got {}", self.show(&it));
             self.err(span, "R-5.25", msg);
             ok = false;
         }
@@ -1378,7 +1378,7 @@ impl<'p> Checker<'p> {
         let mut cur = it.core().clone();
         while let Ty::Named(c, args) = cur {
             if self.p.defs[c].kind != DefKind::Class {
-                let msg = format!("{} ist keine Klasse", self.p.defs[c].name);
+                let msg = format!("{} is not a class", self.p.defs[c].name);
                 self.err(span, "R-5.25", msg);
                 ok = false;
                 break;
@@ -1391,7 +1391,7 @@ impl<'p> Checker<'p> {
         chain.reverse();
         for (c, args) in &chain {
             if self.p.defs[*c].has_dtor {
-                let msg = format!("{} hat einen Destruktor und lässt sich nicht zerlegen", self.p.defs[*c].name);
+                let msg = format!("{} has a destructor and cannot be destructured", self.p.defs[*c].name);
                 self.err(span, "R-5.25", msg);
                 ok = false;
             }
@@ -1401,7 +1401,7 @@ impl<'p> Checker<'p> {
             }
         }
         if ok && fields.len() != types.len() {
-            let msg = format!("{} hat {} Felder, zerlegt wird in {} Variablen", self.show(&it), fields.len(), types.len());
+            let msg = format!("{} has {} fields but is destructured into {} variables", self.show(&it), fields.len(), types.len());
             self.err(span, "R-5.25", msg);
             ok = false;
         }
@@ -1409,7 +1409,7 @@ impl<'p> Checker<'p> {
             for ((name, fty, access, owner), (t, (_, var))) in fields.iter().zip(types.iter().zip(&d.vars)) {
                 self.check_access(*access, *owner, var.span);
                 if !self.assignable(fty, t) {
-                    let msg = format!("das Feld {name} hat den Typ {}, nicht {}", self.show(fty), self.show(t));
+                    let msg = format!("Field {name} has type {}, expected {}", self.show(fty), self.show(t));
                     self.err(var.span, "R-5.25", msg);
                 }
             }
@@ -1439,7 +1439,7 @@ impl<'p> Checker<'p> {
                         }
                         if t != Ty::Void && !t.is_error() {
                             let rule = if c.func_value { "R-10.17" } else { "R-8.13" };
-                            self.err(span, rule, "das Ergebnis des Aufrufs wird nicht verwendet (discard verwirft es)");
+                            self.err(span, rule, "The call result is unused (use discard to ignore it)");
                         }
                     }
                 }
@@ -1480,7 +1480,7 @@ impl<'p> Checker<'p> {
         let tt = self.lvalue(target);
         if op == ast::AssignOp::Assign {
             if let E::Lambda { own: false, .. } = value.kind {
-                self.err(value.span, "R-10.7", "ein normales Lambda kann nicht gespeichert werden");
+                self.err(value.span, "R-10.7", "A regular lambda cannot be stored");
                 return;
             }
             let vt = self.expr(value, Some(&tt));
@@ -1492,7 +1492,7 @@ impl<'p> Checker<'p> {
                 if let Some(pl) = self.place_of(target).filter(|p| p.root != THIS) {
                     if let Some(reason) = self.flow.moved.remove(&pl.root) {
                         let name = self.place_name(&Place::var(pl.root));
-                        self.err_also(target.span, "R-5.3", vec![reason, "R-5.7", "R-5.13"], format!("{name} wird im Wert verschoben und ist danach kein Ziel mehr"));
+                        self.err_also(target.span, "R-5.3", vec![reason, "R-5.7", "R-5.13"], format!("{name} is moved by the assigned expression and is no longer a valid target"));
                     }
                 }
             }
@@ -1519,7 +1519,7 @@ impl<'p> Checker<'p> {
         let vt = self.non_null_operand(vt, value, value.span);
         let result = self.arith(bop, &tt, &vt, target.span);
         if !result.is_error() && !tt.is_error() && !self.assignable(&result, &tt) {
-            let msg = format!("{} {}= {} ergibt {}, das nicht in {} passt", self.show(&tt), op_str(bop), self.show(&vt), self.show(&result), self.show(&tt));
+            let msg = format!("{} {}= {} produces {}, which is incompatible with {}", self.show(&tt), op_str(bop), self.show(&vt), self.show(&result), self.show(&tt));
             self.err(target.span, "R-8.20", msg);
         }
     }
@@ -1530,18 +1530,18 @@ impl<'p> Checker<'p> {
             E::Name(n) => {
                 if let Some(l) = self.find_local(&n.name).cloned() {
                     match l.kind {
-                        LocalKind::Const => self.err(e.span, "R-8.18", format!("{} ist const", n.name)),
+                        LocalKind::Const => self.err(e.span, "R-8.18", format!("{} is const", n.name)),
                         LocalKind::Param(Mode::Read) => {
-                            self.err(e.span, "R-8.19", format!("der Parameter {} ist nur lesbar", n.name))
+                            self.err(e.span, "R-8.19", format!("Parameter {} is read-only", n.name))
                         }
                         // Über einen veränderbaren Borrow setzt man Felder, ersetzt aber nie das Objekt (Kapitel 5, 4.4).
                         LocalKind::Param(Mode::Mut) | LocalKind::Bound(true) if !matches!(l.ty.unformed(), Ty::Prim(_)) => {
-                            self.err_also(e.span, "R-8.19", vec!["R-5.12"], format!("{} ist ein Borrow; das Objekt kann nicht ersetzt werden", n.name))
+                            self.err_also(e.span, "R-8.19", vec!["R-5.12"], format!("{} is a borrow, so the object cannot be replaced", n.name))
                         }
-                        LocalKind::Ref(_) => self.err(e.span, "R-8.19", format!("{} ist eine ref-Variable", n.name)),
+                        LocalKind::Ref(_) => self.err(e.span, "R-8.19", format!("{} is a ref variable", n.name)),
                         _ => {
                             if self.captured_by_own_lambda(l.id) {
-                                self.err(e.span, "R-10.11", format!("{} ist im own-Lambda erfasst und unveränderlich", n.name));
+                                self.err(e.span, "R-10.11", format!("{} is captured by the own lambda and is immutable", n.name));
                             }
                         }
                     }
@@ -1558,7 +1558,7 @@ impl<'p> Checker<'p> {
             E::Index { object, .. } => {
                 let ot = self.probe(|c| c.expr(object, None));
                 if ot.is_string() {
-                    self.err(e.span, "R-4.19", "Strings sind unveränderlich; s[i] kann nicht zugewiesen werden");
+                    self.err(e.span, "R-4.19", "Strings are immutable. Cannot assign to s[i]");
                     return Ty::Error;
                 }
                 let t = self.expr(e, None);
@@ -1579,7 +1579,7 @@ impl<'p> Checker<'p> {
             }
             E::Paren(x) => self.lvalue(x),
             _ => {
-                self.err(e.span, "R-8.19", "kein Zuweisungsziel");
+                self.err(e.span, "R-8.19", "Invalid assignment target");
                 Ty::Error
             }
         }
@@ -1604,12 +1604,12 @@ impl<'p> Checker<'p> {
                         return el;
                     }
                 }
-                let msg = format!("{} ist nicht iterierbar", self.show(t));
+                let msg = format!("{} is not iterable", self.show(t));
                 self.err(span, "R-8.23", msg);
                 Ty::Error
             }
             _ => {
-                let msg = format!("{} ist nicht iterierbar", self.show(t));
+                let msg = format!("{} is not iterable", self.show(t));
                 self.err(span, "R-8.23", msg);
                 Ty::Error
             }
@@ -1620,7 +1620,7 @@ impl<'p> Checker<'p> {
         let st = self.expr(subject, None);
         if Self::nullable(&st) && !st.is_error() {
             let also = self.null_reason(subject);
-            let msg = format!("switch über den nullbaren Wert {}", self.show(&st));
+            let msg = format!("switch cannot use the nullable value {}", self.show(&st));
             self.err_also(subject.span, "R-6.2", also, msg);
         }
         let st = Self::strip_null(&st);
@@ -1630,7 +1630,7 @@ impl<'p> Checker<'p> {
         };
         let allowed = st.is_error() || enum_def.is_some() || st.is_integer() || matches!(st.prim(), Some(P::Char | P::String));
         if !allowed {
-            let msg = format!("switch über {} ist nicht erlaubt", self.show(&st));
+            let msg = format!("switch on {} is not allowed", self.show(&st));
             self.err(subject.span, "R-8.24", msg);
         }
         let base = self.flow.clone();
@@ -1646,7 +1646,7 @@ impl<'p> Checker<'p> {
                 let key = self.pattern(pat, &st, enum_def);
                 if let Some(k) = key {
                     if seen.contains(&k) {
-                        self.err(c.span, "R-8.24", format!("die Marke {k} kommt doppelt vor"));
+                        self.err(c.span, "R-8.24", format!("Case label {k} appears more than once"));
                     }
                     seen.push(k);
                 }
@@ -1671,7 +1671,7 @@ impl<'p> Checker<'p> {
             None => false,
         };
         if !has_default && !exhaustive && !st.is_error() {
-            let msg = if enum_def.is_some() { "switch über ein Enum nennt nicht alle Varianten und hat kein default" } else { "switch braucht ein default" };
+            let msg = if enum_def.is_some() { "switch on an enum omits variants and has no default" } else { "switch requires a default case" };
             self.err(span, "R-8.24", msg);
         }
         if !(has_default || exhaustive) || cases.is_empty() {
@@ -1699,7 +1699,7 @@ impl<'p> Checker<'p> {
                     ast::Literal::Null => Ty::Null,
                 };
                 if !st.is_error() && !self.assignable(&lt, st) {
-                    let msg = format!("die Marke passt nicht zu {}", self.show(st));
+                    let msg = format!("The case label is incompatible with {}", self.show(st));
                     self.err(Span::default(), "R-8.24", msg);
                 }
                 let text = match lit {
@@ -1732,7 +1732,7 @@ impl<'p> Checker<'p> {
                         Some(v) if owner_ok => {
                             if let Some(bs) = bindings {
                                 if bs.len() != v.fields.len() {
-                                    self.err(bs[0].span, "R-8.24", format!("{} hat {} Daten", v.name, v.fields.len()));
+                                    self.err(bs[0].span, "R-8.24", format!("{} has {} payload fields", v.name, v.fields.len()));
                                 }
                                 for (b, f) in bs.iter().zip(&v.fields) {
                                     self.declare(b, f.ty.clone(), LocalKind::Bound(false));
@@ -1740,7 +1740,7 @@ impl<'p> Checker<'p> {
                             }
                         }
                         _ => {
-                            let msg = format!("{} ist keine Variante von {}", variant, self.p.defs[d].name);
+                            let msg = format!("{} is not a variant of {}", variant, self.p.defs[d].name);
                             self.err(Span::default(), "R-8.24", msg);
                         }
                     }
@@ -1782,17 +1782,17 @@ impl<'p> Checker<'p> {
             E::Name(n) => self.name(n),
             E::This => {
                 if self.ctx.is_static || self.ctx.class.is_none() {
-                    self.err(e.span, "R-7.4", "statische Methoden haben kein this");
+                    self.err(e.span, "R-7.4", "Static methods have no this");
                     return Ty::Error;
                 }
                 if self.frames.iter().any(|f| f.own_lambda) {
-                    self.err(e.span, "R-10.10", "ein own-Lambda kann this nicht erfassen");
+                    self.err(e.span, "R-10.10", "An own lambda cannot capture this");
                     return Ty::Error;
                 }
                 self.self_ty().unwrap_or(Ty::Error)
             }
             E::Base => {
-                self.err(e.span, "R-7.15", "base steht nur vor einem Methodenaufruf");
+                self.err(e.span, "R-7.15", "base is allowed only before a method call");
                 Ty::Error
             }
             E::Paren(x) => {
@@ -1827,7 +1827,7 @@ impl<'p> Checker<'p> {
                 let t = self.non_null_operand(t, x, x.span);
                 match t.unformed().core() {
                     Ty::Func(..) => {
-                        self.err(e.span, "R-10.15", "Funktionswerte können nicht kopiert werden");
+                        self.err(e.span, "R-10.15", "Function values cannot be copied");
                         Ty::Error
                     }
                     Ty::Named(d, _) if self.p.defs[*d].kind == DefKind::Class => {
@@ -1845,7 +1845,7 @@ impl<'p> Checker<'p> {
                         }
                         if !has {
                             let name = self.p.defs[*d].name.clone();
-                            self.err(e.span, "R-7.11", format!("{name} hat kein copy"));
+                            self.err(e.span, "R-7.11", format!("{name} has no copy"));
                         }
                         t.unformed().clone()
                     }
@@ -1884,7 +1884,7 @@ impl<'p> Checker<'p> {
                     _ => false,
                 };
                 if !ok || matches!(tt, Ty::Nullable(_)) {
-                    let msg = format!("{} ist kein Untertyp von {}", self.show(&tt), self.show(&st));
+                    let msg = format!("{} is not a subtype of {}", self.show(&tt), self.show(&st));
                     self.err(ty.span, "R-4.23", msg);
                     return Ty::Error;
                 }
@@ -1900,7 +1900,7 @@ impl<'p> Checker<'p> {
                 } else if self.declared_nullable(left, &lt) {
                     Self::strip_null(&lt)
                 } else {
-                    let msg = format!("?? verlangt links einen nullbaren Wert, nicht {}", self.show(&lt));
+                    let msg = format!("The left operand of ?? must be nullable, got {}", self.show(&lt));
                     self.err(left.span, "R-6.18", msg);
                     lt.clone()
                 };
@@ -1922,7 +1922,7 @@ impl<'p> Checker<'p> {
                 match self.join(&a, &b, e.span) {
                     Some(t) => t,
                     None => {
-                        let msg = format!("{} und {} haben keinen gemeinsamen Typ", self.show(&a), self.show(&b));
+                        let msg = format!("{} and {} have no common type", self.show(&a), self.show(&b));
                         self.err(e.span, "R-8.9", msg);
                         Ty::Error
                     }
@@ -1944,7 +1944,7 @@ impl<'p> Checker<'p> {
                 let it = self.expr(index, Some(&Ty::Prim(P::I64)));
                 self.place_quiet = saved;
                 if !it.is_error() && !self.assignable(&it, &Ty::Prim(P::I64)) {
-                    let msg = format!("ein Index ist eine Ganzzahl, nicht {}", self.show(&it));
+                    let msg = format!("An index must be an integer, got {}", self.show(&it));
                     self.err(index.span, "R-4.33", msg);
                 }
                 match ot.unformed().core() {
@@ -1952,7 +1952,7 @@ impl<'p> Checker<'p> {
                     Ty::Prim(P::String) => Ty::Prim(P::Char),
                     Ty::Vector(t) | Ty::Array(t, _) | Ty::Slice(t) => (**t).clone(),
                     other => {
-                        let msg = format!("{} hat keinen Index", self.show(other));
+                        let msg = format!("{} does not support indexing", self.show(other));
                         self.err(e.span, "R-8.7", msg);
                         Ty::Error
                     }
@@ -1970,14 +1970,14 @@ impl<'p> Checker<'p> {
                 for b in [from, to].into_iter().flatten() {
                     let bt = self.expr(b, Some(&Ty::Prim(P::I64)));
                     if !bt.is_error() && !self.assignable(&bt, &Ty::Prim(P::I64)) {
-                        self.err(b.span, "R-8.7", "Bereichsgrenzen sind Ganzzahlen");
+                        self.err(b.span, "R-8.7", "Range bounds must be integers");
                     }
                 }
                 match ot.unformed().core() {
                     Ty::Error => Ty::Error,
                     Ty::Vector(t) | Ty::Array(t, _) | Ty::Slice(t) => Ty::Slice(t.clone()),
                     other => {
-                        let msg = format!("Bereiche gibt es nicht für {}", self.show(other));
+                        let msg = format!("Ranges are not supported for {}", self.show(other));
                         self.err(e.span, "R-8.7", msg);
                         Ty::Error
                     }
@@ -1992,7 +1992,7 @@ impl<'p> Checker<'p> {
         match lit {
             ast::Literal::Int(v) => {
                 let Some(mut value) = int_value(v) else {
-                    self.err(span, "R-4.7", "ungültiges Literal");
+                    self.err(span, "R-4.7", "Invalid literal");
                     return Ty::Error;
                 };
                 if negative {
@@ -2001,7 +2001,7 @@ impl<'p> Checker<'p> {
                 match target {
                     Some(p) if is_numeric(p) => {
                         if !int_fits(value, p) {
-                            self.err(span, "R-4.7", format!("{value} passt nicht in {}", prim_name(p)));
+                            self.err(span, "R-4.7", format!("{value} is outside the range of {}", prim_name(p)));
                         }
                         Ty::Prim(p)
                     }
@@ -2011,12 +2011,12 @@ impl<'p> Checker<'p> {
             ast::Literal::Float(v) => match target {
                 Some(p) if is_float(p) => {
                     if !float_fits(v, p) {
-                        self.err(span, "R-4.7", format!("{v} ist in {} nicht endlich darstellbar", prim_name(p)));
+                        self.err(span, "R-4.7", format!("{v} cannot be represented as a finite {}", prim_name(p)));
                     }
                     Ty::Prim(p)
                 }
                 Some(p) if is_integer(p) => {
-                    self.err(span, "R-4.7", format!("ein Gleitkommaliteral passt nicht in {}", prim_name(p)));
+                    self.err(span, "R-4.7", format!("A floating-point literal is outside the range of {}", prim_name(p)));
                     Ty::Error
                 }
                 _ => Ty::Prim(P::F64),
@@ -2040,7 +2040,7 @@ impl<'p> Checker<'p> {
         };
         if let Some(Ty::Array(_, Some(n))) = &exp {
             if *n != items.len() as u64 {
-                self.err(span, "R-4.32", format!("das Array hat {n} Elemente, das Literal {}", items.len()));
+                self.err(span, "R-4.32", format!("The array has {n} elements, but the literal has {}", items.len()));
             }
         }
         match el {
@@ -2056,7 +2056,7 @@ impl<'p> Checker<'p> {
             }
             None => {
                 if items.is_empty() {
-                    self.err(span, "R-4.32", "[] braucht einen Typ aus dem Zusammenhang");
+                    self.err(span, "R-4.32", "[] requires a type from context");
                     return Ty::Error;
                 }
                 let first = self.expr(&items[0], None);
@@ -2073,7 +2073,7 @@ impl<'p> Checker<'p> {
         if let Some(l) = self.find_local(&n.name).cloned() {
             if !self.flow.dead {
                 if self.flow.unassigned.remove(&l.id) {
-                    self.err(n.span, "R-4.46", format!("{} ist nicht auf jedem Weg zugewiesen", n.name));
+                    self.err(n.span, "R-4.46", format!("{} is not assigned on every path", n.name));
                 }
                 if let Some(reason) = self.flow.moved.remove(&l.id) {
                     let mut also = vec![reason];
@@ -2086,7 +2086,7 @@ impl<'p> Checker<'p> {
                     if l.kind == LocalKind::Catch {
                         also.push("R-9.8");
                     }
-                    self.err_also(n.span, "R-5.3", also, format!("{} wurde verschoben und ist nicht mehr verfügbar", n.name));
+                    self.err_also(n.span, "R-5.3", also, format!("{} was moved and is no longer available", n.name));
                 }
             }
             // Erfassung durch Lambdas (R-10.7 bis R-10.9)
@@ -2100,7 +2100,7 @@ impl<'p> Checker<'p> {
                 let by_own = frames.clone().any(|f| self.frames[f].own_lambda);
                 let plain = matches!(l.ty.unformed().core(), Ty::Prim(_)) || Self::is_shared(&l.ty);
                 if by_own && l.kind.is_borrow() && !plain {
-                    self.err(n.span, "R-10.9", format!("{} ist nur geliehen und kann nicht per Wert erfasst werden (copy verwenden)", n.name));
+                    self.err(n.span, "R-10.9", format!("{} is borrowed and cannot be captured by value (use copy)", n.name));
                 }
             }
             return self.local_type(&l);
@@ -2108,11 +2108,11 @@ impl<'p> Checker<'p> {
         if let Some(st) = self.self_ty() {
             if let Some((f, owner)) = self.p.field_of(&st, &n.name) {
                 if !f.is_static && self.ctx.is_static {
-                    self.err(n.span, "R-7.4", format!("{} ist ein Feld; statische Methoden haben kein this", n.name));
+                    self.err(n.span, "R-7.4", format!("{} is a field, and static methods have no this", n.name));
                     return Ty::Error;
                 }
                 if !f.is_static && self.frames.iter().any(|f| f.own_lambda) {
-                    self.err(n.span, "R-10.10", "ein own-Lambda kann this nicht erfassen");
+                    self.err(n.span, "R-10.10", "An own lambda cannot capture this");
                     return Ty::Error;
                 }
                 self.check_access(f.access, owner, n.span);
@@ -2120,7 +2120,7 @@ impl<'p> Checker<'p> {
             }
         }
         let rule = if self.in_mixin() { "R-7.19" } else { "R-8.16" };
-        self.err(n.span, rule, format!("{} ist hier nicht bekannt", n.name));
+        self.err(n.span, rule, format!("{} is not defined here", n.name));
         Ty::Error
     }
 
@@ -2132,7 +2132,7 @@ impl<'p> Checker<'p> {
         };
         if !ok {
             let name = self.p.defs[owner].name.clone();
-            self.err(span, "R-7.2", format!("der Member ist in {name} nicht sichtbar"));
+            self.err(span, "R-7.2", format!("The member is not visible in {name}"));
         }
     }
 
@@ -2174,7 +2174,7 @@ impl<'p> Checker<'p> {
         };
         let ok = match (s.prim(), t.prim()) {
             (Some(P::Bool), _) | (_, Some(P::Bool)) => {
-                self.err(span, "R-4.3", "zwischen bool und anderen Typen gibt es keine Umwandlung");
+                self.err(span, "R-4.3", "No conversion is allowed between bool and other types");
                 return Ty::Error;
             }
             (Some(a), Some(b)) if is_numeric(a) && is_numeric(b) => true,
@@ -2186,7 +2186,7 @@ impl<'p> Checker<'p> {
             _ => false,
         };
         if !ok {
-            let msg = format!("cast von {} nach {} gibt es nicht", self.show(&src), self.show(&target));
+            let msg = format!("A cast from {} to {} is not supported", self.show(&src), self.show(&target));
             self.err(span, "R-4.8", msg);
             return Ty::Error;
         }
@@ -2196,7 +2196,7 @@ impl<'p> Checker<'p> {
     fn inc_dec(&mut self, x: &ast::Expr, span: Span) -> Ty {
         let t = self.lvalue(x);
         if !t.is_error() && !t.is_integer() {
-            let msg = format!("++ und -- gibt es nur für Ganzzahlen, nicht für {}", self.show(&t));
+            let msg = format!("++ and -- require integers, got {}", self.show(&t));
             self.err(span, "R-8.8", msg);
             return Ty::Error;
         }
@@ -2209,7 +2209,7 @@ impl<'p> Checker<'p> {
                 let t = self.expr(x, Some(&Ty::Prim(P::Bool)));
                 let t = self.non_null_operand(t, x, x.span);
                 if !t.is_error() && !t.is_bool() {
-                    let msg = format!("! verlangt bool, nicht {}", self.show(&t));
+                    let msg = format!("! requires bool, got {}", self.show(&t));
                     self.err(span, "R-4.3", msg);
                 }
                 Ty::Prim(P::Bool)
@@ -2219,7 +2219,7 @@ impl<'p> Checker<'p> {
                     let t = self.literal(lit, expected, span, true);
                     if let Some(p) = t.prim() {
                         if is_unsigned(p) {
-                            self.err(span, "R-4.13", format!("einstelliges - auf {}", prim_name(p)));
+                            self.err(span, "R-4.13", format!("Unary - cannot be applied to {}", prim_name(p)));
                         }
                     }
                     return t;
@@ -2229,12 +2229,12 @@ impl<'p> Checker<'p> {
                 match t.prim() {
                     _ if t.is_error() => Ty::Error,
                     Some(p) if is_unsigned(p) => {
-                        self.err(span, "R-4.13", format!("einstelliges - auf dem vorzeichenlosen Typ {}", prim_name(p)));
+                        self.err(span, "R-4.13", format!("Unary - cannot be applied to the unsigned type {}", prim_name(p)));
                         Ty::Error
                     }
                     Some(p) if is_numeric(p) => t,
                     _ => {
-                        let msg = format!("- verlangt eine Zahl, nicht {}", self.show(&t));
+                        let msg = format!("- requires a number, got {}", self.show(&t));
                         self.err(span, "R-4.13", msg);
                         Ty::Error
                     }
@@ -2244,7 +2244,7 @@ impl<'p> Checker<'p> {
                 let t = self.expr(x, expected);
                 let t = self.non_null_operand(t, x, x.span);
                 if !t.is_error() && !t.is_integer() && t.prim() != Some(P::Byte) {
-                    let msg = format!("~ verlangt eine Ganzzahl oder byte, nicht {}", self.show(&t));
+                    let msg = format!("~ requires an integer or byte, got {}", self.show(&t));
                     self.err(span, "R-4.16", msg);
                     return Ty::Error;
                 }
@@ -2263,11 +2263,11 @@ impl<'p> Checker<'p> {
             if a.is_string() && b.is_string() {
                 return Ty::Prim(P::String);
             }
-            self.err(span, "R-4.20", "+ verbindet nur zwei Strings; Zahlen brauchen toString()");
+            self.err(span, "R-4.20", "+ concatenates two strings. Use toString() for numbers");
             return Ty::Error;
         }
         let (Some(x), Some(y)) = (a.prim(), b.prim()) else {
-            let msg = format!("{} gibt es nicht für {} und {}", op_str(op), self.show(a), self.show(b));
+            let msg = format!("{} is not supported for {} and {}", op_str(op), self.show(a), self.show(b));
             self.err(span, "R-4.13", msg);
             return Ty::Error;
         };
@@ -2280,14 +2280,14 @@ impl<'p> Checker<'p> {
                 _ => None,
             };
             if let Some(rule) = rule {
-                self.err(span, rule, format!("keine Arithmetik mit {}", prim_name(p)));
+                self.err(span, rule, format!("Arithmetic is not supported for {}", prim_name(p)));
                 return Ty::Error;
             }
         }
         match common_numeric(x, y) {
             Some(c) => Ty::Prim(c),
             None => {
-                self.err(span, "R-4.12", format!("{} und {} haben keinen gemeinsamen Typ; nötig ist cast", prim_name(x), prim_name(y)));
+                self.err(span, "R-4.12", format!("{} and {} have no common type. Use a cast", prim_name(x), prim_name(y)));
                 Ty::Error
             }
         }
@@ -2307,7 +2307,7 @@ impl<'p> Checker<'p> {
             "R-6.2"
         };
         also.extend(self.null_reason(e));
-        let msg = format!("{} hat den nullbaren Typ {} und ist hier nicht geprüft", expr_text(e), self.show(&t));
+        let msg = format!("{} has nullable type {} and has not been checked here", expr_text(e), self.show(&t));
         self.err_also(span, rule, also, msg);
         Self::strip_null(&t)
     }
@@ -2352,7 +2352,7 @@ impl<'p> Checker<'p> {
                     }
                     let t = self.expr(x, Some(&Ty::Prim(P::Bool)));
                     if !t.is_error() && !t.is_bool() {
-                        let msg = format!("{} verlangt bool, nicht {}", op_str(op), self.show(&t));
+                        let msg = format!("{} requires bool, got {}", op_str(op), self.show(&t));
                         self.err(x.span, "R-4.3", msg);
                     }
                 }
@@ -2372,7 +2372,7 @@ impl<'p> Checker<'p> {
                     return Ty::Error;
                 }
                 if !(a.is_integer() || a.prim() == Some(P::Byte)) || !b.is_integer() {
-                    self.err(span, "R-4.16", "Schiebeoperatoren verlangen Ganzzahlen");
+                    self.err(span, "R-4.16", "Shift operators require integers");
                     return Ty::Error;
                 }
                 a
@@ -2389,12 +2389,12 @@ impl<'p> Checker<'p> {
                     return match common_numeric(a.prim().unwrap(), b.prim().unwrap()) {
                         Some(c) => Ty::Prim(c),
                         None => {
-                            self.err(span, "R-4.12", "kein gemeinsamer Typ");
+                            self.err(span, "R-4.12", "No common type");
                             Ty::Error
                         }
                     };
                 }
-                let msg = format!("{} gibt es für Ganzzahlen und byte, nicht für {} und {}", op_str(op), self.show(&a), self.show(&b));
+                let msg = format!("{} applies only to integers and byte, got {} and {}", op_str(op), self.show(&a), self.show(&b));
                 self.err(span, "R-4.16", msg);
                 Ty::Error
             }
@@ -2410,9 +2410,9 @@ impl<'p> Checker<'p> {
                     let (a, b) = (self.expr(l, None), self.expr(r, None));
                     let (other, oe) = if matches!(r.kind, E::Literal(ast::Literal::Null)) { (&a, l) } else { (&b, r) };
                     if matches!(other, Ty::Null) {
-                        self.err(span, "R-6.3", "null == null steht schon fest");
+                        self.err(span, "R-6.3", "null == null is always true");
                     } else if !other.is_error() && !self.declared_nullable(oe, other) {
-                        let msg = format!("{} ist nicht nullbar; der Vergleich mit null steht schon fest", self.show(other));
+                        let msg = format!("{} is non-nullable, so its comparison with null is constant", self.show(other));
                         self.err(span, "R-6.3", msg);
                     }
                     return Ty::Prim(P::Bool);
@@ -2431,7 +2431,7 @@ impl<'p> Checker<'p> {
         if let (Some(x), Some(y)) = (a.prim(), b.prim()) {
             if is_numeric(x) && is_numeric(y) {
                 if common_numeric(x, y).is_none() {
-                    self.err(span, "R-4.12", format!("{} und {} haben keinen gemeinsamen Typ", prim_name(x), prim_name(y)));
+                    self.err(span, "R-4.12", format!("{} and {} have no common type", prim_name(x), prim_name(y)));
                 }
                 return;
             }
@@ -2446,7 +2446,7 @@ impl<'p> Checker<'p> {
             }
         }
         let rule = if matches!(a.unformed(), Ty::Param(_)) { "R-4.42" } else { "R-4.17" };
-        let msg = format!("{} und {} lassen sich nicht mit < vergleichen", self.show(a), self.show(b));
+        let msg = format!("{} and {} cannot be compared with <", self.show(a), self.show(b));
         self.err(span, rule, msg);
     }
 
@@ -2461,18 +2461,18 @@ impl<'p> Checker<'p> {
         let rule_msg: Option<(&'static str, String)> = match (x, y) {
             (Ty::Prim(p), Ty::Prim(q)) if is_numeric(*p) && is_numeric(*q) => {
                 if common_numeric(*p, *q).is_none() {
-                    Some(("R-4.12", format!("{} und {} haben keinen gemeinsamen Typ", prim_name(*p), prim_name(*q))))
+                    Some(("R-4.12", format!("{} and {} have no common type", prim_name(*p), prim_name(*q))))
                 } else {
                     None
                 }
             }
             (Ty::Prim(p), Ty::Prim(q)) if p == q => None,
-            (Ty::Tuple(_), _) | (_, Ty::Tuple(_)) => Some(("R-4.35", "Tupel haben kein ==".into())),
-            (Ty::Func(..), _) | (_, Ty::Func(..)) => Some(("R-4.38", "Funktionstypen haben kein ==".into())),
-            (Ty::Vector(_) | Ty::Array(..) | Ty::Slice(_), _) => Some(("R-4.33", "Arrays haben kein ==".into())),
+            (Ty::Tuple(_), _) | (_, Ty::Tuple(_)) => Some(("R-4.35", "Tuples do not support ==".into())),
+            (Ty::Func(..), _) | (_, Ty::Func(..)) => Some(("R-4.38", "Function types do not support ==".into())),
+            (Ty::Vector(_) | Ty::Array(..) | Ty::Slice(_), _) => Some(("R-4.33", "Arrays do not support ==".into())),
             (Ty::Named(d, _), _) if self.p.defs[*d].kind == DefKind::Enum => {
                 if self.p.defs[*d].variants.iter().any(|v| !v.fields.is_empty()) {
-                    Some(("R-4.28", "Enums mit Daten vergleicht man mit switch".into()))
+                    Some(("R-4.28", "Use switch to compare enums with payloads".into()))
                 } else if x != y {
                     Some(("R-4.28", "verschiedene Enums".into()))
                 } else {
@@ -2496,12 +2496,12 @@ impl<'p> Checker<'p> {
                 if ok {
                     None
                 } else if matches!(x, Ty::Param(_)) {
-                    Some(("R-4.42", format!("== verlangt {} : Equatable", self.show(x))))
+                    Some(("R-4.42", format!("== requires {} : Equatable", self.show(x))))
                 } else {
-                    Some(("R-4.24", format!("{} importiert Equatable nicht", self.show(x))))
+                    Some(("R-4.24", format!("{} does not import Equatable", self.show(x))))
                 }
             }
-            _ => Some(("R-4.17", format!("{} und {} lassen sich nicht vergleichen", self.show(a), self.show(b)))),
+            _ => Some(("R-4.17", format!("{} and {} cannot be compared", self.show(a), self.show(b)))),
         };
         if let Some((rule, msg)) = rule_msg {
             self.err(span, rule, msg);
@@ -2530,7 +2530,7 @@ impl<'p> Checker<'p> {
         }
         if safe {
             if !self.declared_nullable(object, &ot) {
-                let msg = format!("?. auf dem nicht nullbaren Wert {}", self.show(&ot));
+                let msg = format!("?. cannot be used on the non-nullable value {}", self.show(&ot));
                 self.err(span, "R-6.16", msg);
             }
             return Self::strip_null(&ot);
@@ -2557,7 +2557,7 @@ impl<'p> Checker<'p> {
             return Ty::Error;
         }
         if weak_inner(ot).is_some() {
-            self.err(span, "R-4.41", "über weak greift man nur mit lock() zu");
+            self.err(span, "R-4.41", "Use lock() to access a weak reference");
             return Ty::Error;
         }
         match (&core, name.name.as_str()) {
@@ -2568,14 +2568,14 @@ impl<'p> Checker<'p> {
         if let Ty::Named(..) = core {
             if let Some((f, owner)) = self.p.field_of(&core, &name.name) {
                 if f.is_static {
-                    self.err(span, "R-7.27", format!("{} ist statisch und wird mit :: angesprochen", name.name));
+                    self.err(span, "R-7.27", format!("{} is static and requires ::", name.name));
                 }
                 self.check_access(f.access, owner, name.span);
                 return f.ty;
             }
         }
         let rule = self.unknown_member_rule(&core);
-        let msg = format!("{} hat kein Feld {}", self.show(&core), name.name);
+        let msg = format!("{} has no field {}", self.show(&core), name.name);
         self.err(name.span, rule, msg);
         Ty::Error
     }
@@ -2614,7 +2614,7 @@ impl<'p> Checker<'p> {
                     }
                 }
                 let Some(st) = self.self_ty() else {
-                    self.err(n.span, "R-8.16", format!("{} ist hier nicht bekannt", n.name));
+                    self.err(n.span, "R-8.16", format!("{} is not defined here", n.name));
                     return (Ty::Error, plain);
                 };
                 let cands = self.p.methods_of(&st, &n.name);
@@ -2625,7 +2625,7 @@ impl<'p> Checker<'p> {
                         return (self.call_value(&t, args, callee.span), CallFacts { func_value: true, ..plain });
                     }
                     let rule = if self.in_mixin() { "R-7.19" } else { "R-8.16" };
-                    self.err(n.span, rule, format!("{} ist hier nicht bekannt", n.name));
+                    self.err(n.span, rule, format!("{} is not defined here", n.name));
                     return (Ty::Error, plain);
                 }
                 self.pending_recv = Some(Place::var(THIS));
@@ -2635,7 +2635,7 @@ impl<'p> Checker<'p> {
                 if let E::Base = object.kind {
                     let base = self.ctx.class.and_then(|d| self.p.defs[d].base.clone());
                     if self.ctx.is_static || base.is_none() {
-                        self.err(callee.span, "R-7.15", "base.m() gibt es nur in Methoden einer Unterklasse");
+                        self.err(callee.span, "R-7.15", "base.m() is allowed only in methods of a subclass");
                         return (Ty::Error, plain);
                     }
                     let cands = self.p.methods_of(&base.unwrap(), &name.name);
@@ -2676,7 +2676,7 @@ impl<'p> Checker<'p> {
                     }
                 }
                 if args.len() != ps.len() {
-                    self.err(span, "R-10.17", "falsche Anzahl von Argumenten");
+                    self.err(span, "R-10.17", "Wrong number of arguments");
                 }
                 let t = self.lambda_body(*own, &ps, body, None, inner.span);
                 (t, CallFacts { func_value: true, ..plain })
@@ -2699,7 +2699,7 @@ impl<'p> Checker<'p> {
             }
             Ty::Func(ps, r) => {
                 if ps.len() != args.len() {
-                    self.err(span, "R-10.17", format!("die Funktion erwartet {} Argumente", ps.len()));
+                    self.err(span, "R-10.17", format!("The function expects {} arguments", ps.len()));
                 }
                 let m = MethodInfo {
                     name: String::new(),
@@ -2724,7 +2724,7 @@ impl<'p> Checker<'p> {
                 (**r).clone()
             }
             other => {
-                let msg = format!("{} ist keine Funktion", self.show(other));
+                let msg = format!("{} is not a function", self.show(other));
                 self.err(span, "R-10.17", msg);
                 Ty::Error
             }
@@ -2751,7 +2751,7 @@ impl<'p> Checker<'p> {
                 self.last_target = Some(Target::Lock);
                 return (Ty::Formed(Form::Shared, Box::new(inner)).nullable(), CallFacts { nodiscard: true, ..plain });
             }
-            self.err(name.span, "R-4.41", "über weak greift man nur mit lock() zu");
+            self.err(name.span, "R-4.41", "Use lock() to access a weak reference");
             return (Ty::Error, plain);
         }
         if let Some(cands) = self.builtin_methods(&core, &name.name) {
@@ -2774,7 +2774,7 @@ impl<'p> Checker<'p> {
                 }
             }
             let rule = self.unknown_member_rule(&core);
-            let msg = format!("{} hat keine Methode {}", self.show(&core), name.name);
+            let msg = format!("{} has no method {}", self.show(&core), name.name);
             self.err(name.span, rule, msg);
             for a in args {
                 self.probe(|c| c.expr(&a.expr, None));
@@ -2797,14 +2797,14 @@ impl<'p> Checker<'p> {
                     }
                     return r;
                 }
-                self.err(sr.member.span, "R-13.3", format!("{}::{} gibt es nicht", prim_name(*p), sr.member.name));
+                self.err(sr.member.span, "R-13.3", format!("{}::{} does not exist", prim_name(*p), sr.member.name));
                 return (Ty::Error, plain);
             }
             ast::StaticOwner::Named(tn) => self.resolve(&ast::Type { ownership: None, base: ast::BaseType::Named(tn.clone()), suffixes: vec![], span: sr.span }),
         };
         let Ty::Named(d, _) = &owner else {
             if !owner.is_error() {
-                self.err(sr.span, "R-7.27", "vor :: steht ein Typ");
+                self.err(sr.span, "R-7.27", ":: must follow a type");
             }
             return (Ty::Error, plain);
         };
@@ -2815,7 +2815,7 @@ impl<'p> Checker<'p> {
                 match v {
                     Some(v) if !v.fields.is_empty() => {
                         if v.fields.len() != args.len() {
-                            self.err(span, "R-4.25", format!("{} hat {} Daten", v.name, v.fields.len()));
+                            self.err(span, "R-4.25", format!("{} has {} payload fields", v.name, v.fields.len()));
                         }
                         for (a, f) in args.iter().zip(&v.fields) {
                             let at = self.expr(&a.expr, Some(&f.ty));
@@ -2827,7 +2827,7 @@ impl<'p> Checker<'p> {
                         (owner.clone(), plain)
                     }
                     _ => {
-                        self.err(sr.member.span, "R-4.25", format!("{} ist keine Variante mit Daten", sr.member.name));
+                        self.err(sr.member.span, "R-4.25", format!("{} is not a variant with a payload", sr.member.name));
                         (Ty::Error, plain)
                     }
                 }
@@ -2836,7 +2836,7 @@ impl<'p> Checker<'p> {
                 // M::m() ruft die Fassung aus dem importierten Mixin für this auf (R-7.15).
                 let imported = self.self_ty().is_some_and(|st| self.p.supertypes(&st).iter().any(|s| matches!(s, Ty::Named(x, _) if *x == d)));
                 if !imported || self.ctx.is_static {
-                    self.err(sr.span, "R-7.15", "M::m() gibt es nur in einer Klasse, die M importiert");
+                    self.err(sr.span, "R-7.15", "M::m() is allowed only in a class that imports M");
                     return (Ty::Error, plain);
                 }
                 let st = self.self_ty().unwrap();
@@ -2853,7 +2853,7 @@ impl<'p> Checker<'p> {
                 let cands: Vec<MethodInfo> = self.p.methods_of(&owner, &sr.member.name).into_iter().filter(|m| m.is_static).collect();
                 if cands.is_empty() {
                     let name = self.p.defs[d].name.clone();
-                    self.err(sr.member.span, "R-7.27", format!("{name} hat keine statische Methode {}", sr.member.name));
+                    self.err(sr.member.span, "R-7.27", format!("{name} has no static method {}", sr.member.name));
                     return (Ty::Error, plain);
                 }
                 self.invoke(cands, args, span, Receiver::Static, &sr.member.name)
@@ -2867,7 +2867,7 @@ impl<'p> Checker<'p> {
                 if matches!(sr.member.name.as_str(), "MIN" | "MAX") && is_numeric(*p) {
                     return Ty::Prim(*p);
                 }
-                self.err(sr.member.span, "R-13.3", format!("{}::{} ist kein Wert", prim_name(*p), sr.member.name));
+                self.err(sr.member.span, "R-13.3", format!("{}::{} is not a value", prim_name(*p), sr.member.name));
                 Ty::Error
             }
             ast::StaticOwner::Named(tn) => {
@@ -2882,7 +2882,7 @@ impl<'p> Checker<'p> {
                             return owner.clone();
                         }
                         Some(_) => {
-                            self.err(sr.member.span, "R-4.25", format!("{} trägt Daten: {}(…)", sr.member.name, sr.member.name));
+                            self.err(sr.member.span, "R-4.25", format!("{} has a payload: {}(…)", sr.member.name, sr.member.name));
                             return Ty::Error;
                         }
                         None => {}
@@ -2896,7 +2896,7 @@ impl<'p> Checker<'p> {
                     }
                 }
                 let name = self.p.defs[d].name.clone();
-                self.err(sr.member.span, "R-7.27", format!("{name}::{} ist kein statischer Wert", sr.member.name));
+                self.err(sr.member.span, "R-7.27", format!("{name}::{} is not a static value", sr.member.name));
                 Ty::Error
             }
         }
@@ -3002,7 +3002,7 @@ impl<'p> Checker<'p> {
                     // genau eine Variante: den ersten unpassenden Parameter melden
                     let m = same_arity[0].clone();
                     if !m.tparams.is_empty() && self.instantiate(&m, &shapes).is_none() {
-                        self.err(span, "R-4.44", format!("die Typargumente von {name} lassen sich nicht ableiten"));
+                        self.err(span, "R-4.44", format!("The type arguments for {name} cannot be inferred"));
                         return (Ty::Error, self.facts_of(&m));
                     }
                     let m = self.instantiate(&m, &shapes).unwrap_or(m);
@@ -3012,11 +3012,11 @@ impl<'p> Checker<'p> {
                     return (m.ret.ty(), self.facts_of(&m));
                 }
                 if same_arity.is_empty() && cands.len() == 1 {
-                    let msg = format!("{name} erwartet {} Argumente, nicht {}", cands[0].params.len(), args.len());
+                    let msg = format!("{name} expects {} arguments, got {}", cands[0].params.len(), args.len());
                     self.err(span, "R-7.17", msg);
                 } else {
                     let rule = if args.iter().any(|a| matches!(a.expr.kind, E::Lambda { .. })) { "R-10.18" } else { "R-7.17" };
-                    self.err(span, rule, format!("keine Variante von {name} passt zu den Argumenten"));
+                    self.err(span, rule, format!("No overload of {name} matches the arguments"));
                 }
                 for a in args {
                     self.probe(|c| c.expr(&a.expr, None));
@@ -3027,7 +3027,7 @@ impl<'p> Checker<'p> {
             _ => match self.best(&viable) {
                 Some(i) => viable.swap_remove(i).0,
                 None => {
-                    self.err(span, "R-7.17", format!("der Aufruf von {name} ist mehrdeutig"));
+                    self.err(span, "R-7.17", format!("The call to {name} is ambiguous"));
                     return (Ty::Error, CallFacts { nodiscard: false, func_value: false, never_returns: false });
                 }
             },
@@ -3051,12 +3051,12 @@ impl<'p> Checker<'p> {
                     let Some(arg) = map.get(tp) else { continue };
                     if arg.is_error() { continue; }
                     if self.p.tparams[*tp].needs_new && !self.p.satisfies_new(arg) {
-                        self.err(span, "R-7.25", format!("{} hat keinen sichtbaren parameterlosen Konstruktor (new())", self.show(arg)));
+                        self.err(span, "R-7.25", format!("{} has no accessible parameterless constructor (new())", self.show(arg)));
                     }
                     for c in self.p.tparams[*tp].constraints.clone() {
                         let c = c.subst(&map);
                         if !self.p.satisfies(arg, &c) {
-                            self.err(span, "R-7.26", format!("{} erfüllt {} nicht", self.show(arg), self.show(&c)));
+                            self.err(span, "R-7.26", format!("{} does not satisfy {}", self.show(arg), self.show(&c)));
                         }
                     }
                 }
@@ -3065,15 +3065,15 @@ impl<'p> Checker<'p> {
         match recv {
             Receiver::This => {
                 if self.ctx.is_static && !chosen.is_static {
-                    self.err(span, "R-7.4", format!("{name} braucht this; statische Methoden haben kein this"));
+                    self.err(span, "R-7.4", format!("{name} requires this, which is unavailable in a static method"));
                 }
                 if !chosen.is_static && self.frames.iter().any(|f| f.own_lambda) {
-                    self.err(span, "R-10.10", "ein own-Lambda kann this nicht erfassen");
+                    self.err(span, "R-10.10", "An own lambda cannot capture this");
                 }
             }
             Receiver::Object => {
                 if chosen.is_static {
-                    self.err(span, "R-7.27", format!("{name} ist statisch und wird mit :: aufgerufen"));
+                    self.err(span, "R-7.27", format!("{name} is static and must be called with ::"));
                 }
             }
             _ => {}
@@ -3141,9 +3141,9 @@ impl<'p> Checker<'p> {
             }
             let is_lambda = matches!(a.expr.kind, E::Lambda { .. });
             if p.mode == Mode::Mut && !a.borrow_mut && !is_lambda && !at.is_error() {
-                self.err(a.expr.span, "R-5.9", format!("der Parameter {} ist veränderbar geliehen; das Argument braucht mut", p.name));
+                self.err(a.expr.span, "R-5.9", format!("Parameter {} is a mutable borrow, so the argument requires mut", p.name));
             } else if p.mode != Mode::Mut && a.borrow_mut {
-                self.err(a.expr.span, "R-5.9", format!("der Parameter {} ist nicht veränderbar geliehen; mut ist hier falsch", p.name));
+                self.err(a.expr.span, "R-5.9", format!("Parameter {} is not a mutable borrow, so mut is not allowed here", p.name));
             }
             // V-9: Ein Parameter vom Typ shared T oder weak T speichert den Wert; ein own-Wert
             // wird dabei verschoben (bei weak wie share mit anschließendem demote).
@@ -3238,7 +3238,7 @@ impl<'p> Checker<'p> {
             }
             Ty::Param(p) => {
                 if !self.p.tparams[*p].needs_new {
-                    let msg = format!("new {}() verlangt den Constraint new()", self.p.tparams[*p].name);
+                    let msg = format!("new {}() requires the new() constraint", self.p.tparams[*p].name);
                     self.err(span, "R-7.24", msg);
                 }
                 self.last_target = Some(Target::NewParam(*p));
@@ -3249,20 +3249,20 @@ impl<'p> Checker<'p> {
                 match def.kind {
                     DefKind::Class => {}
                     _ => {
-                        self.err(span, "R-7.5", format!("{} ist keine Klasse", def.name));
+                        self.err(span, "R-7.5", format!("{} is not a class", def.name));
                         return Ty::Error;
                     }
                 }
                 if def.is_abstract && !matches!(self.frames.last(), Some(f) if f.ret == Some(Ret::Void) && self.ctx.class == Some(*d)) {
-                    self.err(span, "R-7.14", format!("{} ist abstrakt", def.name));
+                    self.err(span, "R-7.14", format!("{} is abstract", def.name));
                     return Ty::Error;
                 }
                 let map = self.p.subst_map(*d, targs);
                 if def.ctors.is_empty() {
                     if !args.is_empty() {
-                        self.err(span, "R-7.5", format!("{} hat keinen Konstruktor mit Parametern", def.name));
+                        self.err(span, "R-7.5", format!("{} has no constructor with parameters", def.name));
                     } else if !self.p.has_default_ctor(*d) {
-                        self.err(span, "R-7.5", format!("{} hat keinen parameterlosen Konstruktor", def.name));
+                        self.err(span, "R-7.5", format!("{} has no parameterless constructor", def.name));
                     }
                     self.last_target = Some(Target::Ctor(*d, None));
                     return t.clone();
@@ -3288,7 +3288,7 @@ impl<'p> Checker<'p> {
                     })
                     .collect();
                 if args.is_empty() && !cands.iter().any(|c| c.params.is_empty()) {
-                    self.err(span, "R-7.5", format!("{} hat keinen parameterlosen Konstruktor", def.name));
+                    self.err(span, "R-7.5", format!("{} has no parameterless constructor", def.name));
                     return t.clone();
                 }
                 self.invoke(cands, args, span, Receiver::Static, &def.name);
@@ -3296,7 +3296,7 @@ impl<'p> Checker<'p> {
                 t.clone()
             }
             _ => {
-                let msg = format!("new {} ist nicht möglich", self.show(t));
+                let msg = format!("new {} is not allowed", self.show(t));
                 self.err(span, "R-7.5", msg);
                 Ty::Error
             }
@@ -3311,12 +3311,12 @@ impl<'p> Checker<'p> {
         match exp {
             Some(Ty::Func(fps, r)) => {
                 if !own && !as_arg {
-                    self.err(span, "R-10.7", "ein normales Lambda steht nur als Argument oder wird direkt aufgerufen");
+                    self.err(span, "R-10.7", "A regular lambda must be passed as an argument or called directly");
                     return Ty::Error;
                 }
                 let ok = fps.len() == ps.len() && fps.iter().zip(&ps).all(|(f, l)| f.mode == l.mode && (f.ty.unformed() == l.ty.unformed() || l.ty.is_error()));
                 if !ok {
-                    self.err(span, "R-10.14", "die Parameter des Lambdas passen nicht zum erwarteten Funktionstyp");
+                    self.err(span, "R-10.14", "The lambda parameters do not match the expected function type");
                     return Ty::Error;
                 }
                 let ret = if *r == Ty::Void { Ret::Void } else { Ret::Val((*r).clone()) };
@@ -3329,14 +3329,14 @@ impl<'p> Checker<'p> {
             }
             Some(Ty::Param(_)) | None => {
                 if !own && !as_arg {
-                    self.err(span, "R-10.4", "ein normales Lambda braucht einen Funktionstyp aus dem Zusammenhang");
+                    self.err(span, "R-10.4", "A regular lambda requires a function type from context");
                     return Ty::Error;
                 }
                 let r = self.lambda_body(own, &ps, body, None, span);
                 Ty::Func(ps.iter().map(|p| FParam { ty: p.ty.clone(), mode: p.mode }).collect(), Box::new(r))
             }
             Some(other) => {
-                let msg = format!("ein Lambda passt nicht zu {}", self.show(&other));
+                let msg = format!("A lambda is incompatible with {}", self.show(&other));
                 self.err(span, "R-10.14", msg);
                 Ty::Error
             }
@@ -3353,7 +3353,7 @@ impl<'p> Checker<'p> {
         for p in ps {
             let id = ast::Ident { name: p.name.clone(), span: Span::default() };
             if self.find_local(&p.name).is_some() {
-                self.err(id.span, "R-8.17", format!("{} verdeckt eine sichtbare Variable", p.name));
+                self.err(id.span, "R-8.17", format!("{} shadows a visible variable", p.name));
             }
             self.new_local(&p.name, p.ty.clone(), LocalKind::Param(p.mode));
         }
@@ -3368,14 +3368,14 @@ impl<'p> Checker<'p> {
                     Some(Ret::Val(r)) => {
                         let r = r.clone();
                         if !self.assignable(&t, &r) {
-                            let msg = format!("das Lambda liefert {}, erwartet ist {}", self.show(&t), self.show(&r));
+                            let msg = format!("The lambda returns {}, expected {}", self.show(&t), self.show(&r));
                             self.err(x.span, "R-10.14", msg);
                         }
                         r
                     }
                     Some(Ret::Void) => {
                         if t != Ty::Void && !t.is_error() {
-                            let msg = format!("das Lambda liefert {}, erwartet ist void", self.show(&t));
+                            let msg = format!("The lambda returns {}, expected void", self.show(&t));
                             self.err(x.span, "R-10.14", msg);
                         }
                         Ty::Void
@@ -3388,7 +3388,7 @@ impl<'p> Checker<'p> {
                 match &ret {
                     Some(Ret::Val(r)) => {
                         if completes {
-                            self.err(b.end, "R-8.26", "das Lambda endet ohne return");
+                            self.err(b.end, "R-8.26", "The lambda ends without returning a value");
                         }
                         r.clone()
                     }
@@ -3418,8 +3418,8 @@ impl<'p> Checker<'p> {
             let place = Place::var(*id);
             let mutable = *mutable || (own && *id != THIS && self.local_by_id(*id).is_some_and(|l| self.movable(&l.ty) && !l.kind.is_borrow()));
             if let Some(l) = self.loans.iter().rev().find(|l| l.conflicts(mutable, &place)).cloned() {
-                let how = if l.mutable { "veränderbar" } else { "lesend" };
-                self.err_also(span, "R-10.7", vec![l.rule], format!("das Lambda verwendet {}, das gerade {how} geliehen ist", l.what));
+                let how = if l.mutable { "borrowed mutably" } else { "borrowed read-only" };
+                self.err_also(span, "R-10.7", vec![l.rule], format!("The lambda uses {}, which is currently {how}", l.what));
             }
         }
         // R-10.8: Ein own-Lambda verschiebt erfasste own-Werte in sich.
@@ -3520,7 +3520,7 @@ impl<'p> Checker<'p> {
         if let Some(md) = self.p.std_def(mixin) {
             let m = Ty::Named(md, vec![e.unformed().clone()]);
             if !self.p.satisfies(e.unformed(), &m) {
-                let msg = format!("{name} verlangt, dass {} {} erfüllt", self.show(e), mixin.trim_start_matches("rpp.core."));
+                let msg = format!("{name} requires that {} satisfy {}", self.show(e), mixin.trim_start_matches("rpp.core."));
                 self.err(span, rule, msg);
             }
         }
@@ -3543,7 +3543,8 @@ impl<'p> Checker<'p> {
         let plain = CallFacts { nodiscard: false, func_value: false, never_returns: false };
         let expect = |c: &mut Self, n: usize| {
             if args.len() != n {
-                c.err(span, "R-8.16", format!("{name} erwartet {n} Argumente"));
+                let noun = if n == 1 { "argument" } else { "arguments" };
+                c.err(span, "R-8.16", format!("{name} expects {n} {noun}"));
             }
         };
         let s = Ty::Prim(P::String);
@@ -3581,7 +3582,7 @@ impl<'p> Checker<'p> {
                 expect(self, 1);
                 let t = args.first().map(|a| self.field_arg(a)).unwrap_or(Ty::Error);
                 if !t.is_error() && !matches!(t.unformed(), Ty::Nullable(_)) {
-                    self.err(span, "R-5.7", "take verlangt ein nullbares Feld");
+                    self.err(span, "R-5.7", "take requires a nullable field");
                 }
                 Some((t, CallFacts { nodiscard: false, ..plain }))
             }

@@ -25,7 +25,7 @@ public:
         try {
             text = Preprocessor::run(source, symbols);
         } catch (DirectiveError e) {
-            throw new SyntaxError(e.line, 0, "Direktive: " + e.message);
+            throw new SyntaxError(e.line, 0, "Directive: " + e.message);
         }
         Lexer lx = new Lexer(text);
         Token[] tokens = lx.lex();
@@ -38,7 +38,7 @@ public:
             throw new SyntaxError(l, c, msg);
         }
         if (unit == null) {
-            throw new SyntaxError(0, 0, "Syntaxfehler");
+            throw new SyntaxError(0, 0, "Syntax error");
         }
         (i32 bl, i32 bc) = Parser::firstBad(unit, 0, 0);
         if (bl > 0) {

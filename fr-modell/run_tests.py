@@ -39,7 +39,7 @@ def run_accepted(path):
         checker = Checker(prog)
         checker.check()
     except (ParseError, CheckError) as exc:
-        return f"abgelehnt: {exc}"
+        return f"rejected: {exc}"
     it = Interp(prog, check_invariants=True, checker=checker)
     try:
         it.run()
@@ -47,13 +47,13 @@ def run_accepted(path):
     except BorrowError:
         got = "BorrowError"
     except (Stuck, InvariantViolation) as exc:
-        return f"FEHLERZUSTAND: {type(exc).__name__}: {exc}"
+        return f"Invalid state: {type(exc).__name__}: {exc}"
     except OutOfFuel:
         return "Schrittbudget erschöpft"
     if got.strip() != want:
-        return f"{got.strip()!r} statt {want!r}"
+        return f"expected {want!r}, got {got.strip()!r}"
     if got.startswith("Ausgabe") and not it.shared_used and it.live_objects():
-        return f"Leck ohne shared: {it.live_objects()}"
+        return f"Leak without shared: {it.live_objects()}"
     return None
 
 
@@ -64,17 +64,17 @@ def run_rejected(path):
     rule = m.group(1) if m else "?"
     marked = [i + 1 for i, line in enumerate(src.splitlines()) if "// FEHLER" in line]
     if len(marked) != 1:
-        return f"{len(marked)} Markierungen '// FEHLER' statt genau einer"
+        return f"expected one '// FEHLER' marker, found {len(marked)}"
     try:
         prog = parse(src)
         Checker(prog).check()
     except ParseError as exc:
-        return f"Syntaxfehler: {exc}"
+        return f"Syntax error: {exc}"
     except CheckError as exc:
         if exc.rule != rule or exc.line != marked[0]:
-            return f"abgelehnt mit {exc.rule} in Zeile {exc.line}, erwartet {rule} in Zeile {marked[0]}: {exc.msg}"
+            return f"expected {rule} on line {marked[0]}, got {exc.rule} on line {exc.line}: {exc.msg}"
         return run_unchecked(prog, src)
-    return "wurde akzeptiert"
+    return "unexpectedly accepted"
 
 
 def run_unchecked(prog, src):
@@ -93,20 +93,20 @@ def run_unchecked(prog, src):
     except OutOfFuel:
         got = "Schrittbudget erschöpft"
     if got != m.group(1):
-        return f"ohne Typprüfung: {got} statt {m.group(1)}"
+        return f"without type checking: expected {m.group(1)}, got {got}"
     return None
 
 
 def main():
     failures = 0
-    lines = ["== Akzeptierte Programme (Typprüfung, Ausführung, Invarianten) =="]
+    lines = ["== Accepted programs (type checking, execution, invariants) =="]
     acc = sorted((ROOT / "tests" / "akzeptiert").glob("*.fr"))
     for p in acc:
         err = run_accepted(p)
         failures += err is not None
-        lines.append(f"  {'ok   ' if err is None else 'FEHLER'} {p.name}" + (f": {err}" if err else ""))
+        lines.append(f"  {'ok   ' if err is None else 'FAIL '} {p.name}" + (f": {err}" if err else ""))
     lines.append("")
-    lines.append("== Abgelehnte Programme (Regel und Zeile) ==")
+    lines.append("== Rejected programs (rule and line) ==")
     rej = sorted((ROOT / "tests" / "abgelehnt").glob("*.fr"))
     for p in rej:
         err = run_rejected(p)
@@ -115,11 +115,11 @@ def main():
         rule = re.match(r"Fehler (\S+)", expectation(text))
         unsafe = re.search(r"^// ohne Typprüfung: (\S+)", text, re.M)
         label = f"{p.name} [{rule.group(1) if rule else '?'}]" + \
-            (f"  ohne Prüfung: {unsafe.group(1)}" if unsafe else "")
-        lines.append(f"  {'ok   ' if err is None else 'FEHLER'} {label}" + (f": {err}" if err else ""))
+            (f"  without type checking: {unsafe.group(1)}" if unsafe else "")
+        lines.append(f"  {'ok   ' if err is None else 'FAIL '} {label}" + (f": {err}" if err else ""))
     lines.append("")
-    lines.append(f"Umfang: {len(acc)} akzeptierte, {len(rej)} abgelehnte Programme")
-    lines.append(f"Ergebnis: {failures} Fehler")
+    lines.append(f"Scope: {len(acc)} accepted, {len(rej)} rejected programs")
+    lines.append(f"Result: {failures} failures")
     print("\n".join(lines))
     return 1 if failures else 0
 

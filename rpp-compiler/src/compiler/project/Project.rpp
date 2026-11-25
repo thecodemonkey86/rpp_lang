@@ -188,7 +188,7 @@ private:
             File f = File::open(path);
             source = f.readAllText();
         } catch (Exception e) {
-            diag(path, 1, "R-11.1", "Datei nicht lesbar: " + e.message);
+            diag(path, 1, "R-11.1", "Could not read file: " + e.message);
             return;
         }
         Set<string> syms = new Set<string>();
@@ -263,7 +263,7 @@ private:
             text = f.readAllText();
         } catch (Exception e) {
             if (expected) {
-                diag(wantFile, wantLine, "R-11.15", dir + " enthält keine rpp.yaml");
+                diag(wantFile, wantLine, "R-11.15", dir + " does not contain rpp.yaml");
             }
             return -1;
         }
@@ -277,19 +277,19 @@ private:
         string[] known = ["name", "version", "type", "main", "sources", "dependencies", "registry", "symbols"];
         for (i64 i = 0; i < doc.keys.length; i++) {
             if (!contains(known, doc.keys[i])) {
-                diag(yamlPath, doc.items[i].line, "R-11.13", "unbekannter Eintrag '" + doc.keys[i] + "'");
+                diag(yamlPath, doc.items[i].line, "R-11.13", "Unknown entry '" + doc.keys[i] + "'");
             }
         }
         string[] required = ["name", "version", "type", "sources"];
         for (string key : required) {
             if (!doc.has(key)) {
-                diag(yamlPath, 1, "R-11.13", "Eintrag '" + key + "' fehlt");
+                diag(yamlPath, 1, "R-11.13", "Missing entry '" + key + "'");
             }
         }
         string name = doc.strOf("name");
         i32 nameLine = doc.lineOf("name");
         if (name == "rpp" || name.startsWith("rpp.")) {
-            diag(yamlPath, nameLine, "R-11.17", "der Besitzer rpp ist für die Standardbibliothek reserviert");
+            diag(yamlPath, nameLine, "R-11.17", "The owner name rpp is reserved for the standard library");
         } else {
             Lexer words = new Lexer("");
             bool bad = false;
@@ -299,11 +299,11 @@ private:
                 }
             }
             if (bad) {
-                diag(yamlPath, nameLine, "R-11.17", "ungültiger Name '" + name + "'");
+                diag(yamlPath, nameLine, "R-11.17", "Invalid name '" + name + "'");
             }
         }
         if (expected && want != name) {
-            diag(wantFile, wantLine, "R-11.15", "das Projekt in " + dir + " heißt '" + name + "', nicht '" + want + "'");
+            diag(wantFile, wantLine, "R-11.15", "The project in " + dir + " is named '" + name + "', expected '" + want + "'");
         }
         ProjectKind kind = ProjectKind::Library;
         if (doc.has("type")) {
@@ -311,7 +311,7 @@ private:
             if (doc.isStrAt("type") && t == "executable") {
                 kind = ProjectKind::Executable;
             } else if (!doc.isStrAt("type") || t != "library") {
-                diag(yamlPath, doc.lineOf("type"), "R-11.13", "type ist executable oder library");
+                diag(yamlPath, doc.lineOf("type"), "R-11.13", "type must be executable or library");
             }
         }
         string? mainFile = null;
@@ -319,7 +319,7 @@ private:
             mainFile = Path::absolute(Path::join(dir, doc.strOf("main")));
         }
         if (kind == ProjectKind::Executable && mainFile == null) {
-            diag(yamlPath, 1, "R-11.13", "ein Programm braucht den Eintrag main");
+            diag(yamlPath, 1, "R-11.13", "An executable requires a main entry");
         }
         i64 idx = projects.length;
         Project p = new Project(name, kind, dir);
@@ -331,7 +331,7 @@ private:
         i64[] deps = [];
         i64 di = doc.indexOf("dependencies");
         if (di >= 0 && doc.items[di].kind != YKind::List) {
-            diag(yamlPath, doc.items[di].line, "R-11.13", "dependencies ist eine Liste");
+            diag(yamlPath, doc.items[di].line, "R-11.13", "dependencies must be a list");
         }
         if (di >= 0 && doc.items[di].kind == YKind::List) {
             for (YNode dep : doc.items[di].items) {
@@ -339,26 +339,26 @@ private:
                 if (dep.has("path")) {
                     i32 pl = dep.lineOf("path");
                     if (!dep.isStrAt("path")) {
-                        diag(yamlPath, pl, "R-11.15", "path ist ein Pfad");
+                        diag(yamlPath, pl, "R-11.15", "path must be a file path");
                         continue;
                     }
                     string target = Path::absolute(Path::join(dir, dep.strOf("path")));
                     if (stack.contains(target)) {
-                        diag(yamlPath, pl, "R-11.16", "Zyklus in den Abhängigkeiten über '" + depName + "'");
+                        diag(yamlPath, pl, "R-11.16", "Dependency cycle through '" + depName + "'");
                         continue;
                     }
                     i64 d = loadProject(target, mut stack, true, depName, yamlPath, pl);
                     if (d >= 0) {
                         if (projects[d].kind != ProjectKind::Library) {
-                            diag(yamlPath, pl, "R-11.15", "'" + depName + "' ist keine Bibliothek");
+                            diag(yamlPath, pl, "R-11.15", "'" + depName + "' is not a library");
                         }
                         deps.push(d);
                     }
                 } else if (dep.has("version")) {
                     diag(yamlPath, dep.line, "R-11.15", "'" + depName
-                        + "': Bibliotheken aus dem Verzeichnis werden von dieser Implementierung noch nicht geladen");
+                        + "': Registry dependencies are not supported yet");
                 } else {
-                    diag(yamlPath, dep.line, "R-11.15", "eine Abhängigkeit braucht path oder version");
+                    diag(yamlPath, dep.line, "R-11.15", "A dependency requires path or version");
                 }
             }
         }
@@ -374,16 +374,16 @@ private:
         if (si >= 0) {
             ref YNode syms = doc.items[si];
             if (syms.kind != YKind::Map) {
-                diag(yamlPath, syms.line, "R-11.13", "symbols ordnet den Modi debug und release Listen zu");
+                diag(yamlPath, syms.line, "R-11.13", "symbols must map debug and release to lists");
             }
             for (i64 k = 0; k < syms.keys.length; k++) {
                 string key = syms.keys[k];
                 ref YNode list = syms.items[k];
                 bool allStr = list.kind == YKind::List && list.all((YNode s) => s.kind == YKind::Str);
                 if (key != "debug" && key != "release") {
-                    diag(yamlPath, list.line, "R-11.13", "unbekannter Modus '" + key + "'");
+                    diag(yamlPath, list.line, "R-11.13", "Unknown mode '" + key + "'");
                 } else if (!allStr) {
-                    diag(yamlPath, list.line, "R-11.13", key + " ist eine Liste von Symbolen");
+                    diag(yamlPath, list.line, "R-11.13", key + " must be a list of symbols");
                 } else if (key == mode) {
                     string[] empty = [];
                     symbols = list.fold(empty, (own string[] names, YNode s) => {
@@ -395,17 +395,17 @@ private:
         }
         i64 sx = doc.indexOf("sources");
         if (sx >= 0 && doc.items[sx].kind != YKind::List) {
-            diag(yamlPath, doc.items[sx].line, "R-11.13", "sources ist eine Liste von Quellordnern");
+            diag(yamlPath, doc.items[sx].line, "R-11.13", "sources must be a list of source directories");
         }
         if (sx >= 0 && doc.items[sx].kind == YKind::List) {
             for (YNode s : doc.items[sx].items) {
                 if (s.kind != YKind::Str) {
-                    diag(yamlPath, s.line, "R-11.13", "ein Quellordner ist ein Pfad");
+                    diag(yamlPath, s.line, "R-11.13", "A source directory must be a path");
                     continue;
                 }
                 string src = Path::join(dir, s.text);
                 if (!Dir::exists(src)) {
-                    diag(yamlPath, s.line, "R-11.13", "Quellordner " + src + " fehlt");
+                    diag(yamlPath, s.line, "R-11.13", "Source directory " + src + " is missing");
                     continue;
                 }
                 loadSources(Path::absolute(src), idx, symbols);

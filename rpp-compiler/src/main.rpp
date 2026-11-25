@@ -2,15 +2,15 @@
 //   rppcc tokens DATEI            eine Zeile je Token (wie `rppc tokens`)
 //   rppcc pre SYMBOLE DATEI       bedingte Kompilierung, Symbole mit Komma getrennt (wie `rppc pre`)
 //   rppcc ast SYMBOLE DATEI       Syntaxbaum in Textform oder der erste Fehler (wie `rppc ast`)
-//   rppcc projekt [--release] STD PFAD
+//   rppcc project [--release] STD PATH
 //   rppcc defs [--release] STD PFAD
 //                                 Deklarationstabellen und Meldungen der Deklarationsphase (wie `rppc defs`)
-//   rppcc pruefe [--zeiten] STD PFAD
-//                                 alle Meldungen der Prüfung, auch der Rümpfe (wie `rppc pruefe`)
+//   rppcc diagnose [--timings] STD PATH
+//                                 alle Meldungen der Prüfung, auch der Rümpfe (wie `rppc diagnose`)
 //   rppcc c [--release] STD PFAD AUSGABE.c
 //                                 C-Code für runtime/rpp_rt.c erzeugen (Codegenerator, M6)
 //                                 Deklarationstabellen und Meldungen der Deklarationsphase (wie `rppc defs`)
-//                                 geladene Projekte, Dateien und Meldungen (wie `rppc projekt`)
+//                                 geladene Projekte, Dateien und Meldungen (wie `rppc project`)
 using rpp.io.File;
 using rpp.io.Path;
 using rpp.io.Dir;
@@ -73,7 +73,7 @@ public:
         try {
             print(Preprocessor::run(text, symbols));
         } catch (DirectiveError e) {
-            print("Zeile " + e.line.toString() + ": " + e.message);
+            print("Line " + e.line.toString() + ": " + e.message);
         }
         return 0;
     }
@@ -183,9 +183,9 @@ public:
         string last = "";
         for (i64 i : order) {
             ref Diag d = ds[i];
-            string kind = "fehler";
+            string kind = "error";
             if (d.warning) {
-                kind = "warnung";
+                kind = "warning";
             }
             string rules = d.rule;
             for (string a : d.also) {
@@ -299,7 +299,7 @@ public:
         return 0;
     }
 
-    // Ganze Prüfung; Ausgabe wie `rppc pruefe`
+    // Ganze Prüfung; Ausgabe wie `rppc diagnose`
     static i32 pruefe(string stdDir, string input, bool zeiten) {
         ElapsedTimer? timer = null;
         if (zeiten) { timer = new ElapsedTimer(); }
@@ -311,9 +311,9 @@ public:
         c.run(ws);
         if (timer != null) {
             i64 ruempfe = timer.elapsed();
-            Console::error("Projektladen: " + laden.toString() + " ms");
-            Console::error("Deklarationsprüfung: " + deklarationen.toString() + " ms");
-            Console::error("Rumpfprüfung: " + ruempfe.toString() + " ms");
+            Console::error("Project loading: " + laden.toString() + " ms");
+            Console::error("Declaration checking: " + deklarationen.toString() + " ms");
+            Console::error("Body checking: " + ruempfe.toString() + " ms");
         }
         for (string line : sortedDiags(c.p.diags, inputDir(input))) {
             print(line);
@@ -321,7 +321,7 @@ public:
         return 0;
     }
 
-    // C-Code erzeugen; bei Fehlern der Prüfung die Meldungen wie `pruefe`, Exit-Code 1
+    // C-Code erzeugen; bei Fehlern der Prüfung die Meldungen wie `diagnose`, Exit-Code 1
     static i32 genC(string stdDir, string input, string output, bool release) {
         Workspace ws = Workspace::load(input, stdDir, release);
         Program p = Program::build(ws);
@@ -346,7 +346,7 @@ public:
         return 0;
     }
 
-    // Projekt laden; Ausgabe wie `rppc projekt`
+    // Projekt laden; Ausgabe wie `rppc project`
     static i32 projekt(string stdDir, string input, bool release) {
         Workspace ws = Workspace::load(input, stdDir, release);
         i64 i = 0;
@@ -397,7 +397,7 @@ public:
         }
         Path baseDir = inputDir(input);
         for (Diag d : ws.diags) {
-            print("fehler " + displayPath(d.file, baseDir) + ":" + d.line.toString() + ":" + d.col.toString() + " [" + d.rule + "] " + d.message);
+            print("error " + displayPath(d.file, baseDir) + ":" + d.line.toString() + ":" + d.col.toString() + " [" + d.rule + "] " + d.message);
         }
         return 0;
     }
@@ -418,36 +418,58 @@ public:
             unit.dump(mut out, 0);
             Console::write(out.toString());
         } catch (SyntaxError e) {
-            print("Zeile " + e.line.toString() + ":" + e.col.toString() + " " + e.message);
+            print("Line " + e.line.toString() + ":" + e.col.toString() + " " + e.message);
         }
         return 0;
     }
 }
 
 i32 main(string[] args) {
+    string usage = "Usage:\n"
+        + "  rppcc tokens FILE\n"
+        + "  rppcc pre SYMBOLS FILE\n"
+        + "  rppcc ast SYMBOLS FILE\n"
+        + "  rppcc project [--release] STD PATH\n"
+        + "  rppcc defs [--release] STD PATH\n"
+        + "  rppcc diagnose [--timings] STD PATH\n"
+        + "  rppcc c [--release] STD PATH OUTPUT.c\n"
+        + "Use --help after tokens, project, or diagnose for command-specific help.";
+    if (args.length == 1 && (args[0] == "--help" || args[0] == "-h")) {
+        print(usage);
+        return 0;
+    }
     if (args.length == 3 && args[0] == "ast") {
         return Main::ast(args[1], args[2]);
     }
-    if (args.length > 0 && (args[0] == "tokens" || args[0] == "projekt" || args[0] == "pruefe")) {
-        bool project = args[0] == "projekt";
-        bool check = args[0] == "pruefe";
-        string description = "Gibt die Tokens der Quelldatei aus.";
-        if (project) { description = "Lädt ein Projekt mit der Standardbibliothek aus STD."; }
-        if (check) { description = "Prüft Deklarationen und Rümpfe mit der Standardbibliothek aus STD."; }
-        CommandLineParser parser = new CommandLineParser("rppcc " + args[0], description);
+    string command = args.length > 0 ? args[0] : "";
+    if (command == "projekt") { command = "project"; }
+    if (command == "pruefe") { command = "diagnose"; }
+    if (command == "tokens" || command == "project" || command == "diagnose") {
+        bool project = command == "project";
+        bool check = command == "diagnose";
+        string description = "Print the tokens in a source file.";
+        if (project) { description = "Load a project using the standard library in STD."; }
+        if (check) { description = "Check declarations and bodies using the standard library in STD."; }
+        CommandLineParser parser = new CommandLineParser("rppcc " + command, description);
         if (project) {
-            parser.addFlag("--release", "Projekt im Releasemodus laden");
+            parser.addFlag("--release", "Load the project in release mode");
         }
         if (check) {
-            parser.addFlag("--zeiten", "Dauer der drei Prüfphasen in Millisekunden auf der Fehlerausgabe anzeigen");
+            parser.addFlag("--timings", "Print the duration of each phase in milliseconds to standard error");
         }
         if (project || check) {
             parser.addPositional("STD");
-            parser.addPositional("PFAD");
+            parser.addPositional("PATH");
         } else {
-            parser.addPositional("DATEI");
+            parser.addPositional("FILE");
         }
-        CommandLineResult result = parser.parse(args[1..]);
+        string[] commandArgs = [];
+        bool readOptions = check;
+        for (string arg : args[1..]) {
+            if (arg == "--") { readOptions = false; }
+            commandArgs.push(readOptions && arg == "--zeiten" ? "--timings" : arg);
+        }
+        CommandLineResult result = parser.parse(commandArgs[0..]);
         if (result.helpRequested) {
             print(parser.helpText());
             return 0;
@@ -461,7 +483,7 @@ i32 main(string[] args) {
             return Main::projekt(result.positional[0], result.positional[1], result.isSet("--release"));
         }
         if (check) {
-            return Main::pruefe(result.positional[0], result.positional[1], result.isSet("--zeiten"));
+            return Main::pruefe(result.positional[0], result.positional[1], result.isSet("--timings"));
         }
         return Main::tokens(result.positional[0]);
     }
@@ -480,6 +502,6 @@ i32 main(string[] args) {
     if (args.length == 3 && args[0] == "defs") {
         return Main::defs(args[1], args[2], false);
     }
-    Console::error("Befehle: tokens, pre, ast, projekt, defs, pruefe\nHilfe: rppcc tokens --help | rppcc projekt --help | rppcc pruefe --help");
+    Console::error(usage);
     return 2;
 }

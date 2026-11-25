@@ -40,7 +40,7 @@ class Collector(ErrorListener):
         self.ambiguities = []
 
     def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
-        self.errors.append(f"Zeile {line}:{column} {msg}")
+        self.errors.append(f"Line {line}:{column} {msg}")
 
     def reportAmbiguity(self, recognizer, dfa, startIndex, stopIndex, exact,
                         ambigAlts, configs):
@@ -48,7 +48,7 @@ class Collector(ErrorListener):
         tokens = recognizer.getTokenStream()
         text = tokens.getText(startIndex, stopIndex)
         line = tokens.get(startIndex).line
-        self.ambiguities.append(f"Regel {rule}, Zeile {line}: {text!r}")
+        self.ambiguities.append(f"Rule {rule}, line {line}: {text!r}")
 
 
 def check_expr_statements(tree, errors):
@@ -58,8 +58,8 @@ def check_expr_statements(tree, errors):
         last = ops[-1].getChild(0).getText() if ops else None
         if last not in ("(", "++", "--"):
             errors.append(
-                f"Zeile {tree.start.line}: Ausdruck {tree.getText()!r} "
-                "ist keine gültige Anweisung")
+                f"Line {tree.start.line}: expression {tree.getText()!r} "
+                "cannot be used as a statement")
     for i in range(tree.getChildCount()):
         child = tree.getChild(i)
         if hasattr(child, "getChildCount") and child.getChildCount() > 0:
@@ -159,7 +159,7 @@ def conformance_units():
 
 
 MARKER = re.compile(r"(//|#) FEHLER\s*$")
-ERROR_LINE = re.compile(r"Zeile (\d+)")
+ERROR_LINE = re.compile(r"Line (\d+)")
 
 
 def check_unit(path, kind, sources, header, files):
@@ -179,12 +179,12 @@ def check_unit(path, kind, sources, header, files):
             if not at_marker:
                 problems.extend(f"{src.name}: {err}" for err in collector.errors)
     if kind == "abgelehnt" and len(markers) != 1:
-        problems.append(f"{len(markers)} Markierungen 'FEHLER' statt genau einer")
+        problems.append(f"expected one 'FEHLER' marker, found {len(markers)}")
     if kind != "abgelehnt" and markers:
-        problems.append(f"{kind}er Test enthält eine Markierung 'FEHLER'")
+        problems.append(f"test in '{kind}' contains a 'FEHLER' marker")
     head = "\n".join(header.read_text(encoding="utf-8").splitlines()[:8])
     if kind == "laufzeit" and not re.search(r"^(//|#) Erwartet( \((debug|release)\))?: ", head, re.M):
-        problems.append("Laufzeittest ohne Kopfzeile 'Erwartet: …'")
+        problems.append("runtime test is missing the 'Erwartet: …' header")
     return problems[:6], ambiguities
 
 
@@ -215,11 +215,11 @@ def rule_coverage():
         total += len(rules)
         covered += len(tested)
         excused += len(free)
-        text = ", ".join(f"R-{chapter}.{r}" for r in missing) if missing else "nichts"
-        note = f", {len(free)} begründet ohne Test" if free else ""
-        out.append(f"  Kapitel {chapter:2}: {len(tested):3} von {len(rules):3} Regeln getestet{note}; fehlt: {text}")
-    out.append(f"  gesamt: {covered} von {total} Regeln in mindestens einem Testkopf genannt, "
-               f"{excused} begründet ohne Test, {total - covered - excused} fehlen")
+        text = ", ".join(f"R-{chapter}.{r}" for r in missing) if missing else "none"
+        note = f", {len(free)} exempt" if free else ""
+        out.append(f"  Chapter {chapter:2}: {len(tested):3} of {len(rules):3} rules covered{note}. Missing: {text}")
+    out.append(f"  total: {covered} of {total} rules listed in at least one test header, "
+               f"{excused} exempt, {total - covered - excused} missing")
     return out
 
 
@@ -229,7 +229,7 @@ def main():
     known = []
     lines = []
 
-    lines.append("== Positive Tests (müssen akzeptiert werden) ==")
+    lines.append("== Positive tests (must be accepted) ==")
     for path in sorted((ROOT / "tests" / "pos").glob("*.rpp")):
         if "bedingte" in path.name:
             symbols_list = [{"debug"}, {"release"}]
@@ -244,74 +244,74 @@ def main():
             expect_ok = not ("bedingte" in path.name and symbols == {"release"})
             ok = not collector.errors
             if ok == expect_ok:
-                note = "" if expect_ok else "  (Release-Zweig enthält absichtlich einen Fehler)"
+                note = "" if expect_ok else "  (release branch contains an intentional error)"
                 lines.append(f"  ok    {label}{note}")
             else:
                 failures += 1
-                lines.append(f"  FEHLER {label}")
+                lines.append(f"  FAIL  {label}")
                 lines.extend(f"         {e}" for e in collector.errors[:5])
             ambiguities.extend(f"{label}: {a}" for a in collector.ambiguities)
 
     lines.append("")
-    lines.append("== Negative Tests (müssen abgelehnt werden) ==")
+    lines.append("== Negative tests (must be rejected) ==")
     for name, source in NEGATIVE.items():
         tree, collector = parse(source)
         if collector.errors:
             lines.append(f"  ok    {name}")
         else:
             failures += 1
-            lines.append(f"  FEHLER {name}: wurde akzeptiert")
+            lines.append(f"  FAIL  {name}: unexpectedly accepted")
 
     lines.append("")
-    lines.append("== Lesarten (müssen wie erwartet gelesen werden) ==")
+    lines.append("== Parse interpretations ==")
     for name, (source, expected) in PROBES.items():
         tree, collector = parse(source)
         if collector.errors:
             failures += 1
-            lines.append(f"  FEHLER {name}: {collector.errors[0]}")
+            lines.append(f"  FAIL  {name}: {collector.errors[0]}")
             continue
         actual = first_statement_rule(tree)
         if actual == expected:
             lines.append(f"  ok    {name}  ->  {actual}")
         else:
             failures += 1
-            lines.append(f"  FEHLER {name}: {actual} statt {expected}")
+            lines.append(f"  FAIL  {name}: expected {expected}, got {actual}")
         if name in EXPECTED_AMBIGUITY and collector.ambiguities:
             known.append(f"{name}: {EXPECTED_AMBIGUITY[name]}")
         else:
             ambiguities.extend(f"{name}: {a}" for a in collector.ambiguities)
 
     lines.append("")
-    lines.append("== Konformitätstests (nur Syntax; semantisch noch nicht prüfbar) ==")
+    lines.append("== Conformance tests (syntax only) ==")
     conformance = conformance_units()
     for path, kind, sources, header, files in conformance:
         label = path.relative_to(CONFORMANCE).as_posix() + ("/" if path.is_dir() else "")
         problems, found = check_unit(path, kind, sources, header, files)
         if problems:
             failures += 1
-            lines.append(f"  FEHLER {label}")
+            lines.append(f"  FAIL  {label}")
             lines.extend(f"         {e}" for e in problems)
         else:
             lines.append(f"  ok    {label}")
         ambiguities.extend(f"{label}: {a}" for a in found)
 
     lines.append("")
-    lines.append("== Von ANTLR gemeldete Mehrdeutigkeiten ==")
-    lines.extend(f"  bekannt und aufgelöst: {k}" for k in known)
+    lines.append("== Ambiguities reported by ANTLR ==")
+    lines.extend(f"  known and resolved: {k}" for k in known)
     if ambiguities:
-        lines.extend(f"  UNERWARTET: {a}" for a in ambiguities)
+        lines.extend(f"  UNEXPECTED: {a}" for a in ambiguities)
     else:
-        lines.append("  keine unerwarteten")
+        lines.append("  no unexpected ambiguities")
 
     lines.append("")
-    lines.append("== Regelabdeckung (Regeln, die in keinem Testkopf genannt werden) ==")
+    lines.append("== Rules not listed in any test header ==")
     lines.extend(rule_coverage())
 
     lines.append("")
     counts = (len(list((ROOT / "tests" / "pos").glob("*.rpp"))), len(NEGATIVE), len(PROBES))
-    lines.append(f"Umfang: {counts[0]} positive Dateien, {counts[1]} negative Tests, {counts[2]} Lesarten, "
-                 f"{len(conformance)} Konformitätstests")
-    lines.append(f"Ergebnis: {failures} Fehler, {len(ambiguities)} unerwartete Mehrdeutigkeiten")
+    lines.append(f"Scope: {counts[0]} positive files, {counts[1]} negative tests, {counts[2]} parse interpretations, "
+                 f"{len(conformance)} conformance tests")
+    lines.append(f"Result: {failures} failures, {len(ambiguities)} unexpected ambiguities")
     print("\n".join(lines))
     return 1 if failures or ambiguities else 0
 

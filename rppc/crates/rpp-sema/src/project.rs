@@ -193,7 +193,7 @@ impl Workspace {
         let source = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
-                self.diag(path, 1, "R-11.1", format!("Datei nicht lesbar: {e}"));
+                self.diag(path, 1, "R-11.1", format!("Could not read file: {e}"));
                 return;
             }
         };
@@ -228,7 +228,7 @@ impl Workspace {
             Ok(t) => t,
             Err(_) => {
                 if let Some((_, file, line)) = expected_name {
-                    self.diag(file, line, "R-11.15", format!("{} enthält keine rpp.yaml", slash_path(&dir)));
+                    self.diag(file, line, "R-11.15", format!("{} does not contain rpp.yaml", slash_path(&dir)));
                 }
                 return None;
             }
@@ -242,25 +242,25 @@ impl Workspace {
         };
         for (key, node) in doc.entries() {
             if !KEYS.contains(&key.as_str()) {
-                self.diag(&yaml_path, node.line, "R-11.13", format!("unbekannter Eintrag '{key}'"));
+                self.diag(&yaml_path, node.line, "R-11.13", format!("Unknown entry '{key}'"));
             }
         }
         for key in REQUIRED {
             if doc.get(key).is_none() {
-                self.diag(&yaml_path, 1, "R-11.13", format!("Eintrag '{key}' fehlt"));
+                self.diag(&yaml_path, 1, "R-11.13", format!("Missing entry '{key}'"));
             }
         }
         let name_node = doc.get("name");
         let name = name_node.and_then(Node::as_str).unwrap_or("").to_string();
         let name_line = name_node.map_or(1, |n| n.line);
         if name == "rpp" || name.starts_with("rpp.") {
-            self.diag(&yaml_path, name_line, "R-11.17", "der Besitzer rpp ist für die Standardbibliothek reserviert");
+            self.diag(&yaml_path, name_line, "R-11.17", "The owner name rpp is reserved for the standard library");
         } else if name.split('.').any(|p| p.is_empty() || is_keyword(p)) {
-            self.diag(&yaml_path, name_line, "R-11.17", format!("ungültiger Name '{name}'"));
+            self.diag(&yaml_path, name_line, "R-11.17", format!("Invalid name '{name}'"));
         }
         if let Some((want, file, line)) = expected_name {
             if want != name {
-                self.diag(file, line, "R-11.15", format!("das Projekt in {} heißt '{name}', nicht '{want}'", slash_path(&dir)));
+                self.diag(file, line, "R-11.15", format!("The project in {} is named '{name}', expected '{want}'", slash_path(&dir)));
             }
         }
         let kind = match doc.get("type").and_then(Node::as_str) {
@@ -268,14 +268,14 @@ impl Workspace {
             Some("library") => ProjectKind::Library,
             _ => {
                 if let Some(t) = doc.get("type") {
-                    self.diag(&yaml_path, t.line, "R-11.13", "type ist executable oder library");
+                    self.diag(&yaml_path, t.line, "R-11.13", "type must be executable or library");
                 }
                 ProjectKind::Library
             }
         };
         let main_file = doc.get("main").and_then(Node::as_str).map(|m| canonical(&dir.join(m)));
         if kind == ProjectKind::Executable && main_file.is_none() {
-            self.diag(&yaml_path, 1, "R-11.13", "ein Programm braucht den Eintrag main");
+            self.diag(&yaml_path, 1, "R-11.13", "An executable requires a main entry");
         }
         let idx = self.projects.len();
         self.projects.push(Project {
@@ -293,31 +293,31 @@ impl Workspace {
         let mut deps = Vec::new();
         if let Some(list) = doc.get("dependencies") {
             if !is_list(list) {
-                self.diag(&yaml_path, list.line, "R-11.13", "dependencies ist eine Liste");
+                self.diag(&yaml_path, list.line, "R-11.13", "dependencies must be a list");
             }
             for dep in list.as_list() {
                 let dep_name = dep.get("name").and_then(Node::as_str).unwrap_or("").to_string();
                 if let Some(path) = dep.get("path") {
                     let Some(rel) = path.as_str() else {
-                        self.diag(&yaml_path, path.line, "R-11.15", "path ist ein Pfad");
+                        self.diag(&yaml_path, path.line, "R-11.15", "path must be a file path");
                         continue;
                     };
                     let target = canonical(&dir.join(rel));
                     if stack.contains(&target) {
-                        self.diag(&yaml_path, path.line, "R-11.16", format!("Zyklus in den Abhängigkeiten über '{dep_name}'"));
+                        self.diag(&yaml_path, path.line, "R-11.16", format!("Dependency cycle through '{dep_name}'"));
                         continue;
                     }
                     if let Some(d) = self.load_project(&target, stack, Some((&dep_name, &yaml_path, path.line))) {
                         if self.projects[d].kind != ProjectKind::Library {
-                            self.diag(&yaml_path, path.line, "R-11.15", format!("'{dep_name}' ist keine Bibliothek"));
+                            self.diag(&yaml_path, path.line, "R-11.15", format!("'{dep_name}' is not a library"));
                         }
                         deps.push(d);
                     }
                 } else if dep.get("version").is_some() {
                     self.diag(&yaml_path, dep.line, "R-11.15", format!(
-                        "'{dep_name}': Bibliotheken aus dem Verzeichnis werden von dieser Implementierung noch nicht geladen"));
+                        "'{dep_name}': Registry dependencies are not supported yet"));
                 } else {
-                    self.diag(&yaml_path, dep.line, "R-11.15", "eine Abhängigkeit braucht path oder version");
+                    self.diag(&yaml_path, dep.line, "R-11.15", "A dependency requires path or version");
                 }
             }
         }
@@ -328,13 +328,13 @@ impl Workspace {
         let mut symbols: Vec<String> = Vec::new();
         if let Some(syms) = doc.get("symbols") {
             if !matches!(syms.value, Value::Map(_)) {
-                self.diag(&yaml_path, syms.line, "R-11.13", "symbols ordnet den Modi debug und release Listen zu");
+                self.diag(&yaml_path, syms.line, "R-11.13", "symbols must map debug and release to lists");
             }
             for (key, list) in syms.entries() {
                 if key != "debug" && key != "release" {
-                    self.diag(&yaml_path, list.line, "R-11.13", format!("unbekannter Modus '{key}'"));
+                    self.diag(&yaml_path, list.line, "R-11.13", format!("Unknown mode '{key}'"));
                 } else if !is_list(list) || list.as_list().iter().any(|s| s.as_str().is_none()) {
-                    self.diag(&yaml_path, list.line, "R-11.13", format!("{key} ist eine Liste von Symbolen"));
+                    self.diag(&yaml_path, list.line, "R-11.13", format!("{key} must be a list of symbols"));
                 } else if key == mode {
                     symbols = list.as_list().iter().filter_map(Node::as_str).map(str::to_string).collect();
                 }
@@ -342,16 +342,16 @@ impl Workspace {
         }
         if let Some(sources) = doc.get("sources") {
             if !is_list(sources) {
-                self.diag(&yaml_path, sources.line, "R-11.13", "sources ist eine Liste von Quellordnern");
+                self.diag(&yaml_path, sources.line, "R-11.13", "sources must be a list of source directories");
             }
             for s in sources.as_list() {
                 let Some(rel) = s.as_str() else {
-                    self.diag(&yaml_path, s.line, "R-11.13", "ein Quellordner ist ein Pfad");
+                    self.diag(&yaml_path, s.line, "R-11.13", "A source directory must be a path");
                     continue;
                 };
                 let src = dir.join(rel);
                 if !src.is_dir() {
-                    self.diag(&yaml_path, s.line, "R-11.13", format!("Quellordner {} fehlt", slash_path(&src)));
+                    self.diag(&yaml_path, s.line, "R-11.13", format!("Source directory {} is missing", slash_path(&src)));
                     continue;
                 }
                 self.load_sources(&canonical(&src), idx, &symbols);

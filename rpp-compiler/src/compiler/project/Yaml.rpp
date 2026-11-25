@@ -212,7 +212,7 @@ private:
                             }
                             (bool ok2, StringView k2, StringView v2) = splitKey(nt);
                             if (!ok2) {
-                                throw new YamlError(lines[pos].number, "Schlüssel erwartet");
+                                throw new YamlError(lines[pos].number, "Expected a key");
                             }
                             i32 nl = lines[pos].number;
                             pos++;
@@ -231,13 +231,13 @@ private:
         while (pos < lines.length) {
             if (lines[pos].indent != indent) {
                 if (lines[pos].indent > indent) {
-                    throw new YamlError(lines[pos].number, "unerwartete Einrückung");
+                    throw new YamlError(lines[pos].number, "Unexpected indentation");
                 }
                 break;
             }
             (bool ok, StringView k, StringView v) = splitKey(lines[pos].text);
             if (!ok) {
-                throw new YamlError(lines[pos].number, "Schlüssel erwartet");
+                throw new YamlError(lines[pos].number, "Expected a key");
             }
             i32 number = lines[pos].number;
             pos++;
@@ -282,7 +282,7 @@ public:
         }
         YNode? node = y.block(0);
         if (y.pos < y.lines.length) {
-            throw new YamlError(y.lines[y.pos].number, "unerwartete Einrückung");
+            throw new YamlError(y.lines[y.pos].number, "Unexpected indentation");
         }
         if (node == null) {
             return new YNode(YKind::Map, "", 1);

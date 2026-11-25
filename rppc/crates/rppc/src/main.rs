@@ -14,7 +14,7 @@
 //!   rppc ast SYMBOLE DATEI                Syntaxbaum in Textform (oder der erste Fehler)
 //!
 //! Meilenstein M4:
-//!   rppc run [--release] [--pruefen] DATEI|PROJEKT [-- ARGUMENTE…]   Programm ausführen (Debug-Interpreter)
+//!   rppc run [--release] [--check-invariants] PATH [-- ARGS…]   Programm ausführen (Debug-Interpreter)
 //!
 //! WURZEL ist das Verzeichnis, das `rpp-grammatik/` und `konformitaet/` enthält.
 
@@ -26,14 +26,32 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+const USAGE: &str = "\
+Usage:
+  rppc check PATH
+  rppc run [--release] [--check-invariants] PATH [-- ARGS...]
+  rppc parse [--symbols a,b,...] FILE...
+  rppc tokens FILE
+  rppc pre SYMBOLS FILE
+  rppc ast SYMBOLS FILE
+  rppc project [--release] STD PATH
+  rppc defs [--release] STD PATH
+  rppc diagnose STD PATH
+  rppc syntaxtest [ROOT]
+  rppc test [-v] [ROOT]";
+
 fn usage() -> ExitCode {
-    eprintln!("Aufruf:\n  rppc parse [--symbols a,b,…] DATEI…\n  rppc syntaxtest [WURZEL]");
+    eprintln!("{USAGE}");
     ExitCode::from(2)
 }
 
 fn run() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("-h" | "--help") => {
+            println!("{USAGE}");
+            ExitCode::SUCCESS
+        }
         Some("parse") => {
             let mut symbols = rpp_syntax::preprocess::default_symbols();
             let mut files = Vec::new();
@@ -54,7 +72,7 @@ fn run() -> ExitCode {
                 let source = match std::fs::read_to_string(&f) {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("{}: {e}", f.display());
+                        eprintln!("{}: could not read file: {e}", f.display());
                         failed = true;
                         continue;
                     }
@@ -82,7 +100,7 @@ fn run() -> ExitCode {
             while let Some(a) = rest.next() {
                 match a.as_str() {
                     "--release" => release = true,
-                    "--pruefen" => check = true,
+                    "--check-invariants" | "--pruefen" => check = true,
                     "--" => {
                         prog_args.extend(rest.by_ref().cloned());
                     }
@@ -111,29 +129,29 @@ fn run() -> ExitCode {
                 let source = match std::fs::read_to_string(p) {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("{p}: {e}");
+                        eprintln!("{p}: could not read file: {e}");
                         return ExitCode::from(1);
                     }
                 };
-                // dieselbe Form wie rpp-compiler (rppcc pre): Text oder "Zeile N: Meldung"
+                // dieselbe Form wie rpp-compiler (rppcc pre): Text oder "Line N: message"
                 match rpp_syntax::preprocess::preprocess(&source, &symbols) {
                     Ok(text) => println!("{text}"),
-                    Err(e) => println!("Zeile {}: {}", e.line, e.message),
+                    Err(e) => println!("Line {}: {}", e.line, e.message),
                 }
                 ExitCode::SUCCESS
             }
             _ => usage(),
         },
-        Some("projekt") => {
-            // geladene Projekte, Dateien und Meldungen; dieselbe Form wie rpp-compiler (rppcc projekt)
+        Some("project" | "projekt") => {
+            // geladene Projekte, Dateien und Meldungen; dieselbe Form wie rpp-compiler (rppcc project)
             let release = args.get(1).is_some_and(|a| a == "--release");
             let rest = &args[if release { 2 } else { 1 }..];
             let (Some(std_dir), Some(input)) = (rest.first(), rest.get(1)) else { return usage() };
             print!("{}", projekt(std::path::Path::new(input), std::path::Path::new(std_dir), release));
             ExitCode::SUCCESS
         }
-        Some("pruefe") => {
-            // alle Meldungen der Prüfung (rppcc pruefe)
+        Some("diagnose" | "pruefe") => {
+            // alle Meldungen der Prüfung (rppcc diagnose)
             let (Some(std_dir), Some(input)) = (args.get(1), args.get(2)) else { return usage() };
             print!("{}", defsdump::pruefe(std::path::Path::new(input), std::path::Path::new(std_dir)));
             ExitCode::SUCCESS
@@ -152,11 +170,11 @@ fn run() -> ExitCode {
                 let source = match std::fs::read_to_string(p) {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("{p}: {e}");
+                        eprintln!("{p}: could not read file: {e}");
                         return ExitCode::from(1);
                     }
                 };
-                // dieselbe Form wie rpp-compiler (rppcc ast): Syntaxbaum oder "Zeile l:c Meldung"
+                // dieselbe Form wie rpp-compiler (rppcc ast): Syntaxbaum oder "Line l:c message"
                 match rpp_syntax::parse(&source, &symbols) {
                     Ok(u) => print!("{}", rpp_syntax::dump::unit(&u)),
                     Err(e) => println!("{e}"),
@@ -170,7 +188,7 @@ fn run() -> ExitCode {
                 let source = match std::fs::read_to_string(p) {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("{p}: {e}");
+                        eprintln!("{p}: could not read file: {e}");
                         return ExitCode::from(1);
                     }
                 };
@@ -216,7 +234,7 @@ fn main() -> ExitCode {
     std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
         .spawn(run)
-        .expect("Thread starten")
+        .expect("could not start the compiler thread")
         .join()
         .unwrap_or(ExitCode::from(101))
 }
@@ -244,7 +262,7 @@ fn print_diags(input: &std::path::Path, diags: Vec<rpp_sema::Diag>) {
     }
 }
 
-/// Textform eines geladenen Arbeitsbereichs (Vergleich mit `rppcc projekt`, Meilenstein M6).
+/// Textform eines geladenen Arbeitsbereichs (Vergleich mit `rppcc project`, Meilenstein M6).
 fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) -> String {
     use rpp_sema::project::{slash_path, ProjectKind, Workspace};
     use std::fmt::Write;
@@ -297,7 +315,7 @@ fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) ->
     }
     let base = input_dir(input);
     for d in &ws.diags {
-        let _ = writeln!(out, "fehler {}:{}:{} [{}] {}", display_path(&d.file, &base), d.span.line, d.span.col, d.rule, d.message);
+        let _ = writeln!(out, "error {}:{}:{} [{}] {}", display_path(&d.file, &base), d.span.line, d.span.col, d.rule, d.message);
     }
     out
 }

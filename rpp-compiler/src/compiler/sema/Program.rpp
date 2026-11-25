@@ -411,7 +411,7 @@ private:
                 string full = def.fullName();
                 i64 other = lookupFull(full);
                 if (other >= 0 && defs[other].project == project) {
-                    error(f, nameNode.line, nameNode.col, "R-11.4", "Typ " + full + " ist schon deklariert");
+                    error(f, nameNode.line, nameNode.col, "R-11.4", "Type " + full + " is already declared");
                     continue;
                 }
                 byFull.put(full, defs.length);
@@ -455,7 +455,7 @@ private:
             }
         }
         if (found.length > 1) {
-            error(file, line, col, "R-11.8", name + " ist mehrdeutig: " + string::join(", ", found));
+            error(file, line, col, "R-11.8", name + " is ambiguous: " + string::join(", ", found));
             return -1;
         }
         if (found.length == 1) {
@@ -520,11 +520,11 @@ public:
 private:
     shared Ty resolveTypeArg(i64 file, i64[] scope, Node a, i32 line, i32 col) mut {
         if (a.kind == "void") {
-            error(file, line, col, "R-4.45", "void ist hier kein Typargument");
+            error(file, line, col, "R-4.45", "void cannot be used as a type argument here");
             return Ty::error();
         }
         if (a.text == "mut") {
-            error(file, a.kids[0].line, a.kids[0].col, "R-10.13", "mut ist nur an Parametern von Func erlaubt");
+            error(file, a.kids[0].line, a.kids[0].col, "R-10.13", "mut is allowed only on Func parameters");
         }
         return resolveType(file, scope, a.kids[0]);
     }
@@ -556,7 +556,7 @@ private:
             if (def >= 0) {
                 string rule = visibility(def, fileInfos[file].project);
                 if (rule.length > 0) {
-                    error(file, first.line, first.col, rule, full + " ist hier nicht verwendbar");
+                    error(file, first.line, first.col, rule, full + " cannot be used here");
                     return Ty::error();
                 }
             }
@@ -569,7 +569,7 @@ private:
                 }
             }
             if (!seen) {
-                error(file, first.line, first.col, "R-11.8", "unbekannter Typ " + full);
+                error(file, first.line, first.col, "R-11.8", "Unknown type " + full);
             }
             return Ty::error();
         }
@@ -579,7 +579,7 @@ private:
         }
         i64 want = defs[def].tparams.length;
         if (args.length != want) {
-            string msg = defs[def].name + " erwartet " + want.toString() + " Typargumente, nicht " + args.length.toString();
+            string msg = defs[def].name + " expects " + want.toString() + " type arguments, got " + args.length.toString();
             error(file, first.line, first.col, "R-7.23", msg);
             return Ty::error();
         }
@@ -603,7 +603,7 @@ private:
             bool last = i + 1 == n;
             if (a.kind == "void") {
                 if (!last) {
-                    error(file, line, col, "R-4.37", "void steht in Func nur an letzter Stelle");
+                    error(file, line, col, "R-4.37", "void is allowed only as the last type argument to Func");
                     return Ty::error();
                 }
                 return Ty::func(ps, modes, Ty::simple(TK::Void));
@@ -612,7 +612,7 @@ private:
             shared Ty t = resolveType(file, scope, ty);
             if (last) {
                 if (a.text == "mut") {
-                    error(file, ty.line, ty.col, "R-10.13", "mut ist am Rückgabetyp von Func nicht erlaubt");
+                    error(file, ty.line, ty.col, "R-10.13", "mut is not allowed on the return type of Func");
                     return Ty::error();
                 }
                 return Ty::func(ps, modes, t);
@@ -668,7 +668,7 @@ private:
                 shared Ty t = resolveNamed(file, scope, b, bf.line, bf.col);
                 if (t.kind == TK::Named) {
                     if (defs[t.id].kind != DefKind::Class) {
-                        string msg = defs[t.id].name + " ist keine Klasse";
+                        string msg = defs[t.id].name + " is not a class";
                         error(file, bf.line, bf.col, "R-7.12", msg);
                     } else {
                         defs[def].baseType = t;
@@ -684,7 +684,7 @@ private:
                 shared Ty t = resolveNamed(file, scope, tn, tf.line, tf.col);
                 if (t.kind == TK::Named) {
                     if (defs[t.id].kind != DefKind::Mixin) {
-                        string msg = defs[t.id].name + " ist kein Mixin";
+                        string msg = defs[t.id].name + " is not a mixin";
                         error(file, tf.line, tf.col, "R-7.20", msg);
                         continue;
                     }
@@ -716,7 +716,7 @@ private:
                         i64 df = defs[def].file;
                         i32 dl = defs[def].line;
                         i32 dc = defs[def].col;
-                        string msg = "Vererbungszyklus über " + defs[def].name;
+                        string msg = "Inheritance cycle through " + defs[def].name;
                         error(df, dl, dc, "R-7.12", msg);
                     }
                     break;
@@ -804,7 +804,7 @@ private:
                     shared Ty ty = resolveType(file, classScope, m.kids[0]);
                     bool isStatic = flag(m, "static");
                     if (isStatic && ty.mentionsParam()) {
-                        error(file, nm.line, nm.col, "R-7.27", "eine statische Konstante darf nicht von einem Typ-Parameter abhängen");
+                        error(file, nm.line, nm.col, "R-7.27", "A static constant cannot depend on a type parameter");
                     }
                     FieldInfo fi = new FieldInfo(nm.text, ty, access, nm.line, nm.col);
                     fi.isStatic = isStatic;
@@ -880,14 +880,14 @@ private:
         for (Node v : variants.kids) {
             ref Node nm = v.kids[0];
             if (hasString(names, nm.text)) {
-                error(file, nm.line, nm.col, "R-4.25", "Variante " + nm.text + " ist doppelt");
+                error(file, nm.line, nm.col, "R-4.25", "Variant " + nm.text + " is declared more than once");
             } else {
                 names.push(nm.text);
             }
             VariantInfo vi = new VariantInfo(nm.text);
             if (v.kids.length > 1) {
                 if (hasValue) {
-                    error(file, nm.line, nm.col, "R-4.25", "ein Enum mit Zahlwerten hat keine Varianten mit Daten");
+                    error(file, nm.line, nm.col, "R-4.25", "An enum with numeric values cannot have variants with payloads");
                 }
                 i64[] none = [];
                 vi.fields = params(file, none, v.kids[1]);
@@ -905,7 +905,7 @@ private:
                 if (ok && x >= -2147483648 && x <= 2147483647) {
                     next = x;
                 } else {
-                    error(file, nm.line, nm.col, "R-4.26", "Zahlwert außerhalb von i32");
+                    error(file, nm.line, nm.col, "R-4.26", "Numeric value is outside the range of i32");
                 }
                 vi.hasValue = true;
                 vi.value = next;
@@ -917,7 +917,7 @@ private:
                 i64 x = vi.value;
                 i64 at = indexOfInt(seenVals, x);
                 if (at >= 0) {
-                    error(file, nm.line, nm.col, "R-4.26", nm.text + " hat denselben Wert " + x.toString() + " wie " + seenNames[at]);
+                    error(file, nm.line, nm.col, "R-4.26", nm.text + " has the same value " + x.toString() + " as " + seenNames[at]);
                     seenNames[at] = nm.text;
                 } else {
                     seenVals.push(x);
@@ -1077,12 +1077,12 @@ public:
                 }
                 if (tparams[tp].needsNew && !satisfiesNew(arg)) {
                     found.push(mk(p.file, p.line, p.col, "R-7.25",
-                        show(arg) + " hat keinen sichtbaren parameterlosen Konstruktor (new())"));
+                        show(arg) + " has no accessible parameterless constructor (new())"));
                 }
                 for (shared Ty c0 : tparams[tp].constraints) {
                     shared Ty c = Ty::subst(c0, map);
                     if (!satisfies(arg, c)) {
-                        found.push(mk(p.file, p.line, p.col, "R-7.26", show(arg) + " erfüllt " + show(c) + " nicht"));
+                        found.push(mk(p.file, p.line, p.col, "R-7.26", show(arg) + " does not satisfy " + show(c)));
                     }
                 }
             }
@@ -1118,14 +1118,14 @@ private:
                 if (expected != pkg) {
                     string shown = "package " + expected + ";";
                     if (expected.length == 0) {
-                        shown = "keine package-Zeile (Wurzelpaket)";
+                        shown = "no package declaration (root package)";
                     }
-                    error(f, pl, pc, "R-11.2", "die Datei verlangt " + shown);
+                    error(f, pl, pc, "R-11.2", "The file requires " + shown);
                 } else if (lib && !proj.isStd && !prefixOk) {
-                    error(f, pl, pc, "R-11.18", "Pakete der Bibliothek " + pname + " beginnen mit " + pname);
+                    error(f, pl, pc, "R-11.18", "Packages in library " + pname + " must start with " + pname);
                 }
             } else if (lib && !proj.singleFile && !proj.isStd && !prefixOk) {
-                error(f, pl, pc, "R-11.18", "Pakete der Bibliothek " + pname + " beginnen mit " + pname);
+                error(f, pl, pc, "R-11.18", "Packages in library " + pname + " must start with " + pname);
             }
             // using (R-11.7, R-11.8, R-11.12)
             for (Node u : unit.kids) {
@@ -1146,12 +1146,12 @@ private:
                 string full = dotted(u.kids[ti]);
                 i64 d = lookupFull(full);
                 if (d < 0) {
-                    error(f, u.line, u.col, "R-11.7", "unbekannter Typ " + full);
+                    error(f, u.line, u.col, "R-11.7", "Unknown type " + full);
                     continue;
                 }
                 string rule = visibility(d, project);
                 if (rule.length > 0) {
-                    error(f, u.line, u.col, rule, full + " ist hier nicht verwendbar");
+                    error(f, u.line, u.col, rule, full + " cannot be used here");
                 }
                 if (isAlias) {
                     string alias = u.kids[0].text;
@@ -1162,7 +1162,7 @@ private:
                         }
                     }
                     if (shadows) {
-                        error(f, u.line, u.col, "R-11.8", "der Name " + alias + " verdeckt einen Typ des eigenen Pakets");
+                        error(f, u.line, u.col, "R-11.8", "The name " + alias + " shadows a type in its own package");
                     }
                 }
             }
@@ -1177,13 +1177,13 @@ private:
                 }
                 string path = paths[mainFile[j]];
                 if (proj.kind == ProjectKind::Library) {
-                    diags.push(new Diag(path, mainLine[j], mainCol[j], "R-11.14", "eine Bibliothek hat keine main"));
+                    diags.push(new Diag(path, mainLine[j], mainCol[j], "R-11.14", "A library cannot declare main"));
                 } else if (k > 0) {
-                    diags.push(new Diag(path, mainLine[j], mainCol[j], "R-11.14", "ein Programm hat genau eine main"));
+                    diags.push(new Diag(path, mainLine[j], mainCol[j], "R-11.14", "An executable must declare exactly one main"));
                 } else {
                     string? mf = proj.mainFile;
                     if (mf != null && !proj.singleFile && mf != path) {
-                        diags.push(new Diag(path, mainLine[j], mainCol[j], "R-11.14", "main steht nicht in der Datei, die rpp.yaml nennt"));
+                        diags.push(new Diag(path, mainLine[j], mainCol[j], "R-11.14", "main is not in the file specified by rpp.yaml"));
                     }
                 }
                 k++;
@@ -1191,7 +1191,7 @@ private:
             if (proj.kind != ProjectKind::Library && k == 0 && !proj.singleFile) {
                 string? y = proj.yaml;
                 if (y != null) {
-                    diags.push(new Diag(y, 1, 0, "R-11.14", "das Programm hat keine main"));
+                    diags.push(new Diag(y, 1, 0, "R-11.14", "The executable has no main"));
                 }
             }
         }
@@ -1267,10 +1267,10 @@ private:
         i64 file = defs[def].file;
         for (MethodInfo m : defs[def].methods) {
             if (m.isStatic) {
-                out.push(mk(file, m.line, m.col, "R-7.18", "ein Mixin hat keine statischen Methoden"));
+                out.push(mk(file, m.line, m.col, "R-7.18", "A mixin cannot declare static methods"));
             }
             if (m.isNodiscard && m.ret.kind == RetKind::Void) {
-                out.push(mk(file, m.line, m.col, "R-8.15", "nodiscard an einer void-Methode"));
+                out.push(mk(file, m.line, m.col, "R-8.15", "nodiscard is not allowed on a void method"));
             }
         }
         return out;
@@ -1313,7 +1313,7 @@ private:
         }
         for (FieldInfo f : d.fields) {
             if (hasString(seenFields, f.name)) {
-                out.push(mk(file, f.line, f.col, "R-7.1", "Feld " + f.name + " ist schon deklariert"));
+                out.push(mk(file, f.line, f.col, "R-7.1", "Field " + f.name + " is already declared"));
             } else {
                 seenFields.push(f.name);
             }
@@ -1327,7 +1327,7 @@ private:
                         l = f.line;
                         c = f.col;
                     }
-                    out.push(mk(file, l, c, "R-7.1", "Feld und Methode heißen beide " + m.name));
+                    out.push(mk(file, l, c, "R-7.1", "A field and a method share the name " + m.name));
                     break;
                 }
             }
@@ -1336,7 +1336,7 @@ private:
         // V-8.2: nodiscard an void
         for (MethodInfo m : d.methods) {
             if (m.isNodiscard && m.ret.kind == RetKind::Void) {
-                out.push(mk(file, m.line, m.col, "R-8.15", "nodiscard an einer void-Methode"));
+                out.push(mk(file, m.line, m.col, "R-8.15", "nodiscard is not allowed on a void method"));
             }
         }
 
@@ -1348,20 +1348,20 @@ private:
                 if (o.name != m.name || o.isStatic != m.isStatic || !sameParamTypes(o.params, m.params)) {
                     continue;
                 }
-                string msg = "ist doppelt deklariert";
+                string msg = "is declared more than once";
                 if (!sameParams(o.params, m.params)) {
-                    msg = "unterscheidet sich nur in Besitzform oder Borrow-Markierung der Parameter";
+                    msg = "differs only in the ownership or borrowing of its parameters";
                 } else if (!o.ret.same(m.ret)) {
-                    msg = "unterscheidet sich nur im Rückgabetyp";
+                    msg = "differs only in return type";
                 }
-                out.push(mk(file, m.line, m.col, "R-7.16", "Methode " + m.name + " " + msg));
+                out.push(mk(file, m.line, m.col, "R-7.16", "Method " + m.name + " " + msg));
                 break;
             }
         }
         for (i64 i = 0; i < d.ctors.length; i++) {
             for (i64 j = 0; j < i; j++) {
                 if (sameParamTypes(d.ctors[j].params, d.ctors[i].params)) {
-                    out.push(mk(file, d.ctors[i].line, d.ctors[i].col, "R-7.16", "Konstruktor mit denselben Parametertypen ist doppelt"));
+                    out.push(mk(file, d.ctors[i].line, d.ctors[i].col, "R-7.16", "A constructor with the same parameter types is already declared"));
                     break;
                 }
             }
@@ -1409,22 +1409,22 @@ private:
             if (bi >= 0) {
                 ref MethodInfo bm = inherited[bi];
                 if (bm.isNodiscard && !m.isNodiscard) {
-                    out.push(mk(file, m.line, m.col, "R-8.15", m.name + " muss nodiscard übernehmen"));
+                    out.push(mk(file, m.line, m.col, "R-8.15", m.name + " must retain nodiscard"));
                 } else if (!bm.overridable()) {
-                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " ist in der Basisklasse nicht virtual"));
+                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " is not virtual in the base class"));
                 } else if (!isOverride) {
-                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " überschreibt eine geerbte Methode und braucht override"));
+                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " overrides an inherited method and requires override"));
                 } else if (!sameParams(bm.params, m.params) || bm.mutThis != m.mutThis) {
-                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " überschreibt mit anderer Borrow-Markierung"));
+                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " overrides a method with different borrowing"));
                 } else if (accessRank(m.access) < accessRank(bm.access)) {
-                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " darf beim Überschreiben nicht weniger sichtbar werden"));
+                    out.push(mk(file, m.line, m.col, "R-7.13", m.name + " cannot reduce visibility when overriding a method"));
                 }
             } else if (xi >= 0) {
                 if (mixinMethods[xi].hasBody && !isOverride) {
-                    out.push(mk(file, m.line, m.col, "R-7.21", m.name + " kommt auch aus einem Mixin; nötig ist override"));
+                    out.push(mk(file, m.line, m.col, "R-7.21", m.name + " is also provided by a mixin and requires override"));
                 }
             } else if (isOverride) {
-                out.push(mk(file, m.line, m.col, "R-7.13", m.name + " überschreibt nichts"));
+                out.push(mk(file, m.line, m.col, "R-7.13", m.name + " does not override a method"));
             }
         }
 
@@ -1459,7 +1459,7 @@ private:
                         }
                     }
                     if (conflict && !resolved) {
-                        out.push(mk(file, d.importLines[ii], d.importCols[ii], "R-7.21", m.name + " kommt aus zwei Mixins"));
+                        out.push(mk(file, d.importLines[ii], d.importCols[ii], "R-7.21", m.name + " is provided by two mixins"));
                     }
                     if (!known) {
                         bodies.push(m);
@@ -1486,7 +1486,7 @@ private:
                     }
                     if (!ok) {
                         out.push(mk(file, d.importLines[ii], d.importCols[ii], "R-7.20",
-                            "die Anforderung " + r.name + " von " + defs[t.id].name + " ist nicht erfüllt"));
+                            "The requirement " + r.name + " of " + defs[t.id].name + " is not satisfied"));
                     }
                 }
             }
@@ -1501,7 +1501,7 @@ private:
                 }
             }
             if (ai >= 0) {
-                out.push(mk(file, d.methods[ai].line, d.methods[ai].col, "R-7.14", d.methods[ai].name + " ist abstrakt, die Klasse aber nicht"));
+                out.push(mk(file, d.methods[ai].line, d.methods[ai].col, "R-7.14", d.methods[ai].name + " is abstract, but its class is not"));
             } else if (b != null) {
                 string[] names = [];
                 for (shared Ty t : withSupertypes(b)) {
@@ -1521,7 +1521,7 @@ private:
                         }
                     }
                     if (!implemented) {
-                        out.push(mk(file, d.line, d.col, "R-7.14", n + " ist abstrakt; die Klasse muss abstract sein"));
+                        out.push(mk(file, d.line, d.col, "R-7.14", n + " is abstract, so the class must be abstract"));
                         break;
                     }
                 }
@@ -1547,10 +1547,10 @@ private:
             }
         }
         if (ancestorCopy && !d.hasCopy) {
-            out.push(mk(file, d.line, d.col, "R-7.11", d.name + " braucht ein eigenes copy, weil die Basisklasse eines hat"));
+            out.push(mk(file, d.line, d.col, "R-7.11", d.name + " must define copy because its base class defines it"));
         }
         if (d.hasCopy && baseDef >= 0 && !defs[baseDef].hasCopy) {
-            out.push(mk(file, d.copyLine, d.copyCol, "R-7.10", "copy in der Unterklasse verlangt copy in der Basisklasse"));
+            out.push(mk(file, d.copyLine, d.copyCol, "R-7.10", "copy in a subclass requires copy in its base class"));
         }
 
         // R-7.5, R-7.6: Konstruktoren und Basiskonstruktor
@@ -1558,12 +1558,12 @@ private:
             for (CtorInfo c : d.ctors) {
                 if (!c.callsBase) {
                     out.push(mk(file, c.line, c.col, "R-7.6",
-                        defs[baseDef].name + " hat keinen parameterlosen Konstruktor; nötig ist : base(…)"));
+                        defs[baseDef].name + " has no parameterless constructor. Use : base(…)"));
                 }
             }
             if (d.ctors.length == 0) {
                 out.push(mk(file, d.line, d.col, "R-7.6",
-                    defs[baseDef].name + " hat keinen parameterlosen Konstruktor; nötig ist ein Konstruktor mit : base(…)"));
+                    defs[baseDef].name + " has no parameterless constructor. Declare a constructor with : base(…)"));
             }
         }
         return out;
@@ -1626,7 +1626,7 @@ private:
                 if (defs[n].project == d.project && !defs[n].exported && !hasString(reported, key)) {
                     reported.push(key);
                     out.push(mk(d.file, lines[k], cols[k], "R-11.11",
-                        defs[n].name + " ist nicht exportiert, steht aber in der Schnittstelle von " + d.name));
+                        defs[n].name + " is not exported but appears in the interface of " + d.name));
                 }
             }
         }

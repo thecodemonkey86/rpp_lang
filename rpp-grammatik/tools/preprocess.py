@@ -29,7 +29,7 @@ def _tokenize(text, number):
     while pos < len(text):
         match = _TOKEN.match(text, pos)
         if not match:
-            raise DirectiveError(f"Zeile {number}: ungültige Bedingung {text!r}")
+            raise DirectiveError(f"Line {number}: invalid condition {text!r}")
         tokens.append(match.group(1) or match.group(2))
         pos = match.end()
     return tokens
@@ -72,17 +72,17 @@ def evaluate(text, symbols, number):
         if token == "(":
             value = or_expr()
             if take() != ")":
-                raise DirectiveError(f"Zeile {number}: ')' fehlt")
+                raise DirectiveError(f"Line {number}: missing ')'")
             return value
         if token is None or token in ("&&", "||", ")"):
-            raise DirectiveError(f"Zeile {number}: Symbol erwartet")
+            raise DirectiveError(f"Line {number}: expected a symbol")
         return token in symbols
 
     if not tokens:
-        raise DirectiveError(f"Zeile {number}: Bedingung fehlt")
+        raise DirectiveError(f"Line {number}: missing condition")
     result = or_expr()
     if pos != len(tokens):
-        raise DirectiveError(f"Zeile {number}: unerwartetes {tokens[pos]!r}")
+        raise DirectiveError(f"Line {number}: unexpected {tokens[pos]!r}")
     return result
 
 
@@ -111,25 +111,25 @@ def preprocess(source: str, symbols: set[str]) -> str:
                           "taken": value, "else": False, "line": number})
         elif directive == "elif":
             if not stack or stack[-1]["else"]:
-                raise DirectiveError(f"Zeile {number}: #elif ohne passendes #if")
+                raise DirectiveError(f"Line {number}: #elif without a matching #if")
             level = stack[-1]
             value = evaluate(rest, symbols, number)
             level["active"] = level["outer"] and not level["taken"] and value
             level["taken"] = level["taken"] or value
         elif directive == "else":
             if not stack or stack[-1]["else"] or rest:
-                raise DirectiveError(f"Zeile {number}: #else ohne passendes #if")
+                raise DirectiveError(f"Line {number}: #else without a matching #if")
             level = stack[-1]
             level["active"] = level["outer"] and not level["taken"]
             level["taken"] = True
             level["else"] = True
         elif directive == "endif":
             if not stack or rest:
-                raise DirectiveError(f"Zeile {number}: #endif ohne passendes #if")
+                raise DirectiveError(f"Line {number}: #endif without a matching #if")
             stack.pop()
         else:
-            raise DirectiveError(f"Zeile {number}: unbekannte Direktive #{directive}")
+            raise DirectiveError(f"Line {number}: unknown directive #{directive}")
         out.append("")
     if stack:
-        raise DirectiveError(f"Zeile {stack[-1]['line']}: #if ohne #endif")
+        raise DirectiveError(f"Line {stack[-1]['line']}: #if without #endif")
     return "\n".join(out)

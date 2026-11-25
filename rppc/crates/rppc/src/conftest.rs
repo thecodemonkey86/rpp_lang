@@ -126,12 +126,12 @@ fn judge(u: &Unit, diags: &[Diag]) -> Outcome {
             let warnings: Vec<&Diag> = diags.iter().filter(|d| d.warning).collect();
             let unexpected: Vec<&Diag> = warnings.iter().copied().filter(|d| !marks.contains(&(canonical(&d.file), d.span.line))).collect();
             if !unexpected.is_empty() {
-                return Outcome::Fail(format!("unerwartete Warnung:
+                return Outcome::Fail(format!("Unexpected warning:
          {}", show(&unexpected)));
             }
             let missing: Vec<&(PathBuf, u32)> = marks.iter().filter(|m| !warnings.iter().any(|d| (canonical(&d.file), d.span.line) == **m)).collect();
             if let Some((f, l)) = missing.first() {
-                return Outcome::Fail(format!("erwartete Warnung fehlt: {}:{l}", f.display()));
+                return Outcome::Fail(format!("Expected warning missing at {}:{l}", f.display()));
             }
             Outcome::Pass
         }
@@ -139,11 +139,11 @@ fn judge(u: &Unit, diags: &[Diag]) -> Outcome {
             let marks = markers(&u.files, "FEHLER");
             let (rule, _) = header_rules(&u.header);
             if errors.is_empty() {
-                return Outcome::Fail("kein Fehler gemeldet".into());
+                return Outcome::Fail("No error reported".into());
             }
             let elsewhere: Vec<&Diag> = errors.iter().copied().filter(|d| !marks.contains(&(canonical(&d.file), d.span.line))).collect();
             if !elsewhere.is_empty() {
-                return Outcome::Fail(format!("Fehler außerhalb der markierten Zeile:\n         {}", show(&errors)));
+                return Outcome::Fail(format!("Error outside the marked line:\n         {}", show(&errors)));
             }
             let syntax = errors.iter().any(|d| d.rule == "Syntax");
             let rule_ok = match &rule {
@@ -153,7 +153,7 @@ fn judge(u: &Unit, diags: &[Diag]) -> Outcome {
             if rule_ok {
                 Outcome::Pass
             } else {
-                Outcome::Fail(format!("erwartet {}, gemeldet:\n         {}", rule.unwrap_or_default(), show(&errors)))
+                Outcome::Fail(format!("Expected {}, got:\n         {}", rule.unwrap_or_default(), show(&errors)))
             }
         }
     }
@@ -183,18 +183,18 @@ pub fn run(root: &Path, verbose: bool) -> ExitCode {
             Outcome::Fail(why) => {
                 entry[1] += 1;
                 failures += 1;
-                lines.push(format!("  FEHLER {label}\n         {why}"));
+                lines.push(format!("  FAIL  {label}\n         {why}"));
             }
             Outcome::Open(why) => {
                 entry[2] += 1;
                 if verbose {
-                    lines.push(format!("  offen  {label} ({why})"));
+                    lines.push(format!("  pending {label} ({why})"));
                 }
             }
         }
     }
     lines.push(String::new());
-    lines.push("Kapitel                bestanden  fehlgeschlagen       offen".to_string());
+    lines.push("Chapter                   passed          failed     pending".to_string());
     let mut total = [0usize; 3];
     for (chapter, s) in &stats {
         lines.push(format!("  {chapter:<20} {:>9}  {:>14}  {:>10}", s[0], s[1], s[2]));
@@ -202,7 +202,7 @@ pub fn run(root: &Path, verbose: bool) -> ExitCode {
             total[i] += s[i];
         }
     }
-    lines.push(format!("  {:<20} {:>9}  {:>14}  {:>10}", "gesamt", total[0], total[1], total[2]));
+    lines.push(format!("  {:<20} {:>9}  {:>14}  {:>10}", "total", total[0], total[1], total[2]));
     println!("{}", lines.join("\n"));
     if failures == 0 {
         ExitCode::SUCCESS
@@ -303,7 +303,7 @@ fn run_runtime(u: &Unit) -> Outcome {
         let ran = fs::create_dir_all(&work).and_then(|_| std::env::set_current_dir(&work));
         let result = match ran {
             Ok(()) => execute(&path, mode == 1, true, args.clone(), input.clone()),
-            Err(e) => return Outcome::Fail(format!("{name}: Arbeitsverzeichnis {}: {e}", work.display())),
+            Err(e) => return Outcome::Fail(format!("{name}: working directory {}: {e}", work.display())),
         };
         if let Some(prev) = previous {
             let _ = std::env::set_current_dir(prev);
@@ -311,30 +311,30 @@ fn run_runtime(u: &Unit) -> Outcome {
         let _ = fs::remove_dir_all(&work);
         let o = match result {
             Ok(o) => o,
-            Err(diags) => return Outcome::Fail(format!("{name}: übersetzt nicht: {}", diags.first().map(|d| d.to_string()).unwrap_or_default())),
+            Err(diags) => return Outcome::Fail(format!("{name}: compilation failed: {}", diags.first().map(|d| d.to_string()).unwrap_or_default())),
         };
         let mut problems = Vec::new();
         if let Some(s) = &e.stdout {
             let got = o.stdout.strip_suffix('\n').unwrap_or(&o.stdout);
             if got != s {
-                problems.push(format!("Ausgabe {got:?} statt {s:?}"));
+                problems.push(format!("expected stdout {s:?}, got {got:?}"));
             }
         }
         if let Some(x) = e.exit {
             if o.exit != x {
-                problems.push(format!("Exit-Code {} statt {x}", o.exit));
+                problems.push(format!("expected exit code {x}, got {}", o.exit));
             }
         }
         for c in &e.stderr_contains {
             if !o.stderr.contains(c.as_str()) {
-                problems.push(format!("Fehlerausgabe ohne {c:?}"));
+                problems.push(format!("stderr does not contain {c:?}"));
             }
         }
         if !problems.is_empty() && o.stderr.contains("FailError: eingebaut") {
-            return Outcome::Open(format!("{name}: braucht eingebaute Teile der Bibliothek, die noch fehlen"));
+            return Outcome::Open(format!("{name}: requires standard library built-ins that are not available yet"));
         }
         if !problems.is_empty() {
-            return Outcome::Fail(format!("{name}: {}; Fehlerausgabe: {:?}", problems.join("; "), o.stderr.lines().next().unwrap_or("")));
+            return Outcome::Fail(format!("{name}: {}; stderr: {:?}", problems.join("; "), o.stderr.lines().next().unwrap_or("")));
         }
     }
     Outcome::Pass

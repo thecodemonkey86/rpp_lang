@@ -1,73 +1,139 @@
-# R++ Introduction (Chapter 1)
+# R++
 
-Status: 21.11.2026, draft 0.1. This document fills Chapter 1 of the “R++ Specification”. It describes what R++ is intended for, how the specification is structured, what terms it uses and what conformity means.
+R++ is a statically typed, object-oriented programming language with C-family syntax. It uses ownership and borrowing to manage object lifetimes without lifetime annotations, and distinguishes nullable types such as `string?` from non-nullable types such as `string`.
 
-## 1. What R++ is
+Use **`rppc`**, the Rust reference implementation, to check and run R++ programs. Use **`rppcc`**, the self-hosting compiler written in R++, to generate C and build native executables. The language specification is a draft, and the native backend is under active development.
 
-R++ is an object-oriented, statically typed language with a syntax close to C, C++, Java and C#, but simpler. It has three objectives:
+## Run your first program
 
-1. **Certain error classes are formally excluded. ** A translated program never access shared memory, does not release anything twice, never dereferences `null`, does not read uninitialized values, and does not use invalid iterators. This is made possible by an ownership model with `own`, `shared`, `weak` and Borrows, which manages without lifetime annotations (chapter 5), and type narrowing for nullable values (chapter 6). What cannot be checked at the translation time (index, overflow in debugging mode, conflicts in `shared` objects) ends in a controlled manner as a program error (Chapter 9).
-2. **Short development cycles and fast programs. ** In debugging mode, interpretation is made or executed via JIT, natively translated in release mode. Both modes show the same observable behavior except for a small, fixed list of differences (Chapter 12).
-3. **Few surprises. ** There is no undefined behavior, no macros, no header files, no implicit copy of objects, and no implicit conversions that change values.
+Install Rust and Cargo. The Rust workspace has no third-party crate dependencies. Run the commands below from the repository root.
 
-## 2. Structure of the specification
+```sh
+git clone https://github.com/thecodemonkey86/rpp_lang.git
+cd rpp_lang
+cargo build --manifest-path rppc/Cargo.toml
+```
 
-| Cap. | Theme | Document |
-|----|----|--|
-| 1 | Introduction | “R++ Introduction” (this document) |
-| 2 | Lexical structure | “R++ specification framework”, section 2 |
-| 3 | Grammar | “R++ Specification Scaffolding”, Section 3, and `rpp-grammar/RPP.g4` (normative) |
-| 4 | Types | “R++ types” |
-| 5 | Ownership and Borrowing | “R++ Ownership Kernkalkül” |
-| 6 | Zero security | “R++ zero security” |
-| 7 | Classes, Mixins, Type Parameters | “R++ Classes and Generics” |
-| 8 | Instructions and expressions | “R++ Instructions and Expressions” |
-| 9 | Exceptions | “R++ Exceptions” |
-| 10 | Lambdas | “R++ Lambdas” |
-| 11 | Packages and projects | “R++ packages and projects” |
-| 12 | Model | “R++ execution model” |
-| 13 | Standard Library | “R++ Standard Library” |
-| 14 | Conformity tests | “R++ conformity tests” |
+Create `hello/src/main.rpp` as a UTF-8 file.
 
-The decisions on which the chapters are based are in the document “R++ Design Decisions” with date and status. Chapter 5 is additionally converted into `fr-model/` as an executable model.
+```cpp
+i32 main(string[] args) {
+    string? name = args.length > 0 ? args[0] : null;
+    print("Hello, " + (name ?? "world") + "!");
+    return 0;
+}
+```
 
-## 3. Conventions
+`rppc run` reads standard input to EOF before executing. For empty input, prefix the run command with `$null |` in PowerShell or append `< /dev/null` in a POSIX shell.
 
-**R-1.1 (Normative and informative). ** Normative are the numbered rules `R-x.y`, the grammar `RPP.g4` and the tables to which a rule refers. Examples, justifications, overview tables and annotations are informative.
+```sh
+cargo run --manifest-path rppc/Cargo.toml -- check hello/src/main.rpp
+cargo run --manifest-path rppc/Cargo.toml -- run hello/src/main.rpp -- Ada
+```
 
-**R-1.2 (rule numbers). ** Each normative rule carries a number `R-<chapter>.<running number>`. Numbers are not reassigned; if a rule is omitted, their number remains free.
+The second command prints `Hello, Ada!`. Omit `-- Ada` to print `Hello, world!`. The first `--` separates Cargo options from the `rppc` command. The second passes arguments to the R++ program.
 
-**R-1.3 (notation). ** Syntax is in ANTLR4 notation (`:` definition, `|` alternative, `? `optional, `*` as often as you like, `+` at least once, `'....''' terminal). Chapter 5 also uses inference rules: above the line are the prerequisites, including the conclusion.
+### Read R++ code
 
-## 4. Terms
+- An executable starts at `i32 main(string[] args)`. Its return value is the process exit code. `print` writes a line to standard output.
+- `T?` allows `null`. An `if (value != null)` check can narrow a nullable value within that branch. Use `value?.member` for optional access and `value ?? fallback` to supply a default.
+- `own` denotes exclusive ownership, `shared` denotes shared ownership, and `weak` is a non-owning reference to a shared object. Use `ref` and `ref mut` for read-only and mutable borrows. Passing an object to an `own` parameter moves it. [Ownership rules](R%2B%2B%20Ownership-Kernkalk%C3%BCl.md)
+- `T[]` is a growable vector. `using rpp.io.Console;` imports a type, and `Console::write("text")` calls a static method. The bundled standard library needs no dependency entries. [Standard library](R%2B%2B%20Standardbibliothek.md)
 
-| term | meaning |
-|---|--|
-| Program | A `executable` type project with all libraries it uses |
-| Project | A directory with `rpp.yaml` and source folders (Chapter 11) |
-| Library | A project of the type `library`; its exported types can be used in other projects |
-| Package | A group of types whose name corresponds to the directory in the source folder |
-| Implementation | A tool that checks R++ programs and runs in debug and/or release mode |
-| Debug mode, Release mode | The two types of execution (Chapter 12) |
-| Error | A violation of a rule that the implementation reports before execution; the program is not translated |
-| Warning | A message that requires the specification but does not prevent translation (Chapter 8, R-8.1) |
-| Exception | A catchable object thrown at runtime (Chapter 9) |
-| Program Errors | A term-related injury (index, overflow in debug, `fail` ...) that cannot be caught and terminates the program after cleaning up (Chapter 9) |
-| Possession, Borrow, Loan | Who releases an object, who uses it temporarily and which accesses are blocked (Chapter 5) |
-| Observable behavior | Issues, written files, read input, exit code and whether the program ends (Chapter 12, R-12.4) |
+## Create a project
 
-## 5. Conformity
+When your program spans multiple files, create `hello/rpp.yaml` next to `hello/src/`.
 
-**R-1.4 (Compliant program). ** A program is compliant if it does not violate any rule of specification. For a compliant program, the specification specifies the observable behavior, except for the permissible differences between the modes (R-12.5).
+```yaml
+name: hello
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+```
 
-**R-1.5 (Compliant Implementation). ** Implementation is compliant when they
-- each compliant program translates and performs with the specified behavior,
-- rejects any non-compliant program with at least one error, citing the rule number,
-- reports the required warnings and
-- the conformity test suite exists (Chapter 14, R-14.7).
+Pass the project directory to the tool.
 
-**R-1.6 (limits of implementation). ** An implementation may have limits (size of memory, depth of calls), but must meet the minimum values from Chapter 12. If a program crosses a boundary, it is a program error and not an undefined behavior.
+```sh
+cargo run --manifest-path rppc/Cargo.toml -- check hello
+cargo run --manifest-path rppc/Cargo.toml -- run hello -- Ada
+```
 
-## 6. State
+Paths in the manifest are relative to the project directory. A file under `src/demo/util/` starts with `package demo.util;`. Files directly under `src/` belong to the root package and omit the package declaration.
 
-Chapters 4 to 14 are available as draft. The grammar is executable and tested, Chapter 5 is tested as a core calculus with executable model and random test. There is no implementation yet; the conformity tests are therefore so far only tested for syntax. The first implementation is created in Rust (“R++ Implementation Plan”). Also open is the machine proof of sentence 5.1 (storage security).
+A reusable library uses `type: library` and omits `main`. Its package names start with the library name, and other projects can use types marked `export`. The current tools load local dependencies through `dependencies` entries with `name` and `path`. [Local library example](konformitaet/kap11_projekte/akzeptiert/a04_bibliothek), [package and project specification](R%2B%2B%20Pakete%20und%20Projekte.md)
+
+## Build a native executable
+
+Run the R++ compiler through `rppc` to generate C. The arguments to `c` are the standard library directory, a source file or project directory, and the output file.
+
+```sh
+cargo run --manifest-path rppc/Cargo.toml -- run rpp-compiler -- c --release rppc/std hello hello.c
+```
+
+Compile the generated file and the bundled C runtime with a C17 toolchain.
+
+**GCC on Linux**
+
+```sh
+gcc -std=c17 -D_POSIX_C_SOURCE=200809L -O2 -pthread -I rpp-compiler/runtime hello.c rpp-compiler/runtime/rpp_rt.c -lm -o hello-app
+./hello-app Ada
+```
+
+**MSVC on Windows**, from a Visual Studio Developer Command Prompt
+
+```bat
+cl /nologo /std:c17 /O2 /I rpp-compiler\runtime hello.c rpp-compiler\runtime\rpp_rt.c /Fe:hello.exe /link /STACK:16777216
+hello.exe Ada
+```
+
+The `--release` flag after `c` selects R++ release semantics. Omit it to generate C with R++ debug semantics. For interpreter runs, use `rppc run --release` to exercise release semantics. An already built `rppcc` binary accepts the same `c --release rppc/std hello hello.c` arguments directly. [Compiler and bootstrap details](rpp-compiler/README.md)
+
+## Tool commands
+
+The forms below use `rppc` as shorthand for `cargo run --manifest-path rppc/Cargo.toml --` from the repository root. You can also run the binary under `rppc/target/debug/` directly. Keep the checkout available because the binary uses the bundled standard library from the source tree.
+
+| Command | Purpose |
+| --- | --- |
+| `rppc check PATH` | Check a source file or project without running it. Use this for an exit status that reflects compilation errors. |
+| `rppc run [--release] [--check-invariants] PATH [-- ARGS…]` | Run a source file or project in the interpreter. `--check-invariants` enables extra ownership invariant checks. |
+| `rppc parse [--symbols LIST] FILE` | Check syntax only. `LIST` is a comma-separated set such as `debug,linux`. |
+| `rppc tokens FILE` | Dump lexer tokens. |
+| `rppc pre SYMBOLS FILE` / `rppc ast SYMBOLS FILE` | Show preprocessed source or the syntax tree for the given symbols. |
+| `rppc project [--release] STD PATH` / `rppc defs [--release] STD PATH` | Inspect project loading or declaration tables. |
+| `rppc diagnose STD PATH` | Print diagnostics in the format used for comparison with `rppcc`. |
+
+Use `rppc --help` or `rppcc --help` to list the commands. With `rppcc diagnose --timings STD PATH`, the compiler also reports how long project loading and each checking phase took. Existing scripts can still use the legacy German spellings.
+
+`PATH` is a `.rpp` file or a directory containing `rpp.yaml`. `STD` is `rppc/std` when running from the repository root. Compiler diagnostics are in English and generally include a source location and a specification rule such as `R-6.2`. [Reference CLI details](rppc/README.md)
+
+## Work on the compiler
+
+Run the Rust unit tests, syntax suite, and language conformance suite from the repository root.
+
+```sh
+cargo test --workspace --manifest-path rppc/Cargo.toml
+cargo run --manifest-path rppc/Cargo.toml -- syntaxtest .
+cargo run --manifest-path rppc/Cargo.toml -- test .
+```
+
+The conformance suite checks accepted and rejected programs, expected warnings, and runtime results. Runtime cases exercise the interpreter in both language modes and with ownership invariant checks enabled.
+
+The [CI workflow](.github/workflows/ci.yml) runs on Linux and Windows for pull requests and pushes to `master`. It also checks the English command-line output and compares native executables built with GCC or MSVC against the interpreter. After a debug build, use `python .github/scripts/check.py cli` and `python .github/scripts/check.py native` to run those checks locally. Run the native check from a Developer Command Prompt on Windows.
+
+The separate [Compiler bootstrap workflow](.github/workflows/bootstrap.yml) is run manually from the Actions tab. It builds two native `rppcc` generations and verifies that the second and third C output files are byte-for-byte identical. To run it locally, first build `rppc` with `cargo build --locked --release --manifest-path rppc/Cargo.toml`, then run `python .github/scripts/check.py bootstrap` with the same C compiler prerequisites.
+
+| Where to look | What you will find |
+| --- | --- |
+| [`rppc/`](rppc/) | Rust reference implementation and [standard library source](rppc/std/rpp/). |
+| [`rpp-compiler/`](rpp-compiler/) | Self-hosting compiler, C runtime, and Python scripts that compare diagnostics and native execution against the reference implementation. |
+| [`rpp-grammatik/`](rpp-grammatik/README.md) | Normative ANTLR grammar, parser tests, and differential testing against the Rust parser. |
+| [`konformitaet/`](konformitaet/) | Small R++ examples organized by specification chapter. Start with the `akzeptiert` (accepted) and `laufzeit` (runtime) directories. |
+| [`fr-modell/`](fr-modell/README.md) | Executable model of the ownership rules, with its own tests and comparison tools. |
+
+Most detailed documentation is currently in German. See the [specification index](R%2B%2B%20Spezifikationsger%C3%BCst.md), the [conformance test rules](R%2B%2B%20Konformit%C3%A4tstests.md), and the [implementation plan](R%2B%2B%20Implementierungsplan.md).
+
+## License
+
+[MIT License](LICENSE)

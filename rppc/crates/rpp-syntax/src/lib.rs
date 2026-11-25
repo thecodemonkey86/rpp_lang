@@ -21,7 +21,7 @@ pub use parser::SyntaxError;
 pub fn parse(source: &str, symbols: &HashSet<String>) -> Result<ast::CompilationUnit, SyntaxError> {
     let text = preprocess::preprocess(source, symbols).map_err(|e| SyntaxError {
         span: Span { line: e.line, col: 0 },
-        message: format!("Direktive: {}", e.message),
+        message: format!("Directive: {}", e.message),
     })?;
     let tokens = lexer::lex(&text);
     let mut p = parser::Parser::new(tokens);
@@ -99,7 +99,7 @@ mod check {
                 if !allowed {
                     errors.push(SyntaxError {
                         span: crate::Span { line: span.line, col: span.col },
-                        message: "Ausdruck ist keine gültige Anweisung (nur Zuweisung, Aufruf, ++ und --)".into(),
+                        message: "Expression cannot be used as a statement (only assignments, calls, ++ and -- are allowed)".into(),
                     });
                 }
                 expr(e, errors);

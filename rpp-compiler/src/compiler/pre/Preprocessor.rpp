@@ -101,7 +101,7 @@ public:
     bool unary(Set<string> symbols) mut {
         if (pos >= tokens.length) {
             pos++;
-            throw new DirectiveError(line, "Symbol erwartet");
+            throw new DirectiveError(line, "expected a symbol");
         }
         i64 here = pos;
         pos++;
@@ -112,12 +112,12 @@ public:
                 bool closed = at(5);
                 pos++;
                 if (!closed) {
-                    throw new DirectiveError(line, "')' fehlt");
+                    throw new DirectiveError(line, "missing ')'");
                 }
                 return value;
             }
             case Symbol(s): return symbols.contains(s);
-            default: throw new DirectiveError(line, "Symbol erwartet");
+            default: throw new DirectiveError(line, "expected a symbol");
         }
     }
 }
@@ -175,7 +175,7 @@ public:
                 }
                 tokens.push(CondToken::Symbol(t.substring(start, i)));
             } else {
-                throw new DirectiveError(line, "ungültige Bedingung \"" + t + "\"");
+                throw new DirectiveError(line, "invalid condition \"" + t + "\"");
             }
         }
         return tokens;
@@ -185,12 +185,12 @@ public:
     static bool evaluate(string text, Set<string> symbols, i32 line) {
         CondToken[] tokens = tokenize(text, line);
         if (tokens.length == 0) {
-            throw new DirectiveError(line, "Bedingung fehlt");
+            throw new DirectiveError(line, "missing condition");
         }
         Eval e = new Eval(tokens, line);
         bool value = e.orExpr(symbols);
         if (!e.done()) {
-            throw new DirectiveError(line, "unerwartetes " + e.current());
+            throw new DirectiveError(line, "unexpected " + e.current());
         }
         return value;
     }
@@ -244,7 +244,7 @@ public:
                 stack.push(new Level(outer, outer && value, value, number));
             } else if (directive == "elif") {
                 if (stack.length == 0 || stack[stack.length - 1].seenElse) {
-                    throw new DirectiveError(number, "#elif ohne passendes #if");
+                    throw new DirectiveError(number, "#elif without a matching #if");
                 }
                 bool value = evaluate(rest, symbols, number);
                 i64 top = stack.length - 1;
@@ -252,7 +252,7 @@ public:
                 stack[top].taken = stack[top].taken || value;
             } else if (directive == "else") {
                 if (stack.length == 0 || stack[stack.length - 1].seenElse || rest.length > 0) {
-                    throw new DirectiveError(number, "#else ohne passendes #if");
+                    throw new DirectiveError(number, "#else without a matching #if");
                 }
                 i64 top = stack.length - 1;
                 stack[top].active = stack[top].outer && !stack[top].taken;
@@ -260,7 +260,7 @@ public:
                 stack[top].seenElse = true;
             } else if (directive == "endif") {
                 if (stack.length == 0 || rest.length > 0) {
-                    throw new DirectiveError(number, "#endif ohne passendes #if");
+                    throw new DirectiveError(number, "#endif without a matching #if");
                 }
                 Level gone = stack.pop();
             } else {
@@ -268,12 +268,12 @@ public:
                 if (nameLen == 0) {
                     shown = stripped.substring(1, stripped.length);
                 }
-                throw new DirectiveError(number, "unbekannte Direktive #" + shown);
+                throw new DirectiveError(number, "unknown directive #" + shown);
             }
             out.push("");
         }
         if (stack.length > 0) {
-            throw new DirectiveError(stack[stack.length - 1].line, "#if ohne #endif");
+            throw new DirectiveError(stack[stack.length - 1].line, "#if without #endif");
         }
         return string::join("\n", out);
     }

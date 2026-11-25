@@ -64,7 +64,7 @@ static char* mem_chunk_cur = NULL;
 static size_t mem_chunk_left = 0;
 
 static void mem_oom(void) {
-    fputs("interner Fehler: kein Speicher\n", stderr);
+    fputs("Internal error: out of memory\n", stderr);
     exit(3);
 }
 
@@ -450,7 +450,7 @@ int rt_fatal(const char* name, const char* fmt, ...) {
 int rt_fatal_at(int st, int line) {
     if (st == ST_FATAL && fatal_pending && fatal_msg) {
         Buf b = { 0 };
-        buf_fmt(&b, "%s (Zeile %d)", fatal_msg, line);
+        buf_fmt(&b, "%s (line %d)", fatal_msg, line);
         xfree(fatal_msg);
         fatal_msg = b.p;
     }
@@ -549,7 +549,7 @@ static int io_error(const char* msg, const char* path) {
 /* ================================================================ Rahmen */
 
 int rt_enter_overflow(void) {
-    return rt_fatal("StackOverflowError", "mehr als %d verschachtelte Aufrufe", RT_MAX_DEPTH);
+    return rt_fatal("StackOverflowError", "More than %d nested calls", RT_MAX_DEPTH);
 }
 
 int rt_depth(void) { return rt_fdepth; }
@@ -1095,7 +1095,7 @@ static int int_result(rv* out, W v, uint8_t p) {
     }
     char t[64];
     w_text(v, t);
-    return rt_fatal("OverflowError", "Überlauf: %s passt nicht in %s", t, prim_name(p));
+    return rt_fatal("OverflowError", "Overflow: %s is outside the range of %s", t, prim_name(p));
 }
 
 int rt_int_result_i64(rv* out, int64_t v, uint8_t tag) { return int_result(out, w_from_i(v), tag); }
@@ -1211,7 +1211,7 @@ const RTy* rt_ty(int32_t kind, int32_t def, int32_t n, const RTy** args) {
 int rt_check_lock(RObj* o, int mutable, int line) {
     int b = o->lock;
     if ((!mutable && b == -1) || (mutable && b != 0)) {
-        int st = rt_fatal("BorrowError", "das shared-Objekt ist %s gesperrt", b == -1 ? "schreibend" : "lesend");
+        int st = rt_fatal("BorrowError", "The shared object is locked for %s", b == -1 ? "writing" : "reading");
         if (line > 0) rt_fatal_at(st, line);
         return st;
     }
@@ -1262,7 +1262,7 @@ static int run_dtor(RObj* o, const RClass* c) {
         rv msg;
         rt_describe(&msg, ex);
         RStr* s = rt_s(msg);
-        return rt_fatal("DestructorError", "Exception verlässt einen Destruktor: %s", s->data);
+        return rt_fatal("DestructorError", "An exception escaped a destructor: %s", s->data);
     }
     return st;
 }
@@ -1335,14 +1335,14 @@ int rt_index_slot_slow(rv** out, rv ov, rv idx) {
     if (!rt_is_int_tag(idx.tag)) i = -1;
     if (ov.tag == RT_OBJ) {
         RObj* o = (RObj*)ov.v.p;
-        if (neg || i >= o->len) return rt_fatal("IndexError", "Index %lld außerhalb von 0..%lld", (long long)i, (long long)o->len);
+        if (neg || i >= o->len) return rt_fatal("IndexError", "Index %lld is outside 0..%lld", (long long)i, (long long)o->len);
         *out = &o->slots[i];
         return ST_OK;
     }
     if (ov.tag == RT_SLICE) {
         RObj* o = (RObj*)ov.v.p;
         int64_t a = ov.x, b = ov.y;
-        if (neg || a + i >= b) return rt_fatal("IndexError", "Index %lld außerhalb von 0..%lld", (long long)i, (long long)(b - a));
+        if (neg || a + i >= b) return rt_fatal("IndexError", "Index %lld is outside 0..%lld", (long long)i, (long long)(b - a));
         *out = &o->slots[a + i];
         return ST_OK;
     }
@@ -1354,7 +1354,7 @@ int rt_index_slow(rv* out, rv ov, rv idx) {
         RStr* s = rt_s(ov);
         int64_t n = rt_str_chars(s);
         int64_t i = rt_is_int_tag(idx.tag) && !w_neg_p(w_of(idx)) ? idx.v.i : -1;
-        if (i < 0 || i >= n) return rt_fatal("IndexError", "Index %lld außerhalb von 0..%lld", (long long)i, (long long)n);
+        if (i < 0 || i >= n) return rt_fatal("IndexError", "Index %lld is outside 0..%lld", (long long)i, (long long)n);
         int64_t p = char_pos(s, i);
         uint32_t c;
         utf8_dec(s->data, s->len, p, &c);
@@ -1384,7 +1384,7 @@ int rt_slice(rv* out, rv ov, int has_from, rv from, int has_to, rv to) {
     }
     int64_t a = has_from ? from.v.i : 0;
     int64_t b = has_to ? to.v.i : len;
-    if (a < 0 || b < a || b > len) return rt_fatal("IndexError", "Bereich %lld..%lld außerhalb von 0..%lld", (long long)a, (long long)b, (long long)len);
+    if (a < 0 || b < a || b > len) return rt_fatal("IndexError", "Range %lld..%lld is outside 0..%lld", (long long)a, (long long)b, (long long)len);
     rv r = rv_make(RT_SLICE);
     r.v.p = o;
     r.x = (int32_t)(base + a);
@@ -1581,7 +1581,7 @@ int rt_arith_slow(rv* out, int op, rv a, rv b) {
             case OP_SUB: r = x - y; break;
             case OP_MUL: r = x * y; break;
             default:
-                if (y == 0) return rt_fatal("DivisionError", "Division durch null");
+                if (y == 0) return rt_fatal("DivisionError", "Division by zero");
                 r = op == OP_DIV ? x / y : x % y;
                 break;
             }
@@ -1624,7 +1624,7 @@ int rt_arith_slow(rv* out, int op, rv a, rv b) {
             if (!rt_release) {
                 char t[64];
                 w_text(wn, t);
-                return rt_fatal("OverflowError", "Schiebeweite %s außerhalb von 0..%d", t, bits);
+                return rt_fatal("OverflowError", "Shift count %s is outside 0..%d", t, bits);
             }
             /* rem_euclid */
             int64_t m = (int64_t)(wn.lo % (uint64_t)bits);
@@ -1685,7 +1685,7 @@ int rt_arith_slow(rv* out, int op, rv a, rv b) {
     case OP_SUB: r = w_sub(x, y); break;
     case OP_MUL: r = w_mul(x, y); break;
     case OP_DIV: case OP_REM: {
-        if (y.lo == 0 && y.hi == 0) return rt_fatal("DivisionError", "Division durch null");
+        if (y.lo == 0 && y.hi == 0) return rt_fatal("DivisionError", "Division by zero");
         W q, m;
         w_divrem(x, y, &q, &m);
         r = op == OP_DIV ? q : m;
@@ -1850,7 +1850,7 @@ int rt_cast_enum(rv* out, rv v, int32_t def) {
     }
     char t[64];
     w_text(n, t);
-    return rt_fatal("CastError", "%s ist kein Wert von %s", t, d->name);
+    return rt_fatal("CastError", "%s is not a value of %s", t, d->name);
 }
 
 int rt_cast_prim(rv* out, rv v, uint8_t p) {
@@ -1866,7 +1866,7 @@ int rt_cast_prim(rv* out, rv v, uint8_t p) {
         if (n.hi != 0 || n.lo > 0x10ffff || (n.lo >= 0xd800 && n.lo <= 0xdfff)) {
             char t[64];
             w_text(n, t);
-            return rt_fatal("CastError", "%s ist kein Unicode-Zeichen", t);
+            return rt_fatal("CastError", "%s is not a Unicode character", t);
         }
         *out = rv_char((uint32_t)n.lo);
         return ST_OK;
@@ -1882,7 +1882,7 @@ int rt_cast_prim(rv* out, rv v, uint8_t p) {
                 if (!rt_release) {
                     Buf b = { 0 };
                     float_text(&b, x, 0);
-                    int st = rt_fatal("CastError", "%s passt nicht in %s", b.p, prim_name(p));
+                    int st = rt_fatal("CastError", "%s is outside the range of %s", b.p, prim_name(p));
                     xfree(b.p);
                     return st;
                 }
@@ -1899,7 +1899,7 @@ int rt_cast_prim(rv* out, rv v, uint8_t p) {
         if ((w_cmp(n, lo) < 0 || w_cmp(n, hi) > 0) && !rt_release) {
             char t[64];
             w_text(n, t);
-            return rt_fatal("CastError", "%s passt nicht in %s", t, prim_name(p));
+            return rt_fatal("CastError", "%s is outside the range of %s", t, prim_name(p));
         }
         *out = make_int_w(n, p);
         return ST_OK;
@@ -2091,7 +2091,7 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
         if (!strcmp(name, "substring")) {
             int64_t a = argi(args, 0), b = argi(args, 1), nc = rt_str_chars(st);
             if (w_neg_p(w_of(args[0]))) a = -1;
-            if (a < 0 || b < a || b > nc) return rt_fatal("IndexError", "Bereich %lld..%lld außerhalb von 0..%lld", (long long)a, (long long)b, (long long)nc);
+            if (a < 0 || b < a || b > nc) return rt_fatal("IndexError", "Range %lld..%lld is outside 0..%lld", (long long)a, (long long)b, (long long)nc);
             int64_t pa = char_pos(st, a), pb = char_pos(st, b);
             *out = rt_str_from(st->data + pa, pb - pa);
             return ST_OK;
@@ -2129,7 +2129,7 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
         }
         if (!strcmp(name, "byteAt")) {
             int64_t i = argi(args, 0);
-            if (w_neg_p(w_of(args[0])) || i >= st->len) return rt_fatal("IndexError", "Index %lld außerhalb von 0..%lld", (long long)(w_neg_p(w_of(args[0])) ? (int64_t)w_of(args[0]).lo : i), (long long)st->len);
+            if (w_neg_p(w_of(args[0])) || i >= st->len) return rt_fatal("IndexError", "Index %lld is outside 0..%lld", (long long)(w_neg_p(w_of(args[0])) ? (int64_t)w_of(args[0]).lo : i), (long long)st->len);
             *out = rv_byte((uint8_t)st->data[i]);
             return ST_OK;
         }
@@ -2154,7 +2154,7 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
         int64_t lo = start, hi = end;
         while (lo < hi) {
             int64_t mid = lo + (hi - lo) / 2;
-            if (mid >= v->len) return rt_fatal("IndexError", "ungültiger Bereich bei partitionPoint");
+            if (mid >= v->len) return rt_fatal("IndexError", "Invalid range for partitionPoint");
             rv a1[1];
             a1[0] = rv_view(v->slots[mid]);
             rv r;
@@ -2207,7 +2207,7 @@ static int vec_method(rv* out, RObj* o, const char* name, int n, rv* args) {
     if (!strcmp(name, "insert")) {
         W w = w_of(args[0]);
         int64_t i = (int64_t)w.lo;
-        if (w_neg_p(w) || i > len) return rt_fatal("IndexError", "Index %lld außerhalb von 0..%lld", (long long)i, (long long)(len + 1));
+        if (w_neg_p(w) || i > len) return rt_fatal("IndexError", "Index %lld is outside 0..%lld", (long long)i, (long long)(len + 1));
         vec_reserve(o, len + 1);
         memmove(o->slots + i + 1, o->slots + i, sizeof(rv) * (size_t)(len - i));
         o->slots[i] = args[1];
@@ -2215,14 +2215,14 @@ static int vec_method(rv* out, RObj* o, const char* name, int n, rv* args) {
         return ST_OK;
     }
     if (!strcmp(name, "pop")) {
-        if (len == 0) return rt_fatal("IndexError", "pop auf einem leeren Vektor");
+        if (len == 0) return rt_fatal("IndexError", "Cannot pop from an empty vector");
         *out = o->slots[--o->len];
         return ST_OK;
     }
     if (!strcmp(name, "remove")) {
         W w = w_of(args[0]);
         int64_t i = (int64_t)w.lo;
-        if (w_neg_p(w) || i >= len) return rt_fatal("IndexError", "Index %lld außerhalb von 0..%lld", (long long)i, (long long)len);
+        if (w_neg_p(w) || i >= len) return rt_fatal("IndexError", "Index %lld is outside 0..%lld", (long long)i, (long long)len);
         *out = o->slots[i];
         memmove(o->slots + i, o->slots + i + 1, sizeof(rv) * (size_t)(len - i - 1));
         o->len--;
@@ -2990,7 +2990,7 @@ static int string_view(rv* out, RObj* o, const char* m, rv* args) {
     if (!strcmp(m, "length")) { *out = rv_i64(utf8_count(t, tn)); return ST_OK; }
     if (!strcmp(m, "charAt")) {
         int64_t i = w_neg_p(w_of(args[0])) ? -1 : utf8_boundary(t, tn, argi(args, 0));
-        if (i < 0 || i >= tn) return rt_fatal("IndexError", "Index außerhalb der StringView");
+        if (i < 0 || i >= tn) return rt_fatal("IndexError", "Index is outside the StringView");
         uint32_t c;
         utf8_dec(t, tn, i, &c);
         *out = rv_char(c);
@@ -2999,7 +2999,7 @@ static int string_view(rv* out, RObj* o, const char* m, rv* args) {
     if (!strcmp(m, "slice")) {
         int64_t a = w_neg_p(w_of(args[0])) ? -1 : utf8_boundary(t, tn, argi(args, 0));
         int64_t b = w_neg_p(w_of(args[1])) ? -1 : utf8_boundary(t, tn, argi(args, 1));
-        if (a < 0 || b < 0 || a > b) return rt_fatal("IndexError", "Bereich außerhalb der StringView");
+        if (a < 0 || b < 0 || a > b) return rt_fatal("IndexError", "Range is outside the StringView");
         *out = view_new(o->cls, source, start + a, start + b);
         return ST_OK;
     }
@@ -3142,7 +3142,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         RStr* p = rt_s(args[0]);
         if (!is_file(p->data)) {
             Buf m = { 0 };
-            buf_fmt(&m, "Datei nicht gefunden: %s", p->data);
+            buf_fmt(&m, "File not found: %s", p->data);
             int st = io_error(m.p, p->data);
             xfree(m.p);
             return st;
@@ -3620,7 +3620,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         if (!strcmp(m, "next")) { *out = rv_i64(argi(args, 0) + 1); return ST_OK; }
         if (!strcmp(m, "at") && at_cursor) {
             int64_t i = argi(args, 0);
-            if (w_neg_p(w_of(args[0])) || i >= len) return rt_fatal("IndexError", "Cursor %lld außerhalb von 0..%lld", (long long)i, (long long)len);
+            if (w_neg_p(w_of(args[0])) || i >= len) return rt_fatal("IndexError", "Cursor %lld is outside 0..%lld", (long long)i, (long long)len);
             *out = rv_view(o->slots[i]);
             return ST_OK;
         }
@@ -3641,7 +3641,7 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
                 return ST_OK;
             }
             if (!strcmp(m, "get")) { *out = rv_null(); return ST_OK; }
-            return rt_fatal("IndexError", "der Schlüssel fehlt in der Map");
+            return rt_fatal("IndexError", "The key is missing from the map");
         }
         if (!strcmp(m, "put")) {
             rv key = args[0], value = args[1];
@@ -3875,7 +3875,7 @@ typedef struct MainArgs {
 
 static void print_trace(RTrace t) {
     if (rt_release) return;
-    for (int i = 0; i < t.n; i++) fprintf(stderr, "    bei %s\n", t.labels[i]);
+    for (int i = 0; i < t.n; i++) fprintf(stderr, "    at %s\n", t.labels[i]);
 }
 
 static void run_main(MainArgs* m) {

@@ -20,7 +20,7 @@ pub struct SyntaxError {
 
 impl std::fmt::Display for SyntaxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Zeile {}:{} {}", self.span.line, self.span.col, self.message)
+        write!(f, "Line {}:{} {}", self.span.line, self.span.col, self.message)
     }
 }
 
@@ -57,7 +57,7 @@ impl Parser {
     }
 
     pub(crate) fn error(&self) -> SyntaxError {
-        let (pos, message) = self.furthest.clone().unwrap_or((self.pos, "Syntaxfehler".into()));
+        let (pos, message) = self.furthest.clone().unwrap_or((self.pos, "Syntax error".into()));
         let pos = pos.min(self.toks.len() - 1);
         SyntaxError { span: self.toks[pos].span, message }
     }
@@ -82,9 +82,9 @@ impl Parser {
     fn fail<V>(&mut self, expected: &str) -> PResult<V> {
         let found = match self.kind(0) {
             T::Error(msg) => msg.clone(),
-            other => format!("gefunden {other}"),
+            other => format!("found {other}"),
         };
-        let message = format!("{expected} erwartet, {found}");
+        let message = format!("Expected {expected}, {found}");
         match &self.furthest {
             Some((p, _)) if *p >= self.pos => {}
             _ => self.furthest = Some((self.pos, message)),
@@ -156,7 +156,7 @@ impl Parser {
             self.bump();
             Ok(id)
         } else {
-            self.fail("Name")
+            self.fail("name")
         }
     }
 
@@ -262,7 +262,7 @@ impl Parser {
             }
             Ok(TopDecl::Enum(EnumDecl { export, name, variants, span }))
         } else {
-            self.fail("Typdeklaration")
+            self.fail("type declaration")
         }
     }
 
@@ -279,7 +279,7 @@ impl Parser {
                     self.bump();
                     VariantPayload::Value(if neg { format!("-{v}") } else { v })
                 }
-                _ => return self.fail("Ganzzahl"),
+                _ => return self.fail("integer"),
             }
         } else {
             VariantPayload::None
@@ -511,7 +511,7 @@ impl Parser {
         if self.is_ident(0) {
             return Ok(BaseType::Named(self.type_name(ctx)?));
         }
-        self.fail("Typ")
+        self.fail("type")
     }
 
     fn type_name(&mut self, ctx: TypeCtx) -> PResult<TypeName> {
@@ -781,7 +781,7 @@ impl Parser {
         }
         match &target.kind {
             ExprKind::Unary { op: UnaryOp::PreInc | UnaryOp::PreDec, .. } => Ok(ExprStmt::Expr(target)),
-            ExprKind::Unary { .. } => self.fail("Zuweisung"),
+            ExprKind::Unary { .. } => self.fail("assignment"),
             _ => Ok(ExprStmt::Expr(target)),
         }
     }
@@ -881,7 +881,7 @@ impl Parser {
         }
         if negative {
             self.bump();
-            return self.fail("Literal");
+            return self.fail("literal");
         }
         let name = match self.attempt(|p| p.static_ref()) {
             Some(s) => PatternName::Static(s),
@@ -914,7 +914,7 @@ impl Parser {
         let finally = if self.eat_k(K::Finally) {
             Some(self.block()?)
         } else if catches.is_empty() {
-            return self.fail("'catch' oder 'finally'");
+            return self.fail("'catch' or 'finally'");
         } else {
             None
         };
@@ -1061,7 +1061,7 @@ impl Parser {
                     e = Expr { kind: ExprKind::Slice { object: Box::new(e), from, to }, span, id: self.expr_id() };
                 } else {
                     self.expect_p(P::RBracket)?;
-                    let index = from.expect("Index ohne Bereich hat einen Ausdruck");
+                    let index = from.expect("an index without a range has an expression");
                     e = Expr { kind: ExprKind::Index { object: Box::new(e), index }, span, id: self.expr_id() };
                 }
             } else if self.eat_p(P::PlusPlus) {
@@ -1186,7 +1186,7 @@ impl Parser {
                 None => ExprKind::Name(self.ident()?),
             },
             _ if self.primitive().is_some() => ExprKind::Static(self.static_ref()?),
-            _ => return self.fail("Ausdruck"),
+            _ => return self.fail("expression"),
         };
         Ok(Expr { kind, span, id: self.expr_id() })
     }

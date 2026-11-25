@@ -82,7 +82,7 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M4 | Zwischenrepräsentation, Interpreter, Exceptions und Programmfehler | alle Laufzeittests mit `print` und `rpp.core` bestehen |
 | M5 | Standardbibliothek für den Compiler: `rpp.text`, `rpp.collections`, `rpp.io`, `rpp.env`, `rpp.fmt` | alle Konformitätstests bestehen im Debugmodus |
 | M6 | Beginn des R++-Compilers in R++ | der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein (festgelegt am 23.11.2026) |
-| M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | – (Zielwert noch festzulegen, Vorschlag: übersetzter `rppcc` mindestens so schnell wie `rppc` bei `pruefe rpp-compiler`) |
+| M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | – (Zielwert noch festzulegen, Vorschlag: übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler`) |
 
 JIT und Releasemodus folgen nach M5. Bis dahin ist die Implementierung nur für den Debugmodus konform (R-14.7).
 
@@ -171,7 +171,7 @@ V-13 (Kapitel 5) ist entschieden: Ein `own`-Wert an einem `weak`-Ziel ist ein Fe
 
 `rppc test ..` führt die Laufzeittests jetzt in beiden Modi aus: 241 bestanden, 0 fehlgeschlagen, 2 offen. Die zwei offenen Tests aus Kapitel 13 (`l01_text`, `l03_set_reihenfolge`) brauchen eingebaute Teile der Bibliothek (`StringBuilder`, `Set`), die nach dem Plan zu M5 gehören.
 
-Erster Stand des Vergleichs mit dem FR++-Modell (`fr-modell/vergleich.py --ausfuehren`): Von 1000 Zufallsprogrammen werden 226 von beiden angenommen und ausgeführt. 212 liefern dieselbe Ausgabe einschließlich der Destruktoren, ebenso alle 10 handgeschriebenen Programme. Offen sind 14 Unterschiede (Kapitel 5, Abschnitt 10.5 und `fr-modell/vergleichsbericht.txt`): 13 endlose Destruktor-Kaskaden, bei denen das Modell mit `BorrowError` endet und `rppc` mit `StackOverflowError`, und ein ungeklärter Sperrkonflikt (seed772).
+Erster Stand des Vergleichs mit dem FR++-Modell (`fr-modell/vergleich.py --run`): Von 1000 Zufallsprogrammen werden 226 von beiden angenommen und ausgeführt. 212 liefern dieselbe Ausgabe einschließlich der Destruktoren, ebenso alle 10 handgeschriebenen Programme. Offen sind 14 Unterschiede (Kapitel 5, Abschnitt 10.5 und `fr-modell/vergleichsbericht.txt`): 13 endlose Destruktor-Kaskaden, bei denen das Modell mit `BorrowError` endet und `rppc` mit `StackOverflowError`, und ein ungeklärter Sperrkonflikt (seed772).
 
 Änderung am Plan (angenommen am 22.11.2026): Abschnitt 3.3 sah eine Zwischenrepräsentation als Kontrollflussgraph vor, die der Interpreter ausführt. Der erste Teil von M4 führt stattdessen den geprüften AST zusammen mit den Angaben der Prüfung aus; Freigabe, Sperren, Unwinding und Prüfungen je Modus stehen ausdrücklich im Interpreter. Die Zwischenrepräsentation entsteht erst mit dem JIT bzw. dem Releasemodus, wenn sie für die Codeerzeugung gebraucht wird; bis dahin ist der AST-Interpreter die Referenz (R-12.3). Begründung: Alle Laufzeitregeln sind so schon prüfbar, und die Zwischenrepräsentation lässt sich später gegen diesen Interpreter testen.
 
@@ -181,7 +181,7 @@ Noch offen nach dem ersten Teil: der Prüfmodus für die Invarianten, `new T()` 
 
 | Teil | Inhalt |
 |---|---|
-| Prüfmodus | `rppc run --pruefen`; `rppc test` führt alle Laufzeittests damit aus. Nach jeder Anweisung auf oberster Ebene von `main` prüft der Interpreter I-1 (eindeutiger Besitz, Referenzzähler), I-2 und I-4 (keine Verweise auf freigegebene Objekte) und I-5 (gesperrte Objekte leben), am Ende Lecks in Programmen ohne `shared`. Ein Verstoß ist ein interner Fehler mit Exit-Code 3. Gegenprobe: Ein absichtlich eingebauter Fehler (alter Wert bei Zuweisung nicht freigegeben) wird gemeldet. |
+| Prüfmodus | `rppc run --check-invariants`; `rppc test` führt alle Laufzeittests damit aus. Nach jeder Anweisung auf oberster Ebene von `main` prüft der Interpreter I-1 (eindeutiger Besitz, Referenzzähler), I-2 und I-4 (keine Verweise auf freigegebene Objekte) und I-5 (gesperrte Objekte leben), am Ende Lecks in Programmen ohne `shared`. Ein Verstoß ist ein interner Fehler mit Exit-Code 3. Gegenprobe: Ein absichtlich eingebauter Fehler (alter Wert bei Zuweisung nicht freigegeben) wird gemeldet. |
 | Programmfehler beim Aufräumen | Entsteht beim Aufräumen nach einem Programmfehler ein zweiter, bleibt der erste die gemeldete Ursache, der zweite wird angehängt, und es laufen keine weiteren Destruktoren (R-9.14: das Programm endet sofort). |
 | Sperren | Ein geliehenes Objektargument mit shared-Wurzel wird für den Aufruf gesperrt und gebunden, nicht gelesen; primitive Argumente werden gelesen (wie im FR++-Modell). |
 
@@ -293,20 +293,20 @@ Verglichen wird das Verhalten mit `rppc run` (`rpp-compiler/vergleich_c.py`: erz
 
 **Selbstübersetzung.** Der interpretierte `rpp-compiler` erzeugt für sich selbst C-Code (217 783 Zeilen, 20 Minuten im Interpreter); MSVC übersetzt ihn in gut einer Minute zu `rppcc.exe`. Dieses Programm
 - erzeugt für sich selbst denselben C-Code, Byte für Byte (Fixpunkt; 3 Minuten 50);
-- stimmt in allen Teilen von `vergleich.py --exe` mit `rppc` überein: `tokens` 539, `pre` 1092, `ast` 1070, `projekt` 596, `defs` 507, `pruefe` 789 gleich, 0 verschieden; `pruefe` jetzt einschließlich `rpp-compiler` selbst (3 Minuten 45 statt rund 20 Minuten im Interpreter).
+- stimmt in allen Teilen von `vergleich.py --exe` mit `rppc` überein: `tokens` 539, `pre` 1092, `ast` 1070, `project` 596, `defs` 507, `diagnose` 789 gleich, 0 verschieden; `diagnose` jetzt einschließlich `rpp-compiler` selbst (3 Minuten 45 statt rund 20 Minuten im Interpreter).
 
 Beim Vergleich aufgefallen und behoben: Eine Sicht auf einen `weak`-Verweis wurde beim Speichern nicht gezählt (Laufzeit, Speicherfehler in FR++-Programmen).
 
 **Geschwindigkeit (22.11.2026).** Gemessen mit einem Stichproben-Profiler in der Laufzeit (`RPP_PROFILE=DATEI`, Windows; Adressen über die Map-Datei des Linkers aufgelöst). Drei Ursachen und ihre Behebung:
 
-| Ursache | Behebung | `pruefe rpp-compiler` | Selbstübersetzung |
+| Ursache | Behebung | `diagnose rpp-compiler` | Selbstübersetzung |
 |---|---|---|---|
 | Ausgangsstand | – | 225 s | 230 s |
 | kleine Laufzeitfunktionen als echte Aufrufe zwischen zwei Übersetzungseinheiten | schnelle Pfade `static inline` im Header (Sichten, Zwischenwerte, Freigabe von Grundwerten, Ganzzahl-Rechnen und -Vergleich, Index, `length`); gemeinsamer Zahltyp als Tabelle | (mit 2.) 28 s | 101 s |
 | Flussanalyse in `Flow.rpp`: sortierte Listen linear durchsucht, Kopien Element für Element | binäre Suche, Schnitt/Vereinigung/Differenz durch Zusammenführen, `copy(…)` für die Kopie; Ergebnisse unverändert | | |
 | geschwätziger Code für Grundwerte | Generator lässt `temp`, `promote`, `own_str` und doppelte Zahlumwandlungen bei Grundwerten weg; Sperrprüfung (V-1) nur, wenn die Wurzelvariable `shared` oder ein Typ-Parameter sein kann | 9,2 s | 10,4 s |
 
-Zum Vergleich: `rppc pruefe` (Rust) braucht 0,6 s, der Interpreter rund 20 Minuten. Der Fixpunkt der Selbstübersetzung hält nach jedem Schritt (zwei Runden, weil der neue Generator erst in der zweiten Runde läuft).
+Zum Vergleich: `rppc diagnose` (Rust) braucht 0,6 s, der Interpreter rund 20 Minuten. Der Fixpunkt der Selbstübersetzung hält nach jedem Schritt (zwei Runden, weil der neue Generator erst in der zweiten Runde läuft).
 
 **Weitere offene Punkte (22.11.2026).**
 
@@ -318,7 +318,7 @@ Zum Vergleich: `rppc pruefe` (Rust) braucht 0,6 s, der Interpreter rund 20 Minut
 
 Offen: Der übersetzte Code ist noch rund 15-mal langsamer als `rppc` (Werte mit Art in jedem Ausdruck, Rahmen und Felder je Aufruf, Namensvergleich bei eingebauten Methoden); der Releasemodus über eine eigene Zwischendarstellung oder LLVM bleibt nach dem Plan offen.
 
-**M6 abgeschlossen (23.11.2026).** Kriterium (festgelegt am 23.11.2026): Der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein. Stand: Fixpunkt nach zwei Runden; `vergleich.py --exe` 540/1094/1072/598/508/790 gleich (tokens, pre, ast, projekt, defs, pruefe), 0 verschieden; `vergleich_c.py --fr 200` 228 gleich, 0 verschieden; `rppc test ..` 259 bestanden.
+**M6 abgeschlossen (23.11.2026).** Kriterium (festgelegt am 23.11.2026): Der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein. Stand: Fixpunkt nach zwei Runden; `vergleich.py --exe` 540/1094/1072/598/508/790 gleich (tokens, pre, ast, project, defs, diagnose), 0 verschieden; `vergleich_c.py --fr 200` 228 gleich, 0 verschieden; `rppc test ..` 259 bestanden.
 
 Entschieden am 23.11.2026: V-13.12 (Text von `IOException`) ist angenommen. `Map` und `Set` bleiben eingebaut; als R++-Quelltext erst, wenn der erzeugte Code schneller ist. Die Geschwindigkeit des übersetzten Codes wird Meilenstein M7; ob der C-Codegenerator der Releasemodus nach R-12.1 wird (statt einer eigenen Zwischendarstellung bzw. LLVM, Abschnitt 3), ist noch zu besprechen.
 
@@ -332,7 +332,7 @@ Entschieden am 23.11.2026: V-13.12 (Text von `IOException`) ist angenommen. `Map
 
 Die erwarteten Ausgaben der Laufzeittests sind mit einer unabhängigen Referenzimplementierung (Python) berechnet und in den Testköpfen festgeschrieben: `a06_random`, `l20_random_folge` (feste Folgen für die Seeds 42, 0 und 7, Reproduzierbarkeit, `nextInt`, `nextFloat`, `nextBool`), `l21_random_shuffle` (Grundwerte, `own`-Objekte, Strings, leerer Vektor; Seed 2026), `l22_random_bound` (`FailError` bei `nextInt(0)`).
 
-`rppc test ..`: alle 272 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Random.rpp` und die neuen Tests auf beiden Seiten dieselben (keine) Meldungen. Der veränderbare Vektor-Parameter `mut T[]` mit `remove`/`insert` durch die Prüfung war damit erstmals in einem Bibliothekspaket im Einsatz.
+`rppc test ..`: alle 272 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus. Gegenprobe mit dem Compiler in R++: `diagnose` meldet für `Random.rpp` und die neuen Tests auf beiden Seiten dieselben (keine) Meldungen. Der veränderbare Vektor-Parameter `mut T[]` mit `remove`/`insert` durch die Prüfung war damit erstmals in einem Bibliothekspaket im Einsatz.
 
 **Ausbau: Vektor-Algorithmen und ein Prüfungs-Fix (23.11.2026).** `rppc/std/rpp/collections/Vectors.rpp` (reiner R++-Quelltext, V-13.10) ergänzt `rpp.collections` um statische generische Methoden: `binarySearch` (Comparable), `equals` (Equatable, elementweiser Vergleich – Arrays haben kein `==`, V-4.8), `reverse`, `retain` (Prädikat) und `dedup` (aufeinanderfolgende Duplikate). Die veränderbaren Methoden arbeiten über `remove`/`insert` (V-3; `swap` auf zwei Indizes gilt immer als überlappend) und verschieben die Elemente; sie funktionieren auch für `own`-Objekte.
 
@@ -341,7 +341,7 @@ Die erwarteten Ausgaben der Laufzeittests sind mit einer unabhängigen Referenzi
 | Hilfsklasse statt eingebaut | Als R++-Klasse geschrieben, nicht als eingebaute Methoden auf `T[]`: beide Compiler behandeln sie gleich, keine Divergenz in M6 (V-13.10). Eingebaute Methoden bleiben, was R++ nicht effizient ausdrücken kann (`sort`). |
 | Prüfungs-Fix R-7.26 | Beim Schreiben aufgefallen: Constraints generischer **Methoden** wurden am Aufruf nicht geprüft (nur Klassen-Constraints über `check_pending`). `binarySearch` mit einem Typ ohne `Comparable` wurde angenommen und scheiterte erst zur Laufzeit (`InternalError: Methode compareTo ohne Rumpf`). In `body.rs` (nach der Methodenwahl, die abgeleiteten Typargumente gegen die Constraints geprüft) und in `Checker.rpp` behoben. R-7.26 verlangte die Prüfung bereits; der Fix macht die Implementierung erst spec-konform. |
 
-Neue Tests: `a07_vectors`, `l23_vectors_suche`, `l24_vectors_mutieren`, `n08_vectors_ohne_comparable` (R-7.26). `rppc test ..`: alle 276 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Vectors.rpp` und die vier neuen Tests auf beiden Seiten dasselbe (der Negativtest wird hüben wie drüben mit R-7.26 abgelehnt).
+Neue Tests: `a07_vectors`, `l23_vectors_suche`, `l24_vectors_mutieren`, `n08_vectors_ohne_comparable` (R-7.26). `rppc test ..`: alle 276 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `diagnose` meldet für `Vectors.rpp` und die vier neuen Tests auf beiden Seiten dasselbe (der Negativtest wird hüben wie drüben mit R-7.26 abgelehnt).
 
 **Ausbau: rpp.math (23.11.2026).** `rppc/std/rpp/math/Math.rpp` ergänzt die Bibliothek um `f64`-Funktionen (V-13.11; Standardbibliothek, Abschnitt 12, R-13.28, R-13.29): die Konstanten `PI` und `E`, `sqrt`, `floor`, `ceil`, `trunc`, `round` und `clamp`.
 
@@ -350,7 +350,7 @@ Neue Tests: `a07_vectors`, `l23_vectors_suche`, `l24_vectors_mutieren`, `n08_vec
 | Runden und clamp | reiner R++-Quelltext. `floor`/`ceil`/`trunc`/`round` runden exakt ganzzahlig über `cast<i64>` (Richtung null, R-4.10) mit Anpassung; `round` bei .5 von null weg. NaN (`x != x`), ±0 und \|x\| ≥ 2⁵² (ganzzahlig, auch ±∞) bleiben unverändert – dadurch laufen beide Modi gleich und das Vorzeichen von null bleibt erhalten. `clamp` verlangt `lo <= hi` (sonst `FailError`). |
 | sqrt | eingebaut (`fail("eingebaut")`, Dispatch in `stdlib.rs` über `rpp.math.Math`), korrekt gerundet nach IEEE 754 wie `Fmt::fixed`; `x < 0` ergibt NaN. Als R++-Klasse mit eingebautem Rumpf behandeln beide Compiler die Signatur gleich – keine M6-Divergenz (V-13.11). |
 
-Die Soll-Ausgaben sind mit einer unabhängigen Python-Referenz berechnet (u. a. `sqrt(2)` auf 10 Stellen, `PI`/`E` auf 5 Stellen). Neue Tests: `a08_math`, `l25_math_runden` (Runden, clamp, NaN/∞), `l26_math_sqrt` (Quadratzahlen, korrekt gerundetes `sqrt(2)`, NaN/∞, Konstanten), `l27_math_clamp_fehler` (`FailError` bei `lo > hi`). `rppc test ..`: alle 280 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Math.rpp` und die vier neuen Tests auf beiden Seiten dasselbe.
+Die Soll-Ausgaben sind mit einer unabhängigen Python-Referenz berechnet (u. a. `sqrt(2)` auf 10 Stellen, `PI`/`E` auf 5 Stellen). Neue Tests: `a08_math`, `l25_math_runden` (Runden, clamp, NaN/∞), `l26_math_sqrt` (Quadratzahlen, korrekt gerundetes `sqrt(2)`, NaN/∞, Konstanten), `l27_math_clamp_fehler` (`FailError` bei `lo > hi`). `rppc test ..`: alle 280 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `diagnose` meldet für `Math.rpp` und die vier neuen Tests auf beiden Seiten dasselbe.
 
 **Ausbau: Text-Hilfen (23.11.2026).** `rppc/std/rpp/text/Text.rpp` ergänzt `rpp.text` um statische Methoden auf `string` (Standardbibliothek, Abschnitt 13, R-13.30): `lines`, `removePrefix`, `removeSuffix`, `repeat` und `splitLimit`. Das Paket ist **reiner R++-Quelltext ohne eingebaute Teile** und ohne jede Änderung am Rust-Code – es setzt nur auf vorhandenen String-Methoden (R-13.13), `StringBuilder` und `string::join` auf (V-13.9, V-13.10, Muster `Fmt`).
 
@@ -361,7 +361,7 @@ Die Soll-Ausgaben sind mit einer unabhängigen Python-Referenz berechnet (u. a. 
 | `repeat` | `StringBuilder`; `n < 0` ist ein `FailError` |
 | `splitLimit` | `split` und `string::join` für den ungeteilten Rest im letzten Teil; `limit < 1` oder leerer Trenner ist ein `FailError` |
 
-Neue Tests: `a09_text`, `l28_text_lines`, `l29_text_hilfen`, `l30_text_split_limit`, `l31_text_repeat_fehler`, `l32_text_split_limit_fehler`. String-Ergebnisse sind in den Tests in `[…]` gekapselt, damit leere Strings eindeutig prüfbar sind. `rppc test ..`: alle 286 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Text.rpp` und die sechs neuen Tests auf beiden Seiten dasselbe.
+Neue Tests: `a09_text`, `l28_text_lines`, `l29_text_hilfen`, `l30_text_split_limit`, `l31_text_repeat_fehler`, `l32_text_split_limit_fehler`. String-Ergebnisse sind in den Tests in `[…]` gekapselt, damit leere Strings eindeutig prüfbar sind. `rppc test ..`: alle 286 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus. Gegenprobe mit dem Compiler in R++: `diagnose` meldet für `Text.rpp` und die sechs neuen Tests auf beiden Seiten dasselbe.
 
 **Ausbau: Datei-Operationen (23.11.2026).** `File` (in `rppc/std/rpp/io/Io.rpp`) erhält fünf weitere statische Methoden (Standardbibliothek, Abschnitt 14, R-13.31): `appendText`, `copyFile`, `moveFile`, `delete`, `size`. Sie sind eingebaut (`fail("eingebaut")`, Dispatch in `stdlib.rs`), weil sie Dateisystemzugriff brauchen – wie schon `File`/`Dir`. Als R++-Klasse behandeln beide Compiler die Signaturen gleich (keine M6-Divergenz, V-13.10).
 
@@ -372,7 +372,7 @@ Neue Tests: `a09_text`, `l28_text_lines`, `l29_text_hilfen`, `l30_text_split_lim
 | `moveFile` | `std::fs::rename`; schlägt das fehl, weil das Ziel existiert (Windows), wird es entfernt und erneut umbenannt – so ersetzen beide Plattformen ein vorhandenes Ziel gleich |
 | `delete` / `size` | `remove_file` bzw. `metadata().len()`; `IOException`, wenn die Datei fehlt |
 
-`copy` ist ein Schlüsselwort (Kapitel 7), deshalb `copyFile`/`moveFile`. Neue Tests: `a10_io`, `l33_io_datei_ops` (alle Operationen im frischen Arbeitsverzeichnis, V-14.3), `l34_io_fehler` (`IOException` bei fehlender Datei). `rppc test ..`: alle 289 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `pruefe` meldet für `Io.rpp` und die drei neuen Tests auf beiden Seiten dasselbe. Offen bleiben gepuffertes Lesen und Mtime (letzteres braucht `rpp.time`, Phase B).
+`copy` ist ein Schlüsselwort (Kapitel 7), deshalb `copyFile`/`moveFile`. Neue Tests: `a10_io`, `l33_io_datei_ops` (alle Operationen im frischen Arbeitsverzeichnis, V-14.3), `l34_io_fehler` (`IOException` bei fehlender Datei). `rppc test ..`: alle 289 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `diagnose` meldet für `Io.rpp` und die drei neuen Tests auf beiden Seiten dasselbe. Offen bleiben gepuffertes Lesen und Mtime (letzteres braucht `rpp.time`, Phase B).
 
 **Merge des Bibliotheksausbaus und C-Laufzeit nachgezogen (23.11.2026).** Der Ausbau der Standardbibliothek (oben, Zweig `temp_merge`) ist mit M6 zusammengeführt; die neuen Teile verwenden `mut` statt `&`. V-13.9 war doppelt vergeben, die Regel zum Text von `IOException` heißt jetzt V-13.12. Die C-Laufzeit (`rpp_rt.c`) kennt jetzt alle neuen eingebauten Teile wie `stdlib.rs`:
 
@@ -388,17 +388,17 @@ Im Codegenerator: `for` über `Iterable` nimmt bei einer Methode ohne Rumpf (`th
 
 Beim Erzeugen von C (Prüfung mit den Rümpfen der Standardbibliothek) fielen zwei Fehler im neuen Bibliothekscode auf, die `rppc` nicht meldet, weil es die Rümpfe der Standardbibliothek nicht prüft: `Random.mix` wies seinem Parameter zu (R-8.19), `Deque.front`/`back` gaben `null` bzw. einen Borrow zurück, der nicht von `this` ausgeht (R-5.23). Beide sind behoben; die Ausgaben bleiben gleich.
 
-Stand: `rppc test ..` 291 bestanden; `vergleich_c.py --fr 200` 278 gleich, 0 verschieden; Fixpunkt der Selbstübersetzung (Runde 1 bis 3 Byte für Byte gleich, gut 10 s je Runde); `vergleich.py --exe` 581/1176/1154/670/540/822 gleich (tokens, pre, ast, projekt, defs, pruefe), 0 verschieden.
+Stand: `rppc test ..` 291 bestanden; `vergleich_c.py --fr 200` 278 gleich, 0 verschieden; Fixpunkt der Selbstübersetzung (Runde 1 bis 3 Byte für Byte gleich, gut 10 s je Runde); `vergleich.py --exe` 581/1176/1154/670/540/822 gleich (tokens, pre, ast, project, defs, diagnose), 0 verschieden.
 
 **M7 begonnen: Ausbau des C-Codegenerators (24.11.2026).** Entschieden (24.11.2026): Der Releasemodus nach R-12.1 entsteht durch Ausbau des C-Codegenerators aus M6, nicht über eine eigene Zwischendarstellung oder LLVM. Der Generator bleibt gegen den Interpreter geprüft (`vergleich_c.py`), der Fixpunkt der Selbstübersetzung muss nach jedem Schritt halten. Ein Zielwert für M7 ist noch festzulegen.
 
-Ausgangsstand (gemessen wie in M6, MSVC `/O2`): `pruefe rpp-compiler` 9,6 s, Selbstübersetzung 10,2 s; `rppc pruefe` (Rust, Release) 0,54 s. Das Profil zeigte 32 % in einer einzigen Binärsuche (`IdSet.lowerBound` in `Flow.rpp`) und 11 % in `rt_deep_copy`.
+Ausgangsstand (gemessen wie in M6, MSVC `/O2`): `diagnose rpp-compiler` 9,6 s, Selbstübersetzung 10,2 s; `rppc diagnose` (Rust, Release) 0,54 s. Das Profil zeigte 32 % in einer einzigen Binärsuche (`IdSet.lowerBound` in `Flow.rpp`) und 11 % in `rt_deep_copy`.
 
-| Schritt | Umsetzung | `pruefe rpp-compiler` | Selbstübersetzung |
+| Schritt | Umsetzung | `diagnose rpp-compiler` | Selbstübersetzung |
 |---|---|---|---|
 | Ausgangsstand | – | 9,6 s | 10,2 s |
 | native Grundwerte | Reine Ausdrücke über `i8`–`i64`, `char` und `bool` (Literale, lokale Variablen, Felder und Feldketten ohne Sperre, Index, `length`, Operatoren; keine Aufrufe) wertet der Generator direkt in C als `int64_t` aus (`CGen.rpp`, Abschnitt „Native Grundwerte“). Schritte, die scheitern können (Überlauf, Division, Index), stehen als eigene Anweisungen in der Reihenfolge des Interpreters; ihr schneller Fall steht inline in `rpp_rt.h` (`rn_…`), alles andere geht über die bisherigen rv-Pfade und verhält sich damit gleich (Meldungen, Releasemodus). Bedingungen, Zuweisungen, Verbundzuweisungen, `++`/`--`, `return` und Deklarationen mit nativem Wert brauchen keine Marke für Zwischenwerte; Blöcke und Verzweigungen ebenso nicht. | 5,4 s | 6,0 s |
-| Kopie von Vektoren | `rt_deep_copy` kopiert Grundwerte, Enums ohne Daten und Strings ohne Aufruf je Element (838 000 Kopien mit 89 Mio. Elementen je `pruefe`) | 4,5 s | |
+| Kopie von Vektoren | `rt_deep_copy` kopiert Grundwerte, Enums ohne Daten und Strings ohne Aufruf je Element (838 000 Kopien mit 89 Mio. Elementen je `diagnose`) | 4,5 s | |
 | Ziele und Variablen | `Checker.rpp` hält den Typ lokaler Grundwert-Ziele fest (native Zuweisung); Grundwert-Variablen werden am Bereichsende nicht freigegeben; `return;`, `break`, `continue` ohne Marke; langsame Fälle der `rn_…` als eigene Funktionen | 3,9 s | 4,4 s |
 | Grundwert-Variablen | Lokale Variablen und Parameter vom Typ `i8`–`i64`, `char`, `bool` werden C-Variablen (`int64_t x…`) statt Werte mit Art im Feld `V`. Ausgenommen sind Namen, die ein Lambda erfasst, die `take`/`replace` als Ort brauchen oder die Ziel einer Tupelzuweisung sind (`scanNoNat`); andere Schreibwege (Zuweisung eines nicht nativen Werts, Verbundzuweisung, `++`/`--` als Ausdruck) schreiben die C-Variable direkt. Gelesen als Wert entsteht `rn_box`. | 3,8 s | 4,4 s |
 | Speicherverwalter | `xmalloc`/`xrealloc`/`xfree` in `rpp_rt.c`: Blöcke bis 1024 Byte aus Freilisten je Größenklasse (16 Byte), gespeist aus Stücken von 1 MiB; größere über malloc. Der Heap der C-Bibliothek fiel im Profil von 13 % auf unter 1 %. | 3,6 s | 4,1 s |
@@ -409,6 +409,6 @@ Ausgangsstand (gemessen wie in M6, MSVC `/O2`): `pruefe rpp-compiler` 9,6 s, Sel
 
 Prüfung des Generators: Mit `RPP_NATCHECK` (C-Makro) prüft jeder native Lesezugriff, dass der Wert die erwartete Art hat; damit laufen der übersetzte Compiler selbst und `vergleich_c.py --cflags -DRPP_NATCHECK`. `vergleich_c.py` kann mit `--exe` den übersetzten Compiler statt des Interpreters zum Erzeugen nehmen.
 
-Stand (nach Grundwert-Variablen und Speicherverwalter): Fixpunkt der Selbstübersetzung (Runde 2 und 3 Byte für Byte gleich, auch mit `RPP_NATCHECK`); `vergleich_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 290 gleich, 0 verschieden; `vergleich.py --exe` 591/1196/1174/690/550/832 gleich (tokens, pre, ast, projekt, defs, pruefe), 0 verschieden; die Laufzeit übersetzt auch mit gcc.
+Stand (nach Grundwert-Variablen und Speicherverwalter): Fixpunkt der Selbstübersetzung (Runde 2 und 3 Byte für Byte gleich, auch mit `RPP_NATCHECK`); `vergleich_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 290 gleich, 0 verschieden; `vergleich.py --exe` 591/1196/1174/690/550/832 gleich (tokens, pre, ast, project, defs, diagnose), 0 verschieden; die Laufzeit übersetzt auch mit gcc.
 
 Verbleibendes Profil (nach dem Speicherverwalter): rund 66 % im erzeugten Code, verteilt auf viele kleine Methoden (Rahmen je Aufruf, Argumente als Feld von Werten, Zwischenwerte mit Art), gut 30 % Laufzeit, davon etwa 15 % Freigabe und Übergabe (`rt_promote_slow`, `rt_drop_slow`, `destruct`, `rt_temp`, `rt_transfer_var`, `share`). Nach der Übergabe nach dem statischen Wissen (Profil mit Aufrufern, `RPP_PROFILE`): Die teuersten Laufzeitanteile sind Programmarbeit des Compilers, etwa `rt_deep_copy` aus `IdMap.dup` (Kopie von `string[]`), Zähler der Strings in `IdMap.put` und `destruct` beim Freigeben der Flussstände. Nächste Kandidaten: direkte Aufrufe eingebauter Methoden statt Namensvergleich (`rt_builtin_method` mit dem Namen als Zeichenkette), `rt_temp` nach Rechnungen, deren Ergebnis statisch kein String ist.

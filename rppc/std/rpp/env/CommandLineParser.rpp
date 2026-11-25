@@ -32,10 +32,10 @@ public:
     }
 
     string helpText() {
-        string usage = "Aufruf: " + command;
+        string usage = "Usage: " + command;
         for (string option : options) { usage += " [" + option + "]"; }
         for (string name : arguments) { usage += " " + name; }
-        string help = usage + "\n" + description + "\n  -h, --help  Hilfe anzeigen";
+        string help = usage + "\n" + description + "\n  -h, --help  Show this help";
         for (i64 i = 0; i < options.length; i++) {
             help += "\n  " + options[i] + "  " + optionHelp[i];
         }
@@ -53,19 +53,19 @@ public:
                 return result;
             } else if (readOptions && arg.length > 1 && arg.startsWith("-")) {
                 if (!options.contains(arg)) {
-                    result.error = command + ": unbekannte Option " + arg;
+                    result.error = command + ": unknown option " + arg;
                     return result;
                 }
                 result.flags.push(arg);
             } else if (result.positional.length == arguments.length) {
-                result.error = command + ": unerwartetes Argument " + arg;
+                result.error = command + ": unexpected argument " + arg;
                 return result;
             } else {
                 result.positional.push(arg);
             }
         }
         if (result.positional.length < arguments.length) {
-            result.error = command + ": " + arguments[result.positional.length] + " fehlt";
+            result.error = command + ": missing argument " + arguments[result.positional.length];
         }
         return result;
     }

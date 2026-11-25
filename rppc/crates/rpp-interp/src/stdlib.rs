@@ -66,12 +66,12 @@ impl Interp {
         match method {
             "length" => Ok(Value::I64(text.chars().count() as i64)),
             "charAt" => index(0).and_then(|i| text.chars().nth(i)).map(Value::Char)
-                .ok_or_else(|| self.fatal("IndexError", "Index außerhalb der StringView")),
+                .ok_or_else(|| self.fatal("IndexError", "Index is outside the StringView")),
             "slice" => {
                 let boundary = |i| text.char_indices().map(|(b, _)| b).chain(std::iter::once(text.len())).nth(i);
                 match (index(0).and_then(boundary), index(1).and_then(boundary)) {
                     (Some(a), Some(b)) if a <= b => Ok(view(self, a, b - a)),
-                    _ => Err(self.fatal("IndexError", "Bereich außerhalb der StringView")),
+                    _ => Err(self.fatal("IndexError", "Range is outside the StringView")),
                 }
             }
             "trim" | "trimEnd" => {
@@ -236,7 +236,7 @@ impl Interp {
             "rpp.io.File.open" => {
                 let path = text(&args, 0);
                 if !std::path::Path::new(&path).is_file() {
-                    return self.io_error(format!("Datei nicht gefunden: {path}"), &path);
+                    return self.io_error(format!("File not found: {path}"), &path);
                 }
                 let d = m.owner;
                 let f = self.raw_object(d, vec![str_value(&path)]);
@@ -557,7 +557,7 @@ impl Interp {
                     "at" if !m.mut_this && m.params.first().is_some_and(|p| matches!(p.ty, Ty::Prim(P::I64))) => {
                         let i = int(&args, 0);
                         if i < 0 || i as usize >= len {
-                            return Err(self.fatal("IndexError", format!("Cursor {i} außerhalb von 0..{len}")));
+                            return Err(self.fatal("IndexError", format!("Cursor {i} is outside 0..{len}")));
                         }
                         Ok(if map { o.slots.borrow()[i as usize].view() } else { Self::key_at(&o, i as usize, false) })
                     }
@@ -592,7 +592,7 @@ impl Interp {
                                 Ok(e.map(|e| e.slots.borrow()[1].view()).unwrap_or(Value::Null))
                             }
                             None if method == "get" => Ok(Value::Null),
-                            None => Err(self.fatal("IndexError", "der Schlüssel fehlt in der Map")),
+                            None => Err(self.fatal("IndexError", "The key is missing from the map")),
                         }
                     }
                     "put" => {

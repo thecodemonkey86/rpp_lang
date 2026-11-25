@@ -101,7 +101,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Char(s) => write!(f, "''{s}''"),
             TokenKind::Punct(p) => write!(f, "'{}'", p.as_str()),
             TokenKind::Error(s) => write!(f, "{s}"),
-            TokenKind::Eof => write!(f, "Dateiende"),
+            TokenKind::Eof => write!(f, "end of file"),
         }
     }
 }
@@ -189,7 +189,7 @@ impl Lexer<'_> {
                         match self.peek(0) {
                             None => {
                                 tokens.push(Token {
-                                    kind: TokenKind::Error("Kommentar ohne '*/'".into()),
+                                    kind: TokenKind::Error("unterminated block comment".into()),
                                     span,
                                 });
                                 return;
@@ -265,7 +265,7 @@ impl Lexer<'_> {
             }
         }
         self.bump();
-        TokenKind::Error(format!("unerwartetes Zeichen '{c}'"))
+        TokenKind::Error(format!("unexpected character '{c}'"))
     }
 
     fn number(&mut self) -> TokenKind {
@@ -318,8 +318,8 @@ impl Lexer<'_> {
                 }
                 _ => {
                     self.bump();
-                    let what = if many { "String" } else { "Zeichen" };
-                    return TokenKind::Error(format!("ungültiges {what}-Literal"));
+                    let what = if many { "string" } else { "character" };
+                    return TokenKind::Error(format!("invalid {what} literal"));
                 }
             }
         }

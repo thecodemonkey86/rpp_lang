@@ -17,7 +17,7 @@ pub struct DirectiveError {
 
 impl fmt::Display for DirectiveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Zeile {}: {}", self.line, self.message)
+        write!(f, "Line {}: {}", self.line, self.message)
     }
 }
 
@@ -81,7 +81,7 @@ fn tokenize(text: &str, line: u32) -> Result<Vec<CondToken>, DirectiveError> {
             }
             tokens.push(CondToken::Symbol(chars[start..i].iter().collect()));
         } else {
-            return err(line, format!("ungültige Bedingung {:?}", text.trim_end()));
+            return err(line, format!("invalid condition {:?}", text.trim_end()));
         }
     }
     Ok(tokens)
@@ -91,12 +91,12 @@ fn tokenize(text: &str, line: u32) -> Result<Vec<CondToken>, DirectiveError> {
 pub fn evaluate(text: &str, symbols: &HashSet<String>, line: u32) -> Result<bool, DirectiveError> {
     let tokens = tokenize(text, line)?;
     if tokens.is_empty() {
-        return err(line, "Bedingung fehlt");
+        return err(line, "missing condition");
     }
     let mut eval = Eval { tokens: &tokens, pos: 0, symbols, line };
     let value = eval.or_expr()?;
     if eval.pos != tokens.len() {
-        return err(line, format!("unerwartetes {}", tokens[eval.pos]));
+        return err(line, format!("unexpected {}", tokens[eval.pos]));
     }
     Ok(value)
 }
@@ -143,12 +143,12 @@ impl Eval<'_> {
                 let close = self.peek().cloned();
                 self.pos += 1;
                 if close != Some(CondToken::Close) {
-                    return err(self.line, "')' fehlt");
+                    return err(self.line, "missing ')'");
                 }
                 Ok(value)
             }
             Some(CondToken::Symbol(s)) => Ok(self.symbols.contains(&s)),
-            _ => err(self.line, "Symbol erwartet"),
+            _ => err(self.line, "expected a symbol"),
         }
     }
 }
@@ -194,7 +194,7 @@ pub fn preprocess(source: &str, symbols: &HashSet<String>) -> Result<String, Dir
             }
             "elif" => {
                 if stack.last().map_or(true, |l| l.seen_else) {
-                    return err(number, "#elif ohne passendes #if");
+                    return err(number, "#elif without a matching #if");
                 }
                 let value = evaluate(rest, symbols, number)?;
                 let level = stack.last_mut().unwrap();
@@ -203,7 +203,7 @@ pub fn preprocess(source: &str, symbols: &HashSet<String>) -> Result<String, Dir
             }
             "else" => {
                 if stack.last().map_or(true, |l| l.seen_else) || !rest.is_empty() {
-                    return err(number, "#else ohne passendes #if");
+                    return err(number, "#else without a matching #if");
                 }
                 let level = stack.last_mut().unwrap();
                 level.active = level.outer && !level.taken;
@@ -212,19 +212,19 @@ pub fn preprocess(source: &str, symbols: &HashSet<String>) -> Result<String, Dir
             }
             "endif" => {
                 if stack.is_empty() || !rest.is_empty() {
-                    return err(number, "#endif ohne passendes #if");
+                    return err(number, "#endif without a matching #if");
                 }
                 stack.pop();
             }
             _ => {
                 let shown = if name_len > 0 { directive } else { &stripped[1..] };
-                return err(number, format!("unbekannte Direktive #{shown}"));
+                return err(number, format!("unknown directive #{shown}"));
             }
         }
         out.push("");
     }
     if let Some(level) = stack.last() {
-        return err(level.line, "#if ohne #endif");
+        return err(level.line, "#if without #endif");
     }
     Ok(out.join("\n"))
 }

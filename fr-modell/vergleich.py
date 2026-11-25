@@ -1,14 +1,14 @@
 """Vergleich des FR++-Modells mit der ersten Implementierung rppc (Meilenstein M3).
 
-Aufruf (aus diesem Verzeichnis):  py -X utf8 vergleich.py [Anzahl] [--start N] [-v] [--ausfuehren]
-                                   py -X utf8 vergleich.py 300 --abschwaechen loans
+Aufruf (aus diesem Verzeichnis):  py -X utf8 vergleich.py [COUNT] [--start N] [-v] [--run]
+                                   py -X utf8 vergleich.py 300 --disable-rule loans
 
-Mit --ausfuehren werden Programme, die beide annehmen, auch ausgeführt: Das Modell
+Mit --run werden Programme, die beide annehmen, auch ausgeführt: Das Modell
 (frpp/interp.py) und `rppc run` müssen dieselbe Ausgabe liefern (einschließlich der
 Destruktoren) bzw. beide mit BorrowError enden (V-1). Programme, bei denen das Modell
 sein Schrittbudget erschöpft, werden nicht ausgeführt.
 
-Mit --abschwaechen prüft das Modell ohne eine Regel (wie in fuzz.py); dann müssen
+Mit --disable-rule prüft das Modell ohne eine Regel (wie in fuzz.py); dann müssen
 Abweichungen auftreten. Das zeigt, dass der Vergleich die Regel erreicht.
 
 Jedes FR++-Programm wird nach Kapitel 5, Abschnitt 7 in R++ übersetzt
@@ -16,8 +16,8 @@ Jedes FR++-Programm wird nach Kapitel 5, Abschnitt 7 in R++ übersetzt
 oder abgelehnt. Bei `move x` für int-, weak- und shared-Variablen wird die
 Normalform verglichen: An der Oberfläche ist das eine Kopie, deshalb steht auch im
 FR++-Programm `copy x` (siehe frpp/to_rpp.py). Geprüft werden die handgeschriebenen Programme in tests/ und
-Zufallsprogramme aus frpp/gen.py. Programme mit Konstrukten ohne Entsprechung an
-der Oberfläche zählen als „nicht übersetzbar“. Abweichungen werden mit beiden
+Random programs aus frpp/gen.py. Programme mit Konstrukten ohne Entsprechung an
+der Oberfläche zählen als „not translatable“. Abweichungen werden mit beiden
 Texten in vergleich-befunde/ abgelegt.
 """
 
@@ -56,9 +56,9 @@ def fr_run(prog):
 def rpp_run(work):
     f = work / "prog.rpp"
     try:
-        r = subprocess.run([str(RPPC), "run", "--pruefen", str(f)], capture_output=True, text=True, encoding="utf-8", timeout=20, input="")
+        r = subprocess.run([str(RPPC), "run", "--check-invariants", str(f)], capture_output=True, text=True, encoding="utf-8", timeout=20, input="")
     except subprocess.TimeoutExpired:
-        return ("Zeitüberschreitung", None)
+        return ("Timed out", None)
     if r.returncode == 2 and "BorrowError" in r.stderr:
         return ("BorrowError", None)
     if r.returncode != 0:
@@ -83,7 +83,7 @@ def rpp_verdict(text, work):
     f = work / "prog.rpp"
     f.write_text(text, encoding="utf-8")
     r = subprocess.run([str(RPPC), "check", str(f)], capture_output=True, text=True, encoding="utf-8")
-    errors = [l for l in r.stdout.splitlines() if ": Fehler [" in l]
+    errors = [l for l in r.stdout.splitlines() if ": Error [" in l]
     return r.returncode == 0, errors
 
 
@@ -93,8 +93,8 @@ def compare(name, prog, work, findings, verbose):
         text, normalized = translate(prog)
     except Untranslatable as exc:
         if verbose:
-            print(f"  –      {name}: nicht übersetzbar ({exc})")
-        return "nicht übersetzbar", fr_verdict(prog)[0]
+            print(f"  –      {name}: not translatable ({exc})")
+        return "not translatable", fr_verdict(prog)[0]
     # geprüft wird die Normalform (move eines int-, weak- oder shared-Werts als copy)
     fr_ok, fr_rule = fr_verdict(prog)
     rpp_ok, errors = rpp_verdict(text, work)
@@ -104,19 +104,19 @@ def compare(name, prog, work, findings, verbose):
             if want is not None:
                 got = rpp_run(work)
                 if got != want:
-                    print(f"  LAUFZEIT {name}: Modell {want[0]} {' '.join(want[1] or [])} – rppc {got[0]} {' '.join(got[1] or [])}")
+                    print(f"  RUNTIME MISMATCH {name}: model {want[0]} {' '.join(want[1] or [])} – rppc {got[0]} {' '.join(got[1] or [])}")
                     if findings is not None:
                         findings.mkdir(exist_ok=True)
                         stem = name.replace("/", "_").replace(".fr", "")
                         (findings / f"{stem}.fr").write_text(A.program_str(prog), encoding="utf-8")
                         (findings / f"{stem}.rpp").write_text(text, encoding="utf-8")
-                    return "Laufzeit verschieden", fr_ok
-                return "gleich (ausgeführt)", fr_ok
+                    return "runtime mismatch", fr_ok
+                return "matched (executed)", fr_ok
         if verbose:
-            print(f"  ok     {name}: {'angenommen' if fr_ok else 'abgelehnt (' + fr_rule + ')'}")
-        return "gleich", fr_ok
-    kind = "nur rppc lehnt ab" if fr_ok else "nur FR++ lehnt ab"
-    print(f"  ABWEICHUNG {name}: {kind} {fr_rule}")
+            print(f"  ok     {name}: {'accepted' if fr_ok else 'rejected (' + fr_rule + ')'}")
+        return "matched", fr_ok
+    kind = "only rppc rejected" if fr_ok else "only FR++ rejected"
+    print(f"  MISMATCH {name}: {kind} {fr_rule}")
     for e in errors[:3]:
         print(f"         {e.split(': ', 1)[-1]}")
     if findings is not None:
@@ -128,51 +128,56 @@ def compare(name, prog, work, findings, verbose):
 
 
 def main():
+    from fuzz import ABSCHWAECHUNGEN, canonical_rule_name
+
     ap = argparse.ArgumentParser()
     ap.add_argument("count", nargs="?", type=int, default=500)
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("-v", action="store_true")
-    ap.add_argument("--ausfuehren", action="store_true", help="angenommene Programme auch ausführen und die Ausgaben vergleichen")
-    ap.add_argument("--abschwaechen", help="Gegenprobe: FR++-Prüfer ohne diese Regel (siehe fuzz.py)")
+    ap.add_argument("--run", action="store_true", help="Run accepted programs and compare their output.")
+    ap.add_argument("--ausfuehren", dest="run", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--disable-rule", type=canonical_rule_name, choices=sorted(ABSCHWAECHUNGEN),
+                    help="Run the FR++ checker with this rule disabled.")
+    ap.add_argument("--abschwaechen", dest="disable_rule", type=canonical_rule_name,
+                    choices=sorted(ABSCHWAECHUNGEN), help=argparse.SUPPRESS)
     a = ap.parse_args()
     global AUSFUEHREN
-    AUSFUEHREN = a.ausfuehren
-    if a.abschwaechen:
-        from fuzz import ABSCHWAECHUNGEN
+    AUSFUEHREN = a.run
+    if a.disable_rule:
         global CHECKER
-        CHECKER = ABSCHWAECHUNGEN[a.abschwaechen]
+        CHECKER = ABSCHWAECHUNGEN[a.disable_rule]
     if not RPPC.exists():
-        sys.exit(f"{RPPC} fehlt; zuerst in rppc/ cargo build ausführen")
-    findings = None if a.abschwaechen else ROOT / "vergleich-befunde"
-    stats = {"Testprogramme": Counter(), "Zufallsprogramme": Counter()}
+        sys.exit(f"{RPPC} was not found. Run cargo build in rppc/ first.")
+    findings = None if a.disable_rule else ROOT / "vergleich-befunde"
+    stats = {"Test programs": Counter(), "Random programs": Counter()}
     with tempfile.TemporaryDirectory() as tmp:
         work = pathlib.Path(tmp)
-        print("Handgeschriebene Programme (tests/):")
+        print("Handwritten programs (tests/):")
         for path in sorted((ROOT / "tests").glob("*/*.fr")):
             try:
                 prog = parse(path.read_text(encoding="utf-8"))
             except ParseError:
                 continue
             res, fr_ok = compare(f"{path.parent.name}/{path.name}", prog, work, findings, a.v)
-            stats["Testprogramme"][(res, fr_ok)] += 1
-        print(f"Zufallsprogramme (Seeds {a.start} bis {a.start + a.count - 1}):")
+            stats["Test programs"][(res, fr_ok)] += 1
+        print(f"Random programs (seeds {a.start} to {a.start + a.count - 1}):")
         for seed in range(a.start, a.start + a.count):
             res, fr_ok = compare(f"seed{seed}", generate(seed), work, findings, a.v)
-            stats["Zufallsprogramme"][(res, fr_ok)] += 1
+            stats["Random programs"][(res, fr_ok)] += 1
     print()
-    print(f"{'':18} {'gleich (ang./abg.)':>20} {'nur rppc lehnt ab':>18} {'nur FR++ lehnt ab':>18} {'nicht übersetzbar':>18}")
+    print(f"{'':18} {'matched (ok/rejected)':>20} {'only rppc rejected':>18} {'only FR++ rejected':>18} {'not translatable':>18}")
     bad = 0
     for k, c in stats.items():
-        ran = c[("gleich (ausgeführt)", True)]
-        same = f"{c[('gleich', True)] + ran} / {c[('gleich', False)]}"
-        r1 = c[("nur rppc lehnt ab", True)]
-        r2 = c[("nur FR++ lehnt ab", False)]
-        nu = c[("nicht übersetzbar", True)] + c[("nicht übersetzbar", False)]
-        rt = c[("Laufzeit verschieden", True)]
+        ran = c[("matched (executed)", True)]
+        same = f"{c[('matched', True)] + ran} / {c[('matched', False)]}"
+        r1 = c[("only rppc rejected", True)]
+        r2 = c[("only FR++ rejected", False)]
+        nu = c[("not translatable", True)] + c[("not translatable", False)]
+        rt = c[("runtime mismatch", True)]
         bad += r1 + r2 + rt
         print(f"{k:18} {same:>20} {r1:>18} {r2:>18} {nu:>18}")
         if AUSFUEHREN:
-            print(f"{'':18} ausgeführt und gleich: {ran}, verschieden: {rt}")
+            print(f"{'':18} executed and matched: {ran}, mismatched: {rt}")
     sys.exit(1 if bad else 0)
 
 

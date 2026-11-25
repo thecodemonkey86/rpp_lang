@@ -104,7 +104,7 @@ pub fn parse(text: &str) -> Result<Node, YamlError> {
     let mut pos = 0;
     let node = block(&lines, &mut pos, 0)?;
     if pos < lines.len() {
-        return Err(YamlError { line: lines[pos].number, message: "unerwartete Einrückung".into() });
+        return Err(YamlError { line: lines[pos].number, message: "Unexpected indentation".into() });
     }
     Ok(node.unwrap_or(Node { value: Value::Map(Vec::new()), line: 1 }))
 }
@@ -137,7 +137,7 @@ fn block(lines: &[Line], pos: &mut usize, indent: usize) -> Result<Option<Node>,
                         break;
                     }
                     let Some((k2, v2)) = split_key(&n.text) else {
-                        return Err(YamlError { line: n.number, message: "Schlüssel erwartet".into() });
+                        return Err(YamlError { line: n.number, message: "Expected a key".into() });
                     };
                     let nl = n.number;
                     *pos += 1;
@@ -154,12 +154,12 @@ fn block(lines: &[Line], pos: &mut usize, indent: usize) -> Result<Option<Node>,
     while let Some(l) = lines.get(*pos) {
         if l.indent != indent {
             if l.indent > indent {
-                return Err(YamlError { line: l.number, message: "unerwartete Einrückung".into() });
+                return Err(YamlError { line: l.number, message: "Unexpected indentation".into() });
             }
             break;
         }
         let Some((k, v)) = split_key(&l.text) else {
-            return Err(YamlError { line: l.number, message: "Schlüssel erwartet".into() });
+            return Err(YamlError { line: l.number, message: "Expected a key".into() });
         };
         let number = l.number;
         *pos += 1;

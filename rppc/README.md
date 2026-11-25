@@ -58,19 +58,19 @@ Ein Programm ausführen (Standardeingabe wird gelesen; Argumente nach `--`):
 ```
 cargo run -- run DATEI.rpp|PROJEKTVERZEICHNIS -- eins zwei
 cargo run -- run --release DATEI.rpp
-cargo run -- run --pruefen DATEI.rpp      # Prüfmodus: Invarianten I-1, I-2, I-4, I-5 aus Kapitel 5
+cargo run -- run --check-invariants DATEI.rpp      # Prüfmodus: Invarianten I-1, I-2, I-4, I-5 aus Kapitel 5
 cargo run -- tokens DATEI.rpp              # Tokens, eine Zeile je Token (Vergleich mit rpp-compiler)
 cargo run -- pre debug,linux DATEI.rpp     # bedingte Kompilierung angewendet
 cargo run -- ast debug,linux DATEI.rpp     # Syntaxbaum in Textform (rpp-syntax/src/dump.rs)
-cargo run -- projekt std PFAD              # geladene Projekte, Dateien, Meldungen (--release vor std)
+cargo run -- project std PFAD              # geladene Projekte, Dateien, Meldungen (--release vor std)
 cargo run -- defs std PFAD                 # Deklarationstabellen und Meldungen der Deklarationsphase
-cargo run -- pruefe std PFAD               # alle Meldungen der Prüfung mit Warnungen und Begründungen
+cargo run -- diagnose std PFAD               # alle Meldungen der Prüfung mit Warnungen und Begründungen
 ```
 
 Eine Meldung nennt die verletzte Regel und, wo es hilft, die Regeln, die den Verstoß begründen:
 
 ```
-n03_zuweisung_hebt_auf.rpp:26:8: Fehler [R-6.2, R-6.11] z hat den nullbaren Typ Node? und ist hier nicht geprüft
+n03_zuweisung_hebt_auf.rpp:26:8: Error [R-6.2, R-6.11] z has nullable type Node? and has not been checked here
 ```
 
 ## Gleichwertigkeit mit der Grammatik

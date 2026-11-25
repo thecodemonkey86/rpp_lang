@@ -1,6 +1,6 @@
 """Vergleich des C-Codegenerators (rpp-compiler, Befehl `c`) mit dem Interpreter von rppc.
 
-Aufruf (aus diesem Verzeichnis):  py -X utf8 vergleich_c.py [-v] [--gcc] [--fr N] [--nur-fr] [--exe RPPCC] [--cflags "…"] [MUSTER ...]
+Aufruf (aus diesem Verzeichnis):  py -X utf8 vergleich_c.py [-v] [--gcc] [--fr N] [--only-fr] [--exe RPPCC] [--cflags "…"] [PATTERN ...]
 
 Für jeden Laufzeittest der Konformitätstests (konformitaet/*/laufzeit) und jede Datei in
 tests_c/ wird in beiden Modi (debug, release)
@@ -11,7 +11,7 @@ tests_c/ wird in beiden Modi (debug, release)
      Kopf des Tests, wie `rppc test`) und
   4. mit `rppc run [--release] PFAD` verglichen: Ausgabe, Fehlerausgabe und Exit-Code
      müssen gleich sein.
-MUSTER wählt Tests, deren Pfad das Muster enthält. Mit --fr N kommen die handgeschriebenen
+PATTERN wählt Tests, deren Pfad das Muster enthält. Mit --fr N kommen die handgeschriebenen
 FR++-Programme (fr-modell/tests) und N Zufallsprogramme aus frpp/gen.py dazu, nach R++
 übersetzt wie in fr-modell/vergleich.py; verglichen werden die, die rppc annimmt.
 Mit --exe RPPCC erzeugt der übersetzte Compiler den C-Code statt des Interpreters (schneller);
@@ -107,7 +107,7 @@ class Compiler:
             bat.write_text(f'@echo off\ncall "{VCVARS}" >nul\ncl /nologo /std:c17 /O2 /W3 {self.cflags} /c /I "{RUNTIME}" "{RUNTIME / "rpp_rt.c"}" /Fo:"{self.rt_obj}"\n', encoding="cp1252")
             p = subprocess.run(["cmd", "/c", str(bat)], capture_output=True)
             if p.returncode != 0:
-                raise SystemExit("Laufzeit lässt sich nicht übersetzen:\n" + (p.stdout + p.stderr).decode("cp1252", errors="replace"))
+                raise SystemExit("Could not compile the C runtime:\n" + (p.stdout + p.stderr).decode("cp1252", errors="replace"))
         obj = exe.with_suffix(".obj")
         bat = self.build / "cc.bat"
         bat.write_text(f'@echo off\ncall "{VCVARS}" >nul\ncl /nologo /std:c17 /O1 /W1 /wd4101 /wd4102 {self.cflags} /I "{RUNTIME}" "{c_file}" "{self.rt_obj}" /Fo:"{obj}" /Fe:"{exe}" /link /STACK:16777216\n', encoding="cp1252")
@@ -180,8 +180,9 @@ def main():
     build = pathlib.Path(tempfile.mkdtemp(prefix="rppc-c-build-"))
     comp = Compiler(use_gcc, build, cflags)
     same = diff = 0
-    todo = [] if "--nur-fr" in argv else cases(patterns)
-    if fr_count or "--nur-fr" in argv:
+    only_fr = "--only-fr" in argv or "--nur-fr" in argv
+    todo = [] if only_fr else cases(patterns)
+    if fr_count or only_fr:
         frdir = build / "fr"
         frdir.mkdir()
         todo += fr_programs(frdir, fr_count)
@@ -205,28 +206,28 @@ def main():
                 gen = subprocess.run(gen_cmd + ["c"] + flag + [str(STD), str(path.resolve()), str(c_file)], capture_output=True, timeout=3600, input=b"")
                 if gen.returncode != 0 or not c_file.exists():
                     diff += 1
-                    print(f"VERSCHIEDEN {rel} ({mode}): Erzeugen fehlgeschlagen\n{gen.stdout.decode('utf-8', 'replace')}{gen.stderr.decode('utf-8', 'replace')}")
+                    print(f"MISMATCH {rel} ({mode}): C code generation failed\n{gen.stdout.decode('utf-8', 'replace')}{gen.stderr.decode('utf-8', 'replace')}")
                     continue
                 ok, msg = comp.compile(c_file, exe)
                 if not ok:
                     diff += 1
-                    print(f"VERSCHIEDEN {rel} ({mode}): C-Übersetzung fehlgeschlagen\n{msg[:3000]}")
+                    print(f"MISMATCH {rel} ({mode}): C compilation failed\n{msg[:3000]}")
                     continue
                 got = run_in_fresh_dir([str(exe)] + args, stdin)
                 want = run_in_fresh_dir([str(RPPC), "run"] + flag + [str(path.resolve()), "--"] + args, stdin)
                 if got == want:
                     same += 1
                     if verbose:
-                        print(f"gleich {rel} ({mode})")
+                        print(f"match {rel} ({mode})")
                 else:
                     diff += 1
-                    print(f"VERSCHIEDEN {rel} ({mode})")
-                    for name, a, b in (("Ausgabe", got[0], want[0]), ("Fehlerausgabe", got[1], want[1]), ("Exit-Code", str(got[2]), str(want[2]))):
+                    print(f"MISMATCH {rel} ({mode})")
+                    for name, a, b in (("stdout", got[0], want[0]), ("stderr", got[1], want[1]), ("exit code", str(got[2]), str(want[2]))):
                         if a != b:
                             print(f"  {name}:\n    C:      {a[:600]!r}\n    rppc:   {b[:600]!r}")
     finally:
         shutil.rmtree(build, ignore_errors=True)
-    print(f"c: {same} gleich, {diff} verschieden")
+    print(f"c: {same} matched, {diff} mismatched")
     return 0 if diff == 0 else 1
 
 

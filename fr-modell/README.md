@@ -6,11 +6,11 @@ Voraussetzung: Python 3.10 oder neuer, keine weiteren Pakete. Alle Befehle laufe
 
 ```
 py -X utf8 run_tests.py                          # handgeschriebene Testprogramme
-py -X utf8 fuzz.py 2000                          # Zufallstest mit 2000 Programmen
-py -X utf8 fuzz.py 600 --abschwaechen loans      # Gegenprobe mit abgeschalteter Regel
+py -X utf8 fuzz.py 2000 --size 1.0               # Zufallstest mit 2000 Programmen
+py -X utf8 fuzz.py 600 --disable-rule loans      # Gegenprobe mit abgeschalteter Regel
 py -X utf8 vergleich.py 5000                     # Vergleich mit rppc (vorher in ../rppc cargo build)
-py -X utf8 vergleich.py 300 --abschwaechen loans # Gegenprobe: dann muss es Abweichungen geben
-py -X utf8 vergleich.py 2000 --ausfuehren        # zusätzlich Ausführung mit rppc run --pruefen vergleichen
+py -X utf8 vergleich.py 300 --disable-rule loans # Gegenprobe: dann muss es Abweichungen geben
+py -X utf8 vergleich.py 2000 --run        # zusätzlich Ausführung mit rppc run --check-invariants vergleichen
 ```
 
 ## Inhalt
@@ -72,7 +72,7 @@ Akzeptierte Programme laufen mit Invariantenprüfung nach jeder Anweisung. Ein F
 - **Abgelehnte Programme** werden trotzdem ausgeführt. Gezählt wird, wie viele davon tatsächlich in einen Fehlerzustand laufen; das zeigt, dass die Regeln echte Fehler abfangen.
 - „Budget“ heißt, das Programm hat sein Schrittbudget aufgebraucht (Endlosrekursion über zufällige Methoden). Das zählt wie Nichtterminierung und ist zulässig.
 
-Mit `--abschwaechen NAME` wird eine Regel des Typprüfers abgeschaltet. Dann müssen Verstöße auftreten; sonst erreicht der Zufallstest die Regel nicht.
+Mit `--disable-rule NAME` wird eine Regel des Typprüfers abgeschaltet. Dann müssen Verstöße auftreten; sonst erreicht der Zufallstest die Regel nicht.
 
 | Name | Abgeschaltet |
 |---|---|

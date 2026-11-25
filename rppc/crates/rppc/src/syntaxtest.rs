@@ -113,10 +113,10 @@ fn check_unit(u: &Unit) -> Vec<String> {
         }
     }
     if u.kind == "abgelehnt" && markers.len() != 1 {
-        problems.push(format!("{} Markierungen 'FEHLER' statt genau einer", markers.len()));
+        problems.push(format!("expected one 'FEHLER' marker, found {}", markers.len()));
     }
     if u.kind != "abgelehnt" && !markers.is_empty() {
-        problems.push(format!("{}er Test enthält eine Markierung 'FEHLER'", u.kind));
+        problems.push(format!("test in '{}' contains a 'FEHLER' marker", u.kind));
     }
     if u.kind == "laufzeit" {
         let head: Vec<String> = read(&u.header).lines().take(8).map(str::to_string).collect();
@@ -125,7 +125,7 @@ fn check_unit(u: &Unit) -> Vec<String> {
             l.starts_with("Erwartet: ") || l.starts_with("Erwartet (debug): ") || l.starts_with("Erwartet (release): ")
         });
         if !ok {
-            problems.push("Laufzeittest ohne Kopfzeile 'Erwartet: …'".into());
+            problems.push("runtime test is missing the 'Erwartet: …' header".into());
         }
     }
     problems
@@ -135,13 +135,13 @@ pub fn run(root: &Path) -> ExitCode {
     let grammar = root.join("rpp-grammatik").join("tests");
     let conformance = root.join("konformitaet");
     if !grammar.is_dir() {
-        eprintln!("{} nicht gefunden; WURZEL muss rpp-grammatik/ enthalten", grammar.display());
+        eprintln!("{} was not found. ROOT must contain rpp-grammatik/.", grammar.display());
         return ExitCode::from(2);
     }
     let mut failures = 0;
     let mut lines = Vec::new();
 
-    lines.push("== Positive Tests (müssen akzeptiert werden) ==".to_string());
+    lines.push("== Positive tests (must be accepted) ==".to_string());
     let pos = rpp_files(&grammar.join("pos"));
     for path in &pos {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
@@ -172,15 +172,15 @@ pub fn run(root: &Path) -> ExitCode {
             } else {
                 failures += 1;
                 match result {
-                    Err(e) => lines.push(format!("  FEHLER {label}: {e}")),
-                    Ok(_) => lines.push(format!("  FEHLER {label}: wurde akzeptiert")),
+                    Err(e) => lines.push(format!("  FAIL  {label}: {e}")),
+                    Ok(_) => lines.push(format!("  FAIL  {label}: unexpectedly accepted")),
                 }
             }
         }
     }
 
     lines.push(String::new());
-    lines.push("== Negative Tests (müssen abgelehnt werden) ==".to_string());
+    lines.push("== Negative tests (must be rejected) ==".to_string());
     let neg = rpp_files(&grammar.join("neg"));
     let defaults = rpp_syntax::preprocess::default_symbols();
     for path in &neg {
@@ -190,13 +190,13 @@ pub fn run(root: &Path) -> ExitCode {
             Err(_) => lines.push(format!("  ok    {name}")),
             Ok(_) => {
                 failures += 1;
-                lines.push(format!("  FEHLER {name}: wurde akzeptiert"));
+                lines.push(format!("  FAIL  {name}: unexpectedly accepted"));
             }
         }
     }
 
     lines.push(String::new());
-    lines.push("== Lesarten (müssen wie erwartet gelesen werden) ==".to_string());
+    lines.push("== Parse interpretations ==".to_string());
     let probes = rpp_files(&grammar.join("lesarten"));
     for path in &probes {
         let text = read(path);
@@ -205,7 +205,7 @@ pub fn run(root: &Path) -> ExitCode {
         match rpp_syntax::parse(&text, &defaults) {
             Err(e) => {
                 failures += 1;
-                lines.push(format!("  FEHLER {name}: {e}"));
+                lines.push(format!("  FAIL  {name}: {e}"));
             }
             Ok(unit) => {
                 let actual = first_statement_rule(&unit).unwrap_or("?");
@@ -213,14 +213,14 @@ pub fn run(root: &Path) -> ExitCode {
                     lines.push(format!("  ok    {name}  ->  {actual}"));
                 } else {
                     failures += 1;
-                    lines.push(format!("  FEHLER {name}: {actual} statt {expected}"));
+                    lines.push(format!("  FAIL  {name}: expected {expected}, got {actual}"));
                 }
             }
         }
     }
 
     lines.push(String::new());
-    lines.push("== Konformitätstests (nur Syntax) ==".to_string());
+    lines.push("== Conformance tests (syntax only) ==".to_string());
     let units = conformance_units(&conformance);
     for u in &units {
         let mut label = u.path.strip_prefix(&conformance).unwrap_or(&u.path).to_string_lossy().replace('\\', "/");
@@ -232,20 +232,20 @@ pub fn run(root: &Path) -> ExitCode {
             lines.push(format!("  ok    {label}"));
         } else {
             failures += 1;
-            lines.push(format!("  FEHLER {label}"));
+            lines.push(format!("  FAIL  {label}"));
             lines.extend(problems.iter().map(|p| format!("         {p}")));
         }
     }
 
     lines.push(String::new());
     lines.push(format!(
-        "Umfang: {} positive Dateien, {} negative Tests, {} Lesarten, {} Konformitätstests",
+        "Scope: {} positive files, {} negative tests, {} parse interpretations, {} conformance tests",
         pos.len(),
         neg.len(),
         probes.len(),
         units.len()
     ));
-    lines.push(format!("Ergebnis: {failures} Fehler"));
+    lines.push(format!("Result: {failures} failures"));
     println!("{}", lines.join("\n"));
     if failures == 0 {
         ExitCode::SUCCESS

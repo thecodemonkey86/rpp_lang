@@ -85,7 +85,7 @@ private:
                 advance();
                 while (true) {
                     if (!inside(0)) {
-                        return new Token(Kind::Error, "Kommentar ohne '*/'", l, k);
+                        return new Token(Kind::Error, "unterminated block comment", l, k);
                     }
                     if (at(0) == '*' && at(1) == '/') {
                         advance();
@@ -183,8 +183,8 @@ private:
                 count++;
             } else {
                 advance();
-                string what = many ? "String" : "Zeichen";
-                return new Token(Kind::Error, "ungültiges " + what + "-Literal", l, k);
+                string what = many ? "string" : "character";
+                return new Token(Kind::Error, "invalid " + what + " literal", l, k);
             }
         }
         string text = take(n + 1);
@@ -240,7 +240,7 @@ private:
             return new Token(Kind::Punct, take(len), l, k);
         }
         advance();
-        return new Token(Kind::Error, "unerwartetes Zeichen '" + c.toString() + "'", l, k);
+        return new Token(Kind::Error, "unexpected character '" + c.toString() + "'", l, k);
     }
 
 public:

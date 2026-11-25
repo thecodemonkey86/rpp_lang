@@ -4,20 +4,20 @@ Aufruf (aus diesem Verzeichnis):  py -X utf8 vergleich.py [-v] [tokens|pre ...]
 
 Verglichen werden je Teil die Ausgaben beider Seiten:
   tokens  Lexer: eine Zeile je Token (`rppc tokens DATEI` bzw. `rppcc tokens DATEI`)
-  pre     Präprozessor: Text oder "Zeile N: Meldung" (`rppc pre SYMBOLE DATEI`), mit den
+  pre     Präprozessor: Text oder "Line N: message" (`rppc pre SYMBOLE DATEI`), mit den
           Symbolsätzen debug,linux und release,windows
   ast     Parser einschließlich Präprozessor, Lexer und Prüfung R-8.12: Syntaxbaum in
           Textform oder der erste Fehler (`rppc ast SYMBOLE DATEI`), mit denselben Symbolsätzen
-  projekt Projekte laden (Kapitel 11): Projekte, Dateien mit Paketen, Meldungen
-          (`rppc projekt [--release] STD PFAD`), im Debug- und Releasemodus. Eingaben sind
+  project Projekte laden (Kapitel 11): Projekte, Dateien mit Paketen, Meldungen
+          (`rppc project [--release] STD PATH`), im Debug- und Releasemodus. Eingaben sind
           die Projektverzeichnisse und Einzeldateien der Konformitätstests, rpp-compiler
           selbst und Grenzfälle für rpp.yaml
   defs    Deklarationsphase (Typen sammeln, Namen auflösen, Membertabellen, Regeln auf Ebene
           von Dateien und Klassen): Tabellen in Textform und Meldungen (`rppc defs STD PFAD`).
-          Eingaben wie bei projekt, dazu die Grammatiktests und Grenzfälle
-  pruefe  ganze Prüfung einschließlich der Rümpfe (Typen der Ausdrücke, Null-Sicherheit,
+          Eingaben wie bei project, dazu die Grammatiktests und Grenzfälle
+  diagnose ganze Prüfung einschließlich der Rümpfe (Typen der Ausdrücke, Null-Sicherheit,
           Ownership, Flussanalyse): alle Meldungen mit Warnungen und Begründungsregeln
-          (`rppc pruefe STD PFAD`). Eingaben wie bei defs ohne rpp-compiler selbst, dazu
+          (`rppc diagnose STD PATH`). Eingaben wie bei defs ohne rpp-compiler selbst, dazu
           die nach R++ übersetzten FR++-Programme (fr-modell: tests/ und Zufallsprogramme;
           Anzahl mit --fr N, Voreinstellung 300)
 
@@ -218,9 +218,9 @@ def report(name, a, b, verbose):
         return True
     la, lb = a.splitlines(), b.splitlines()
     i = next((k for k in range(max(len(la), len(lb))) if k >= len(la) or k >= len(lb) or la[k] != lb[k]), 0)
-    print(f"  ABWEICHUNG {name}: Zeile {i + 1}")
-    print(f"         Rust: {la[i] if i < len(la) else '(Ende)'}")
-    print(f"         R++:  {lb[i] if i < len(lb) else '(Ende)'}")
+    print(f"  MISMATCH {name}: line {i + 1}")
+    print(f"         Rust: {la[i] if i < len(la) else '(<end>)'}")
+    print(f"         R++:  {lb[i] if i < len(lb) else '(<end>)'}")
     return False
 
 
@@ -240,13 +240,13 @@ def projekt(tmp, verbose):
     for name, path in inputs:
         for mode in ([], ["--release"]):
             args = [*mode, std, str(path)]
-            a, b = both("projekt", args)
+            a, b = both("project", args)
             if name == "Grenzfall unterordner_mit_projekt":
                 files = [line.split(" projekt=", 1)[0] for line in b.splitlines()
                          if line.startswith("datei ") and " projekt=1 " in line]
                 expected = ["datei src/a.rpp", "datei src/main.rpp", "datei src/pkg/inner/Y.rpp", "datei src/z.rpp"]
                 if files != expected:
-                    print(f"  ABWEICHUNG {name}: erwartete Quelldateien {expected}, erhalten {files}")
+                    print(f"  MISMATCH {name}: expected source files {expected}, got {files}")
                     bad += 1
                     continue
             if report(f"{name} {' '.join(mode)}".strip(), a, b, verbose):
@@ -306,7 +306,7 @@ def pruefe(tmp, verbose, fr_count):
     inputs = [(str(p.relative_to(ROOT)).replace("\\", "/"), p) for p in defs_inputs() if p != ROOT / "rpp-compiler" or EXE]
     inputs += fr_programs(tmp, fr_count)
     for name, path in inputs:
-        a, b = both("pruefe", [std, str(path)])
+        a, b = both("diagnose", [std, str(path)])
         if report(name, a, b, verbose):
             ok += 1
         else:
@@ -322,17 +322,19 @@ def main():
         EXE = str(pathlib.Path(sys.argv[sys.argv.index("--exe") + 1]).resolve())
     if "--fr" in sys.argv:
         fr_count = int(sys.argv[sys.argv.index("--fr") + 1])
-    alle = ["tokens", "pre", "ast", "projekt", "defs", "pruefe"]
-    parts = [a for a in sys.argv[1:] if a in alle] or alle
+    alle = ["tokens", "pre", "ast", "project", "defs", "diagnose"]
+    aliases = {"projekt": "project", "pruefe": "diagnose"}
+    requested = [aliases.get(arg, arg) for arg in sys.argv[1:]]
+    parts = [part for part in requested if part in alle] or alle
     if not RPPC.exists():
-        sys.exit(f"{RPPC} fehlt; zuerst in rppc/ cargo build ausführen")
+        sys.exit(f"{RPPC} was not found. Run cargo build in rppc/ first.")
     total = {}
     with tempfile.TemporaryDirectory() as tmp:
         cases = {"tokens": LEXER_FAELLE, "pre": PRE_FAELLE, "ast": AST_FAELLE}
         for part in parts:
             ok = bad = 0
             print(f"{part}:")
-            if part == "projekt":
+            if part == "project":
                 ok, bad = projekt(pathlib.Path(tmp), verbose)
                 total[part] = (ok, bad)
                 continue
@@ -340,7 +342,7 @@ def main():
                 ok, bad = defs(pathlib.Path(tmp), verbose)
                 total[part] = (ok, bad)
                 continue
-            if part == "pruefe":
+            if part == "diagnose":
                 ok, bad = pruefe(pathlib.Path(tmp), verbose, fr_count)
                 total[part] = (ok, bad)
                 continue
@@ -361,7 +363,7 @@ def main():
             total[part] = (ok, bad)
     print()
     for part, (ok, bad) in total.items():
-        print(f"{part:8} gleich: {ok}, verschieden: {bad}")
+        print(f"{part:8} matched: {ok}, mismatched: {bad}")
     sys.exit(1 if any(bad for _, bad in total.values()) else 0)
 
 

@@ -1,18 +1,18 @@
 """Zufallstests für die Sätze 5.1 bis 5.3 des Ownership-Kernkalküls.
 
-Aufruf:  py -X utf8 fuzz.py [Anzahl] [--abschwaechen NAME] [--start N]
+Aufruf:  py -X utf8 fuzz.py [COUNT] [--disable-rule RULE] [--start N] [--size N]
 
 Für jedes zufällige Programm:
   - Typprüfung. Abgelehnte Programme werden trotzdem ausgeführt; gezählt wird,
-    wie viele davon tatsächlich in einen Fehlerzustand laufen (zeigt, dass die
+    wie viele davon tatsächlich in einen Invalid state laufen (zeigt, dass die
     Regeln echte Fehler verhindern).
   - Angenommene Programme laufen mit Invariantenprüfung. Geprüft wird:
-      Satz 5.1  kein Fehlerzustand (Stuck) und keine verletzte Invariante
+      Satz 5.1  kein Invalid state (Stuck) und keine verletzte Invariante
       Satz 5.3  kein BorrowError, wenn nie ein Objekt geteilt wurde
       Zusatz    ohne shared bleibt am Ende kein Objekt übrig (kein Leck)
     Jeder Verstoß wird mit Programmtext in fuzz-befunde/ abgelegt.
 
-Mit --abschwaechen wird eine Regel des Typprüfers absichtlich abgeschaltet
+Mit --disable-rule wird eine Regel des Typprüfers absichtlich abgeschaltet
 (siehe ABSCHWAECHUNGEN). Dann sollen Verstöße auftreten: Das zeigt, dass die
 Regel nötig ist und der Zufallstest sie erreicht.
 """
@@ -92,11 +92,22 @@ ABSCHWAECHUNGEN = {
     "loans": OhneLoans,
     "move": OhneMoveZustand,
     "join": OhneJoin,
-    "schleife": OhneSchleifenregel,
-    "shared-ueberlappung": OhneSharedUeberlappung,
-    "schreibrecht": OhneSchreibrecht,
-    "empfaenger-loan": OhneEmpfaengerLoan,
+    "loop": OhneSchleifenregel,
+    "shared-overlap": OhneSharedUeberlappung,
+    "write-permission": OhneSchreibrecht,
+    "receiver-loan": OhneEmpfaengerLoan,
 }
+
+LEGACY_RULE_NAMES = {
+    "schleife": "loop",
+    "shared-ueberlappung": "shared-overlap",
+    "schreibrecht": "write-permission",
+    "empfaenger-loan": "receiver-loan",
+}
+
+
+def canonical_rule_name(name):
+    return LEGACY_RULE_NAMES.get(name, name)
 
 
 def run_one(seed, checker_cls, findings_dir, size):
@@ -118,22 +129,22 @@ def run_one(seed, checker_cls, findings_dir, size):
     except OutOfFuel:
         res["outcome"] = "Budget"
     except (Stuck, InvariantViolation) as exc:
-        res["outcome"] = "Fehlerzustand"
+        res["outcome"] = "Invalid state"
         res["detail"] = f"{type(exc).__name__}: {exc}"
     except RecursionError:
         res["outcome"] = "Budget"
     except Exception as exc:  # noqa: BLE001 - Fehler im Modell selbst
-        res["outcome"] = "Modellfehler"
+        res["outcome"] = "Model error"
         res["detail"] = f"{type(exc).__name__}: {exc}"
     res["stats"] = it.stats
     if res["accepted"]:
         problem = None
-        if res["outcome"] in ("Fehlerzustand", "Modellfehler"):
-            problem = "Satz 5.1: " + res["detail"]
+        if res["outcome"] in ("Invalid state", "Model error"):
+            problem = "Theorem 5.1: " + res["detail"]
         elif res["outcome"] == "BorrowError" and not it.shared_used:
-            problem = "Satz 5.3: BorrowError ohne geteiltes Objekt"
+            problem = "Theorem 5.3: BorrowError without a shared object"
         elif res["outcome"] == "ok" and not it.shared_used and it.live_objects():
-            problem = f"Leck ohne shared: {it.live_objects()}"
+            problem = f"Leak without shared: {it.live_objects()}"
         res["problem"] = problem
         if problem and findings_dir is not None:
             findings_dir.mkdir(exist_ok=True)
@@ -144,19 +155,22 @@ def run_one(seed, checker_cls, findings_dir, size):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("anzahl", type=int, nargs="?", default=2000)
+    ap.add_argument("count", type=int, nargs="?", default=2000)
     ap.add_argument("--start", type=int, default=0)
-    ap.add_argument("--groesse", type=float, default=1.0)
-    ap.add_argument("--abschwaechen", choices=sorted(ABSCHWAECHUNGEN))
+    ap.add_argument("--size", type=float, default=1.0)
+    ap.add_argument("--groesse", dest="size", type=float, help=argparse.SUPPRESS)
+    ap.add_argument("--disable-rule", type=canonical_rule_name, choices=sorted(ABSCHWAECHUNGEN))
+    ap.add_argument("--abschwaechen", dest="disable_rule", type=canonical_rule_name,
+                    choices=sorted(ABSCHWAECHUNGEN), help=argparse.SUPPRESS)
     args = ap.parse_args()
     sys.setrecursionlimit(5000)
 
-    checker_cls = ABSCHWAECHUNGEN.get(args.abschwaechen, Checker)
-    findings = None if args.abschwaechen else ROOT / "fuzz-befunde"
+    checker_cls = ABSCHWAECHUNGEN.get(args.disable_rule, Checker)
+    findings = None if args.disable_rule else ROOT / "fuzz-befunde"
     t0 = time.time()
     acc_out, rej_rule, rej_crash, problems, stats = Counter(), Counter(), Counter(), [], Counter()
-    for seed in range(args.start, args.start + args.anzahl):
-        r = run_one(seed, checker_cls, findings, args.groesse)
+    for seed in range(args.start, args.start + args.count):
+        r = run_one(seed, checker_cls, findings, args.size)
         if r["accepted"]:
             acc_out[r["outcome"]] += 1
             stats.update(r["stats"])
@@ -164,26 +178,26 @@ def main():
                 problems.append((seed, r["problem"]))
         else:
             rej_rule[r["rule"]] += 1
-            if r["outcome"] == "Fehlerzustand":
+            if r["outcome"] == "Invalid state":
                 rej_crash[r["rule"]] += 1
 
     n_acc = sum(acc_out.values())
-    print(f"Programme: {args.anzahl} (Seeds {args.start}..{args.start + args.anzahl - 1}), "
-          f"Typprüfer: {args.abschwaechen and 'ohne ' + args.abschwaechen or 'vollständig'}, "
+    print(f"Programs: {args.count} (Seeds {args.start}..{args.start + args.count - 1}), "
+          f"Type checker: {args.disable_rule and 'without ' + args.disable_rule or 'all rules enabled'}, "
           f"{time.time() - t0:.0f} s")
-    print(f"\nAngenommen: {n_acc}")
-    for k in ("ok", "BorrowError", "Budget", "Fehlerzustand", "Modellfehler"):
+    print(f"\nAccepted: {n_acc}")
+    for k in ("ok", "BorrowError", "Budget", "Invalid state", "Model error"):
         print(f"  {k:14} {acc_out[k]}")
-    print("  Abdeckung:   " + ", ".join(f"{k} {stats[k]}" for k in
+    print("  Coverage:   " + ", ".join(f"{k} {stats[k]}" for k in
                                          ("new", "free", "lock", "borrow_error", "upgrade_ok", "upgrade_fail",
                                           "borrow_call")))
-    print(f"\nAbgelehnt: {sum(rej_rule.values())}  (Regel: abgelehnt / davon zur Laufzeit im Fehlerzustand)")
+    print(f"\nRejected: {sum(rej_rule.values())}  (Rule: rejected / invalid at runtime)")
     for rule, n in sorted(rej_rule.items(), key=lambda kv: -kv[1]):
         print(f"  {rule:8} {n:6} / {rej_crash[rule]}")
-    print(f"\nVerstöße bei angenommenen Programmen: {len(problems)}")
+    print(f"\nViolations in accepted programs: {len(problems)}")
     for seed, p in problems[:15]:
         print(f"  Seed {seed}: {p}")
-    return 1 if problems and not args.abschwaechen else 0
+    return 1 if problems and not args.disable_rule else 0
 
 
 if __name__ == "__main__":
