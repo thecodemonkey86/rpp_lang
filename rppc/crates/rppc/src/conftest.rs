@@ -212,14 +212,23 @@ pub fn run(root: &Path, verbose: bool) -> ExitCode {
 }
 
 /// Prüft und führt ein Programm aus. Bei Fehlern der Prüfung: die Meldungen.
-pub fn execute(input: &Path, release: bool, check: bool, args: Vec<String>, stdin: String) -> Result<rpp_interp::Outcome, Vec<Diag>> {
+pub fn execute_stdio(input: &Path, release: bool, check: bool, args: Vec<String>) -> Result<i32, Vec<Diag>> {
+    let program = checked_program(input, release)?;
+    Ok(rpp_interp::run_stdio(program, release, check, args))
+}
+
+fn execute(input: &Path, release: bool, check: bool, args: Vec<String>, stdin: String) -> Result<rpp_interp::Outcome, Vec<Diag>> {
+    let program = checked_program(input, release)?;
+    Ok(rpp_interp::run(program, rpp_interp::Options { release, check, args, input: stdin }))
+}
+
+fn checked_program(input: &Path, release: bool) -> Result<&'static rpp_sema::defs::Program, Vec<Diag>> {
     let program = rpp_sema::analyze(input, &std_dir(), release);
     if program.diags.iter().any(|d| !d.warning) {
         return Err(program.diags);
     }
     // Das Programm lebt bis zum Ende des Prozesses; der Interpreter verweist in seinen Text.
-    let program: &'static rpp_sema::defs::Program = Box::leak(Box::new(program));
-    Ok(rpp_interp::run(program, rpp_interp::Options { release, check, args, input: stdin }))
+    Ok(Box::leak(Box::new(program)))
 }
 
 /// Erwartung eines Laufzeittests für einen Modus (R-14.5).

@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -17,6 +18,7 @@ RUNTIME = COMPILER / "runtime"
 STD = ROOT / "rppc" / "std"
 CONFORMANCE = ROOT / "konformitaet"
 ARGUMENTS = CONFORMANCE / "kap12_ausfuehrung/laufzeit/l08_argumente.rpp"
+CONSOLE = CONFORMANCE / "kap13_bibliothek/laufzeit/l04_konsole.rpp"
 DIVISION = CONFORMANCE / "kap04_typen/laufzeit/l02_division_durch_null.rpp"
 NULL_ERROR = CONFORMANCE / "kap06_null/abgelehnt/n08_ersatz_nicht_nullbar.rpp"
 JSON_RUNTIME = CONFORMANCE / "kap13_bibliothek/laufzeit"
@@ -68,6 +70,41 @@ def check_cli():
     if code != 0 or out or not re.fullmatch(timings, err):
         raise RuntimeError(f"Unexpected timing output: {(code, out, err)!r}")
     print("English help, argument errors, compiler diagnostics, and timings passed.")
+    check_live_stdio(rust[0])
+
+
+def check_live_stdio(rust):
+    pipes = {"stdin": subprocess.PIPE, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+    with subprocess.Popen([rust, "run", ARGUMENTS], cwd=ROOT, **pipes) as process:
+        try:
+            code = process.wait(timeout=15)
+            result = (code, process.stdout.read(), process.stderr.read())
+            if result != (0, b"0\n", b""):
+                raise RuntimeError(f"Unexpected result with stdin open: {result!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+
+    with ThreadPoolExecutor(1) as reader, subprocess.Popen([rust, "run", CONSOLE], cwd=ROOT, **pipes) as process:
+        try:
+            process.stdin.write(b"a\r\n\n")
+            process.stdin.flush()
+            # The program writes a response without a newline and then tries to read again.
+            expected = b"[a][]"
+            output = reader.submit(process.stdout.read, len(expected)).result(timeout=15)
+            if output != expected:
+                raise RuntimeError(f"Unexpected output before EOF: {output!r}")
+
+            process.stdin.write("Grüße".encode("utf-8"))
+            process.stdin.close()
+            code = process.wait(timeout=15)
+            result = (code, process.stdout.read(), process.stderr.read())
+            if result != (0, "[Grüße]\n".encode("utf-8"), b"fertig\n"):
+                raise RuntimeError(f"Unexpected result after EOF: {result!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+    print("Live console input, output before EOF, and redirected input passed.")
 
 
 def generate_c(driver, source, output, *, release=False, timeout=120):

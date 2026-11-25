@@ -14,10 +14,12 @@
 //! - Programmende nach R-12.9: Rückgabewert von `main`, 1 bei einer Exception, 2 bei
 //!   einem Programmfehler.
 
+mod console;
 mod stdlib;
 mod save_file;
 pub mod value;
 
+use console::Console;
 use rpp_sema::defs::{AstRef, MethodInfo, PInfo, Program, Ret};
 use rpp_sema::rt::Target;
 use rpp_sema::ty::{self, DefId, Form as TForm, Mode, Ty};
@@ -47,12 +49,27 @@ pub struct Outcome {
 
 /// Führt `main` des Programms aus (in einem eigenen Thread mit großem Stack).
 pub fn run(p: &'static Program, opts: Options) -> Outcome {
+    run_with_console(p, opts.release, opts.check, opts.args, Console::captured(opts.input))
+}
+
+/// Runs the program with live standard input and output.
+pub fn run_stdio(p: &'static Program, release: bool, check: bool, args: Vec<String>) -> i32 {
+    let outcome = run_with_console(p, release, check, args, Console::Stdio);
+    if !outcome.stderr.is_empty() {
+        eprint!("{}", outcome.stderr);
+    }
+    outcome.exit
+}
+
+fn run_with_console(p: &'static Program, release: bool, check: bool, args: Vec<String>, console: Console) -> Outcome {
     let h = std::thread::Builder::new()
         .stack_size(2 << 30)
         .spawn(move || {
-            let mut it = Interp::new(p, opts.release, opts.input);
-            it.check = opts.check;
-            it.main(&opts.args)
+            let mut it = Interp::new(p, release, console);
+            it.check = check;
+            let exit = it.main(&args);
+            let (stdout, stderr) = it.console.into_output();
+            Outcome { stdout, stderr, exit }
         })
         .expect("Thread für den Interpreter");
     match h.join() {
@@ -117,10 +134,7 @@ struct Interp {
     text_readers: HashMap<*const Obj, std::io::BufReader<std::fs::File>>,
     p: &'static Program,
     release: bool,
-    out: String,
-    err: String,
-    input: String,
-    in_pos: usize,
+    console: Console,
     frames: Vec<Frame>,
     temps: Vec<Vec<Value>>,
     layouts: HashMap<DefId, Rc<Layout>>,
@@ -260,8 +274,8 @@ fn to_text(v: &Value) -> String {
 }
 
 impl Interp {
-    fn new(p: &'static Program, release: bool, input: String) -> Interp {
-        Interp { p, release, out: String::new(), err: String::new(), input, in_pos: 0, frames: Vec::new(), temps: Vec::new(), layouts: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0), binding: Cell::new(false), locked_args: Vec::new(), check: false, pending_targs: Vec::new(), heap: Vec::new(), shared_used: false, save_files: HashMap::new(), text_readers: HashMap::new() }
+    fn new(p: &'static Program, release: bool, console: Console) -> Interp {
+        Interp { p, release, console, frames: Vec::new(), temps: Vec::new(), layouts: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0), binding: Cell::new(false), locked_args: Vec::new(), check: false, pending_targs: Vec::new(), heap: Vec::new(), shared_used: false, save_files: HashMap::new(), text_readers: HashMap::new() }
     }
 
     // ------------------------------------------------------------ Hilfen
@@ -603,7 +617,7 @@ impl Interp {
 
     // ------------------------------------------------------------ Start
 
-    fn main(&mut self, args: &[String]) -> Outcome {
+    fn main(&mut self, args: &[String]) -> i32 {
         let main = self.p.ws.files.iter().enumerate().find_map(|(i, f)| {
             if self.p.is_std_file(i) {
                 return None;
@@ -614,7 +628,8 @@ impl Interp {
             })
         });
         let Some((file, m)) = main else {
-            return Outcome { stdout: String::new(), stderr: "Missing main".into(), exit: 2 };
+            self.console.write_stderr("Missing main");
+            return 2;
         };
         let argv: Vec<Value> = args.iter().map(|a| Value::Str(Rc::from(a.as_str()))).collect();
         let vec = self.new_vec(argv);
@@ -629,36 +644,35 @@ impl Interp {
                 r = Err(self.fatal("InvariantViolation", format!("Leak without shared ownership: {left} objects remain live after main returns")));
             }
         }
-        let exit = match r {
+        match r {
             Ok(v) => v.as_i128().unwrap_or(0) as i32,
             Err(Flow::Throw(ex, trace)) => {
                 let msg = self.describe(&ex);
                 let name = ex.obj().and_then(|o| o.class).map(|d| self.p.defs[d].name.clone()).unwrap_or_default();
-                self.err.push_str(&format!("{name}: {msg}\n"));
+                self.console.write_stderr(&format!("{name}: {msg}\n"));
                 if !self.release {
                     for t in trace {
-                        self.err.push_str(&format!("    at {t}\n"));
+                        self.console.write_stderr(&format!("    at {t}\n"));
                     }
                 }
                 let _ = self.drop_value(ex);
                 1
             }
             Err(Flow::Fatal(f)) if f.name == "InvariantViolation" => {
-                self.err.push_str(&format!("Internal error (invariant checking): {}\n", f.msg));
+                self.console.write_stderr(&format!("Internal error (invariant checking): {}\n", f.msg));
                 3
             }
             Err(Flow::Fatal(f)) => {
-                self.err.push_str(&format!("{}: {}\n", f.name, f.msg));
+                self.console.write_stderr(&format!("{}: {}\n", f.name, f.msg));
                 if !self.release {
                     for t in f.trace {
-                        self.err.push_str(&format!("    at {t}\n"));
+                        self.console.write_stderr(&format!("    at {t}\n"));
                     }
                 }
                 2
             }
             Err(_) => 0,
-        };
-        Outcome { stdout: std::mem::take(&mut self.out), stderr: std::mem::take(&mut self.err), exit }
+        }
     }
 
     fn describe(&mut self, ex: &Value) -> String {
@@ -2431,8 +2445,7 @@ impl Interp {
         match name {
             "print" => {
                 let v = self.eval(&args[0].expr)?;
-                self.out.push_str(&to_text(&v));
-                self.out.push('\n');
+                self.console.write_stdout(&format!("{}\n", to_text(&v)));
                 Ok(Value::Void)
             }
             "assert" => {

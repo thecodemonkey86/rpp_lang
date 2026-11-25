@@ -53,7 +53,7 @@ cargo run -- test ..
 
 Laufzeittests werden dabei in beiden Modi und im Prüfmodus ausgeführt (Ausgabe, Exit-Code, Fehlerausgabe). Jeder Laufzeittest läuft in einem frischen, leeren Arbeitsverzeichnis (V-14.3). Stand 23.11.2026: 293 bestanden, 0 fehlgeschlagen.
 
-Ein Programm ausführen (Standardeingabe wird gelesen; Argumente nach `--`):
+Ein Programm ausführen. `Console::readLine()` liest bei Bedarf von der Standardeingabe, auch aus einer Pipe oder Datei. Argumente nach `--` gehen an das Programm.
 
 ```
 cargo run -- run DATEI.rpp|PROJEKTVERZEICHNIS -- eins zwei

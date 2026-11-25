@@ -109,14 +109,8 @@ fn run() -> ExitCode {
                 }
             }
             let Some(input) = input else { return usage() };
-            let mut stdin = String::new();
-            let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin);
-            match conftest::execute(&input, release, check, prog_args, stdin) {
-                Ok(o) => {
-                    print!("{}", o.stdout);
-                    eprint!("{}", o.stderr);
-                    ExitCode::from(o.exit as u8)
-                }
+            match conftest::execute_stdio(&input, release, check, prog_args) {
+                Ok(exit) => ExitCode::from(exit as u8),
                 Err(diags) => {
                     print_diags(&input, diags);
                     ExitCode::from(1)

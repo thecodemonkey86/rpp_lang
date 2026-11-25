@@ -24,7 +24,7 @@ i32 main(string[] args) {
 }
 ```
 
-`rppc run` reads standard input to EOF before executing. For empty input, prefix the run command with `$null |` in PowerShell or append `< /dev/null` in a POSIX shell.
+`rppc run` starts immediately. `Console::readLine()` reads the next line from the terminal, a pipe, or a redirected file and returns `null` at EOF.
 
 ```sh
 cargo run --manifest-path rppc/Cargo.toml -- check hello/src/main.rpp

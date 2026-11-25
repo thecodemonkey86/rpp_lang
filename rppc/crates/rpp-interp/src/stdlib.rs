@@ -212,26 +212,15 @@ impl Interp {
         match name {
             // ---------------------------------------------------------------- rpp.io
             "rpp.io.Console.write" => {
-                self.out.push_str(&text(&args, 0));
+                self.console.write_stdout(&text(&args, 0));
                 Ok(Value::Void)
             }
             "rpp.io.Console.error" => {
-                self.err.push_str(&text(&args, 0));
-                self.err.push('\n');
+                self.console.write_stderr(&format!("{}\n", text(&args, 0)));
                 Ok(Value::Void)
             }
             "rpp.io.Console.readLine" => {
-                if self.in_pos >= self.input.len() {
-                    return Ok(Value::Null);
-                }
-                let rest = &self.input[self.in_pos..];
-                let (line, used) = match rest.find('\n') {
-                    Some(i) => (&rest[..i], i + 1),
-                    None => (rest, rest.len()),
-                };
-                let line = line.strip_suffix('\r').unwrap_or(line).to_string();
-                self.in_pos += used;
-                Ok(str_value(line))
+                Ok(self.console.read_line().map_or(Value::Null, str_value))
             }
             "rpp.io.File.open" => {
                 let path = text(&args, 0);
