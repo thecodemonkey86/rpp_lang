@@ -2025,13 +2025,37 @@ static rv map_case(RStr* s, int upper) {
     return buf_take(&b);
 }
 
-static int vec_method(rv* out, RObj* o, const char* name, int n, rv* args);
+static int vec_method(rv* out, RObj* o, int id, int n, rv* args);
 
+/* Namen der eingebauten Methoden nach Nummer (BM_…, rpp_rt.h) */
+static const char* const bm_names[BM_COUNT] = {
+    "?",
+#define BM_X(x) #x,
+    BM_LIST(BM_X)
+#undef BM_X
+};
+
+/* Nummer zum Namen; 0, wenn die Methode nicht eingebaut ist */
+int rt_bm_id(const char* name) {
+    for (int i = 1; i < BM_COUNT; i++)
+        if (!strcmp(bm_names[i], name)) return i;
+    return 0;
+}
+
+/* frühere Schnittstelle mit dem Namen (erzeugter Code vor M7) */
 int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
+    int id = rt_bm_id(name);
+    if (!id) return rt_fatal("InternalError", "Methode %s", name);
+    return rt_bm(out, recv, id, n, args);
+}
+
+/* Eingebaute Methode nach Nummer (M7: der Generator setzt die Nummer ein, kein Namensvergleich) */
+int rt_bm(rv* out, rv recv, int id, int n, rv* args) {
+    const char* name = bm_names[id];
     if (recv.tag == RT_STR) {
         RStr* st = rt_s(recv);
-        if (!strcmp(name, "toString")) { *out = recv; return ST_OK; }
-        if (!strcmp(name, "trim")) {
+        if ((id == BM_toString)) { *out = recv; return ST_OK; }
+        if ((id == BM_trim)) {
             int64_t a = 0, b = st->len;
             while (a < b) {
                 uint32_t c;
@@ -2050,18 +2074,18 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
             *out = rt_str_from(st->data + a, b - a);
             return ST_OK;
         }
-        if (!strcmp(name, "toUpper")) { *out = map_case(st, 1); return ST_OK; }
-        if (!strcmp(name, "toLower")) { *out = map_case(st, 0); return ST_OK; }
+        if ((id == BM_toUpper)) { *out = map_case(st, 1); return ST_OK; }
+        if ((id == BM_toLower)) { *out = map_case(st, 0); return ST_OK; }
         RStr* a0 = n > 0 ? rt_s(args[0]) : NULL;
-        if (!strcmp(name, "startsWith")) { *out = rv_bool(a0->len <= st->len && memcmp(st->data, a0->data, (size_t)a0->len) == 0); return ST_OK; }
-        if (!strcmp(name, "endsWith")) { *out = rv_bool(a0->len <= st->len && memcmp(st->data + st->len - a0->len, a0->data, (size_t)a0->len) == 0); return ST_OK; }
-        if (!strcmp(name, "contains")) { *out = rv_bool(str_find64(st, a0, 0) >= 0); return ST_OK; }
-        if (!strcmp(name, "indexOf")) {
+        if ((id == BM_startsWith)) { *out = rv_bool(a0->len <= st->len && memcmp(st->data, a0->data, (size_t)a0->len) == 0); return ST_OK; }
+        if ((id == BM_endsWith)) { *out = rv_bool(a0->len <= st->len && memcmp(st->data + st->len - a0->len, a0->data, (size_t)a0->len) == 0); return ST_OK; }
+        if ((id == BM_contains)) { *out = rv_bool(str_find64(st, a0, 0) >= 0); return ST_OK; }
+        if ((id == BM_indexOf)) {
             int64_t p = str_find64(st, a0, 0);
             *out = p < 0 ? rv_null() : rv_i64(chars_before(st, p));
             return ST_OK;
         }
-        if (!strcmp(name, "replace")) {
+        if ((id == BM_replace)) {
             RStr* to = rt_s(args[1]);
             Buf b = { 0 };
             if (a0->len == 0) {
@@ -2088,7 +2112,7 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
             *out = buf_take(&b);
             return ST_OK;
         }
-        if (!strcmp(name, "substring")) {
+        if ((id == BM_substring)) {
             int64_t a = argi(args, 0), b = argi(args, 1), nc = rt_str_chars(st);
             if (w_neg_p(w_of(args[0]))) a = -1;
             if (a < 0 || b < a || b > nc) return rt_fatal("IndexError", "Range %lld..%lld is outside 0..%lld", (long long)a, (long long)b, (long long)nc);
@@ -2096,7 +2120,7 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
             *out = rt_str_from(st->data + pa, pb - pa);
             return ST_OK;
         }
-        if (!strcmp(name, "split")) {
+        if ((id == BM_split)) {
             RObj* v = rt_vec_new(4);
             if (a0->len == 0) {
                 rt_vec_push(v, rt_str_c(""));
@@ -2121,13 +2145,13 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
             *out = rv_obj(v, F_OWN);
             return ST_OK;
         }
-        if (!strcmp(name, "bytes")) {
+        if ((id == BM_bytes)) {
             RObj* v = rt_vec_new(st->len);
             for (int64_t i = 0; i < st->len; i++) rt_vec_push(v, rv_byte((uint8_t)st->data[i]));
             *out = rv_obj(v, F_OWN);
             return ST_OK;
         }
-        if (!strcmp(name, "byteAt")) {
+        if ((id == BM_byteAt)) {
             int64_t i = argi(args, 0);
             if (w_neg_p(w_of(args[0])) || i >= st->len) return rt_fatal("IndexError", "Index %lld is outside 0..%lld", (long long)(w_neg_p(w_of(args[0])) ? (int64_t)w_of(args[0]).lo : i), (long long)st->len);
             *out = rv_byte((uint8_t)st->data[i]);
@@ -2137,17 +2161,17 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
     }
     if (recv.tag == RT_CHAR) {
         uint32_t c = (uint32_t)recv.v.u;
-        if (!strcmp(name, "toString")) { *out = rt_text(recv); return ST_OK; }
-        if (!strcmp(name, "isLetter")) { *out = rv_bool(u_is_alpha(c)); return ST_OK; }
-        if (!strcmp(name, "isDigit")) { *out = rv_bool(c >= '0' && c <= '9'); return ST_OK; }
-        if (!strcmp(name, "isWhitespace")) { *out = rv_bool(u_is_whitespace(c)); return ST_OK; }
-        if (!strcmp(name, "isUpper")) { *out = rv_bool(u_is_upper(c)); return ST_OK; }
-        if (!strcmp(name, "isLower")) { *out = rv_bool(u_is_lower(c)); return ST_OK; }
-        if (!strcmp(name, "toUpper")) { *out = rv_char(u_to_upper(c)); return ST_OK; }
-        if (!strcmp(name, "toLower")) { *out = rv_char(u_to_lower(c)); return ST_OK; }
+        if ((id == BM_toString)) { *out = rt_text(recv); return ST_OK; }
+        if ((id == BM_isLetter)) { *out = rv_bool(u_is_alpha(c)); return ST_OK; }
+        if ((id == BM_isDigit)) { *out = rv_bool(c >= '0' && c <= '9'); return ST_OK; }
+        if ((id == BM_isWhitespace)) { *out = rv_bool(u_is_whitespace(c)); return ST_OK; }
+        if ((id == BM_isUpper)) { *out = rv_bool(u_is_upper(c)); return ST_OK; }
+        if ((id == BM_isLower)) { *out = rv_bool(u_is_lower(c)); return ST_OK; }
+        if ((id == BM_toUpper)) { *out = rv_char(u_to_upper(c)); return ST_OK; }
+        if ((id == BM_toLower)) { *out = rv_char(u_to_lower(c)); return ST_OK; }
         return rt_fatal("InternalError", "char.%s", name);
     }
-    if (!strcmp(name, "partitionPoint") && (recv.tag == RT_OBJ || recv.tag == RT_SLICE)) {
+    if ((id == BM_partitionPoint) && (recv.tag == RT_OBJ || recv.tag == RT_SLICE)) {
         /* binäre Suche wie im Interpreter: erste Position, an der das Prädikat falsch ist */
         RObj* v = (RObj*)recv.v.p;
         int64_t start = recv.tag == RT_SLICE ? recv.x : 0, end = recv.tag == RT_SLICE ? recv.y : v->len;
@@ -2166,45 +2190,46 @@ int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args) {
         *out = rv_i64(lo - start);
         return ST_OK;
     }
-    if (recv.tag == RT_OBJ && !((RObj*)recv.v.p)->cls) return vec_method(out, (RObj*)recv.v.p, name, n, args);
+    if (recv.tag == RT_OBJ && !((RObj*)recv.v.p)->cls) return vec_method(out, (RObj*)recv.v.p, id, n, args);
     if (recv.tag == RT_SLICE) return rt_fatal("InternalError", "Methode %s auf einem Bereich", name);
-    if (!strcmp(name, "toString")) { *out = rt_text(recv); return ST_OK; }
-    if (!strcmp(name, "abs")) {
+    if ((id == BM_toString)) { *out = rt_text(recv); return ST_OK; }
+    if ((id == BM_abs)) {
         if (recv.tag == RT_F32) { *out = rv_f32(fabsf(recv.v.f32)); return ST_OK; }
         if (recv.tag == RT_F64) { *out = rv_f64(fabs(recv.v.f)); return ST_OK; }
         uint8_t p = rt_is_int_tag(recv.tag) ? recv.tag : RT_I32;
         W w = w_of(recv);
         return int_result(out, w_neg_p(w) ? w_negate(w) : w, p);
     }
-    if (!strcmp(name, "tryAdd") || !strcmp(name, "trySub") || !strcmp(name, "tryMul")) {
+    if ((id == BM_tryAdd) || (id == BM_trySub) || (id == BM_tryMul)) {
         W a = w_of(recv), b = w_of(args[0]);
         W result;
-        if (!strcmp(name, "tryAdd")) result = w_add(a, b);
-        else if (!strcmp(name, "trySub")) result = w_sub(a, b);
+        if ((id == BM_tryAdd)) result = w_add(a, b);
+        else if ((id == BM_trySub)) result = w_sub(a, b);
         else result = w_mul(a, b);
         *out = w_fits(result, recv.tag) ? make_int_w(result, recv.tag) : rv_null();
         return ST_OK;
     }
-    if (!strcmp(name, "min") || !strcmp(name, "max")) {
+    if ((id == BM_min) || (id == BM_max)) {
         int c;
         int st = rt_compare(&c, recv, args[0]);
         if (st) return st;
-        int take_recv = (!strcmp(name, "min")) == (c != 1);
+        int take_recv = ((id == BM_min)) == (c != 1);
         *out = take_recv ? recv : args[0];
         return ST_OK;
     }
     return rt_fatal("InternalError", "Methode %s", name);
 }
 
-static int vec_method(rv* out, RObj* o, const char* name, int n, rv* args) {
+static int vec_method(rv* out, RObj* o, int id, int n, rv* args) {
     (void)n;
+    const char* name = bm_names[id];
     int64_t len = o->len;
     *out = rv_void();
-    if (!strcmp(name, "push")) {
+    if ((id == BM_push)) {
         rt_vec_push(o, args[0]);
         return ST_OK;
     }
-    if (!strcmp(name, "insert")) {
+    if ((id == BM_insert)) {
         W w = w_of(args[0]);
         int64_t i = (int64_t)w.lo;
         if (w_neg_p(w) || i > len) return rt_fatal("IndexError", "Index %lld is outside 0..%lld", (long long)i, (long long)(len + 1));
@@ -2214,12 +2239,12 @@ static int vec_method(rv* out, RObj* o, const char* name, int n, rv* args) {
         o->len++;
         return ST_OK;
     }
-    if (!strcmp(name, "pop")) {
+    if ((id == BM_pop)) {
         if (len == 0) return rt_fatal("IndexError", "Cannot pop from an empty vector");
         *out = o->slots[--o->len];
         return ST_OK;
     }
-    if (!strcmp(name, "remove")) {
+    if ((id == BM_remove)) {
         W w = w_of(args[0]);
         int64_t i = (int64_t)w.lo;
         if (w_neg_p(w) || i >= len) return rt_fatal("IndexError", "Index %lld is outside 0..%lld", (long long)i, (long long)len);
@@ -2228,7 +2253,7 @@ static int vec_method(rv* out, RObj* o, const char* name, int n, rv* args) {
         o->len--;
         return ST_OK;
     }
-    if (!strcmp(name, "clear")) {
+    if ((id == BM_clear)) {
         rv* elems = o->slots;
         int64_t m = o->len;
         o->slots = (rv*)xmalloc(sizeof(rv) * 4);
@@ -2241,10 +2266,10 @@ static int vec_method(rv* out, RObj* o, const char* name, int n, rv* args) {
         xfree(elems);
         return ST_OK;
     }
-    if (!strcmp(name, "first")) { *out = len ? rv_view(o->slots[0]) : rv_null(); return ST_OK; }
-    if (!strcmp(name, "last")) { *out = len ? rv_view(o->slots[len - 1]) : rv_null(); return ST_OK; }
-    if (!strcmp(name, "contains") || !strcmp(name, "indexOf")) {
-        int c = !strcmp(name, "contains");
+    if ((id == BM_first)) { *out = len ? rv_view(o->slots[0]) : rv_null(); return ST_OK; }
+    if ((id == BM_last)) { *out = len ? rv_view(o->slots[len - 1]) : rv_null(); return ST_OK; }
+    if ((id == BM_contains) || (id == BM_indexOf)) {
+        int c = (id == BM_contains);
         for (int64_t i = 0; i < o->len; i++) {
             int eq;
             int st = rt_equal(&eq, rv_view(o->slots[i]), args[0]);
@@ -2254,9 +2279,9 @@ static int vec_method(rv* out, RObj* o, const char* name, int n, rv* args) {
         *out = c ? rv_bool(0) : rv_null();
         return ST_OK;
     }
-    if (!strcmp(name, "sort") || !strcmp(name, "sortBy")) {
+    if ((id == BM_sort) || (id == BM_sortBy)) {
         /* stabiles Einfügesortieren wie im Interpreter (dieselben Vergleiche) */
-        int by = !strcmp(name, "sortBy");
+        int by = (id == BM_sortBy);
         for (int64_t i = 1; i < o->len; i++) {
             int64_t j = i;
             while (j > 0) {
@@ -3068,12 +3093,201 @@ static int string_view(rv* out, RObj* o, const char* m, rv* args) {
     return rt_fatal("InternalError", "StringView.%s", m);
 }
 
+/* Map und Set (rpp.collections.*); M7: eigene Funktion, rt_native prüft sie zuerst */
+static int native_collection(rv* out, RObj* o, const char* name, rv* args, int at_cursor) {
+    if (!o) return rt_internal("Sammlung ohne Objekt");
+    int map = !strncmp(name, "rpp.collections.Map.", 20);
+    const char* m = strrchr(name, '.') + 1;
+    int64_t len = o->len;
+    if (!strcmp(m, "length")) { *out = rv_i64(len); return ST_OK; }
+    if (!strcmp(m, "begin")) { *out = rv_i64(0); return ST_OK; }
+    if (!strcmp(m, "done")) { *out = rv_bool(!w_neg_p(w_of(args[0])) && argi(args, 0) >= len); return ST_OK; }
+    if (!strcmp(m, "next")) { *out = rv_i64(argi(args, 0) + 1); return ST_OK; }
+    if (!strcmp(m, "at") && at_cursor) {
+        int64_t i = argi(args, 0);
+        if (w_neg_p(w_of(args[0])) || i >= len) return rt_fatal("IndexError", "Cursor %lld is outside 0..%lld", (long long)i, (long long)len);
+        *out = rv_view(o->slots[i]);
+        return ST_OK;
+    }
+    if (!strcmp(m, "contains")) {
+        int64_t pos;
+        int st = find_key(&pos, o, args[0], map);
+        if (st) return st;
+        *out = rv_bool(pos >= 0);
+        return ST_OK;
+    }
+    if (!strcmp(m, "get") || !strcmp(m, "at")) {
+        int64_t pos;
+        int st = find_key(&pos, o, args[0], 1);
+        if (st) return st;
+        if (pos >= 0) {
+            RObj* e = (RObj*)o->slots[pos].v.p;
+            *out = rv_view(e->slots[1]);
+            return ST_OK;
+        }
+        if (!strcmp(m, "get")) { *out = rv_null(); return ST_OK; }
+        return rt_fatal("IndexError", "The key is missing from the map");
+    }
+    if (!strcmp(m, "put")) {
+        rv key = args[0], value = args[1];
+        int64_t pos;
+        int st = find_key(&pos, o, key, 1);
+        if (st) return st;
+        if (pos >= 0) {
+            RObj* e = (RObj*)o->slots[pos].v.p;
+            rv old = e->slots[1];
+            e->slots[1] = value;
+            st = rt_drop(old);
+            if (st) return st;
+            return rt_drop(key);
+        }
+        int64_t hv;
+        st = rt_hash(&hv, key);
+        if (st) return st;
+        RObj* e = rt_obj_new(rt_cls_entry, NULL, 0);
+        e->slots[0] = key;
+        e->slots[1] = value;
+        rt_vec_push(o, rv_obj(e, F_OWN));
+        hidx_add(o, hv, o->len - 1);
+        return ST_OK;
+    }
+    if (!strcmp(m, "add")) {
+        rv x = args[0];
+        int64_t pos;
+        int st = find_key(&pos, o, x, 0);
+        if (st) return st;
+        if (pos >= 0) return rt_drop(x);
+        int64_t hv;
+        st = rt_hash(&hv, x);
+        if (st) return st;
+        rt_vec_push(o, x);
+        hidx_add(o, hv, o->len - 1);
+        return ST_OK;
+    }
+    if (!strcmp(m, "getOrPut")) {
+        /* R-13.33: Wert zum Schlüssel, sonst factory() einsetzen */
+        rv key = args[0];
+        int64_t pos;
+        int st = find_key(&pos, o, key, 1);
+        if (st) return st;
+        if (pos >= 0) {
+            st = rt_drop(key);
+            if (st) return st;
+        } else {
+            rv value;
+            st = rt_call_value(&value, args[1], NULL);
+            if (st) { rt_drop(key); return st; }
+            int64_t hv;
+            st = rt_hash(&hv, key);
+            if (st) return st;
+            RObj* e = rt_obj_new(rt_cls_entry, NULL, 0);
+            e->slots[0] = key;
+            e->slots[1] = value;
+            rt_vec_push(o, rv_obj(e, F_OWN));
+            pos = o->len - 1;
+            hidx_add(o, hv, pos);
+        }
+        RObj* e = (RObj*)o->slots[pos].v.p;
+        *out = rv_view(e->slots[1]);
+        return ST_OK;
+    }
+    if (!strcmp(m, "appendEntry")) {
+        /* Eintrag einer anderen Menge übernehmen, der schon auf Eindeutigkeit geprüft ist */
+        RObj* src = (RObj*)args[0].v.p;
+        int64_t i = argi(args, 1);
+        /* own-Objekte werden wie im Interpreter (Halter) von beiden Mengen geteilt */
+        src->slots[i] = rt_to_shared(src->slots[i]);
+        rv x = rt_own_copy(rv_view(src->slots[i]));
+        int64_t hv;
+        int st = rt_hash(&hv, x);
+        if (st) return st;
+        rt_vec_push(o, x);
+        hidx_add(o, hv, o->len - 1);
+        return ST_OK;
+    }
+    if (!strcmp(m, "remove")) {
+        int64_t pos;
+        int st = find_key(&pos, o, args[0], map);
+        if (st) return st;
+        if (pos < 0) { *out = map ? rv_null() : rv_void(); return ST_OK; }
+        rv item = o->slots[pos];
+        memmove(o->slots + pos, o->slots + pos + 1, sizeof(rv) * (size_t)(o->len - pos - 1));
+        o->len--;
+        st = reindex(o, map);
+        if (st) return st;
+        if (!map) return rt_drop(item);
+        RObj* e = (RObj*)item.v.p;
+        rv value = e->slots[1];
+        e->slots[1] = rv_moved();
+        st = rt_drop(item);
+        if (st) return st;
+        *out = value;
+        return ST_OK;
+    }
+    if (!strcmp(m, "clear")) {
+        rv* items = o->slots;
+        int64_t k = o->len;
+        o->slots = (rv*)xmalloc(sizeof(rv) * 4);
+        o->len = 0;
+        o->cap = 4;
+        HIdx* h = hidx(o);
+        h->nb = 0;
+        for (int64_t i = 0; i < k; i++) {
+            int st = rt_drop(items[i]);
+            if (st) { xfree(items); return st; }
+        }
+        xfree(items);
+        return ST_OK;
+    }
+    return rt_fatal("InternalError", "%s ist nicht eingebaut", name);
+}
+
+/* StringBuilder (rpp.text.StringBuilder.*, m ohne Präfix); M7: eigene Funktion */
+static int native_string_builder(rv* out, RObj* o, const char* m, rv* args) {
+    if (!o) return rt_internal("StringBuilder ohne Objekt");
+    if (!o->native) {
+        SB* s = (SB*)xmalloc(sizeof(SB));
+        memset(s, 0, sizeof *s);
+        buf_str(&s->b, "");
+        o->native = s;
+    }
+    SB* s = (SB*)o->native;
+    if (!strcmp(m, "length")) { *out = rv_i64(s->chars); return ST_OK; }
+    if (!strcmp(m, "toString")) { *out = rt_str_from(s->b.p, s->b.n); return ST_OK; }
+    if (!strcmp(m, "clear")) { s->b.n = 0; s->b.p[0] = 0; s->chars = 0; return ST_OK; }
+    Buf t = { 0 };
+    buf_str(&t, "");
+    text_of(&t, args[0]);
+    if (!strcmp(m, "appendLine")) buf_str(&t, "\n");
+    buf_add(&s->b, t.p, t.n);
+    for (int64_t i = 0; i < t.n; i++)
+        if (((unsigned char)t.p[i] & 0xc0) != 0x80) s->chars++;
+    xfree(t.p);
+    return ST_OK;
+}
+
 int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this, int at_cursor) {
     (void)n;
     (void)mut_this;
     *out = rv_void();
     RObj* o = self.tag == RT_OBJ ? (RObj*)self.v.p : NULL;
 #define IS(x) (!strcmp(name, x))
+    /* M7: die häufigen Sammlungen und Texthilfen zuerst; ihre Präfixe kommen unter den
+       übrigen Namen nicht vor, die Reihenfolge ändert also nichts am Ergebnis */
+    if (name[4] == 'c' && !strncmp(name, "rpp.collections.", 16)) {
+        if (!o) return rt_internal("Sammlung ohne Objekt");
+        return native_collection(out, o, name, args, at_cursor);
+    }
+    if (name[4] == 't' && !strncmp(name, "rpp.text.", 9)) {
+        if (!strncmp(name + 9, "StringBuilder.", 14)) {
+            if (!o) return rt_internal("StringBuilder ohne Objekt");
+            return native_string_builder(out, o, name + 23, args);
+        }
+        if (!strncmp(name + 9, "StringView.", 11)) {
+            if (!o) return rt_internal("StringView ohne Objekt");
+            return string_view(out, o, name + 20, args);
+        }
+    }
     if (IS("rpp.io.Console.write")) {
         Buf b = { 0 };
         text_of(&b, args[0]);
@@ -3522,10 +3736,6 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
     /* ---------------------------------------------------------------- Zeit, Mathematik, StringView */
     if (IS("rpp.env.ElapsedTimer.monotonicNanos")) { *out = rv_i64(mono_nanos()); return ST_OK; }
     if (IS("rpp.math.Math.sqrt")) { *out = rv_f64(sqrt(as_f64(args[0]))); return ST_OK; }
-    if (!strncmp(name, "rpp.text.StringView.", 20)) {
-        if (!o) return rt_internal("StringView ohne Objekt");
-        return string_view(out, o, name + 20, args);
-    }
     if (IS("rpp.env.Env.get")) {
         const char* v = getenv(rt_s(args[0])->data);
         *out = v ? sv(v) : rv_null();
@@ -3585,175 +3795,6 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         *out = rt_str_from(t, len);
         xfree(t);
         return ST_OK;
-    }
-    if (!strncmp(name, "rpp.text.StringBuilder.", 23)) {
-        if (!o) return rt_internal("StringBuilder ohne Objekt");
-        if (!o->native) {
-            SB* s = (SB*)xmalloc(sizeof(SB));
-            memset(s, 0, sizeof *s);
-            buf_str(&s->b, "");
-            o->native = s;
-        }
-        SB* s = (SB*)o->native;
-        const char* m = name + 23;
-        if (!strcmp(m, "length")) { *out = rv_i64(s->chars); return ST_OK; }
-        if (!strcmp(m, "toString")) { *out = rt_str_from(s->b.p, s->b.n); return ST_OK; }
-        if (!strcmp(m, "clear")) { s->b.n = 0; s->b.p[0] = 0; s->chars = 0; return ST_OK; }
-        Buf t = { 0 };
-        buf_str(&t, "");
-        text_of(&t, args[0]);
-        if (!strcmp(m, "appendLine")) buf_str(&t, "\n");
-        buf_add(&s->b, t.p, t.n);
-        for (int64_t i = 0; i < t.n; i++)
-            if (((unsigned char)t.p[i] & 0xc0) != 0x80) s->chars++;
-        xfree(t.p);
-        return ST_OK;
-    }
-    if (!strncmp(name, "rpp.collections.", 16)) {
-        if (!o) return rt_internal("Sammlung ohne Objekt");
-        int map = !strncmp(name, "rpp.collections.Map.", 20);
-        const char* m = strrchr(name, '.') + 1;
-        int64_t len = o->len;
-        if (!strcmp(m, "length")) { *out = rv_i64(len); return ST_OK; }
-        if (!strcmp(m, "begin")) { *out = rv_i64(0); return ST_OK; }
-        if (!strcmp(m, "done")) { *out = rv_bool(!w_neg_p(w_of(args[0])) && argi(args, 0) >= len); return ST_OK; }
-        if (!strcmp(m, "next")) { *out = rv_i64(argi(args, 0) + 1); return ST_OK; }
-        if (!strcmp(m, "at") && at_cursor) {
-            int64_t i = argi(args, 0);
-            if (w_neg_p(w_of(args[0])) || i >= len) return rt_fatal("IndexError", "Cursor %lld is outside 0..%lld", (long long)i, (long long)len);
-            *out = rv_view(o->slots[i]);
-            return ST_OK;
-        }
-        if (!strcmp(m, "contains")) {
-            int64_t pos;
-            int st = find_key(&pos, o, args[0], map);
-            if (st) return st;
-            *out = rv_bool(pos >= 0);
-            return ST_OK;
-        }
-        if (!strcmp(m, "get") || !strcmp(m, "at")) {
-            int64_t pos;
-            int st = find_key(&pos, o, args[0], 1);
-            if (st) return st;
-            if (pos >= 0) {
-                RObj* e = (RObj*)o->slots[pos].v.p;
-                *out = rv_view(e->slots[1]);
-                return ST_OK;
-            }
-            if (!strcmp(m, "get")) { *out = rv_null(); return ST_OK; }
-            return rt_fatal("IndexError", "The key is missing from the map");
-        }
-        if (!strcmp(m, "put")) {
-            rv key = args[0], value = args[1];
-            int64_t pos;
-            int st = find_key(&pos, o, key, 1);
-            if (st) return st;
-            if (pos >= 0) {
-                RObj* e = (RObj*)o->slots[pos].v.p;
-                rv old = e->slots[1];
-                e->slots[1] = value;
-                st = rt_drop(old);
-                if (st) return st;
-                return rt_drop(key);
-            }
-            int64_t hv;
-            st = rt_hash(&hv, key);
-            if (st) return st;
-            RObj* e = rt_obj_new(rt_cls_entry, NULL, 0);
-            e->slots[0] = key;
-            e->slots[1] = value;
-            rt_vec_push(o, rv_obj(e, F_OWN));
-            hidx_add(o, hv, o->len - 1);
-            return ST_OK;
-        }
-        if (!strcmp(m, "add")) {
-            rv x = args[0];
-            int64_t pos;
-            int st = find_key(&pos, o, x, 0);
-            if (st) return st;
-            if (pos >= 0) return rt_drop(x);
-            int64_t hv;
-            st = rt_hash(&hv, x);
-            if (st) return st;
-            rt_vec_push(o, x);
-            hidx_add(o, hv, o->len - 1);
-            return ST_OK;
-        }
-        if (!strcmp(m, "getOrPut")) {
-            /* R-13.33: Wert zum Schlüssel, sonst factory() einsetzen */
-            rv key = args[0];
-            int64_t pos;
-            int st = find_key(&pos, o, key, 1);
-            if (st) return st;
-            if (pos >= 0) {
-                st = rt_drop(key);
-                if (st) return st;
-            } else {
-                rv value;
-                st = rt_call_value(&value, args[1], NULL);
-                if (st) { rt_drop(key); return st; }
-                int64_t hv;
-                st = rt_hash(&hv, key);
-                if (st) return st;
-                RObj* e = rt_obj_new(rt_cls_entry, NULL, 0);
-                e->slots[0] = key;
-                e->slots[1] = value;
-                rt_vec_push(o, rv_obj(e, F_OWN));
-                pos = o->len - 1;
-                hidx_add(o, hv, pos);
-            }
-            RObj* e = (RObj*)o->slots[pos].v.p;
-            *out = rv_view(e->slots[1]);
-            return ST_OK;
-        }
-        if (!strcmp(m, "appendEntry")) {
-            /* Eintrag einer anderen Menge übernehmen, der schon auf Eindeutigkeit geprüft ist */
-            RObj* src = (RObj*)args[0].v.p;
-            int64_t i = argi(args, 1);
-            /* own-Objekte werden wie im Interpreter (Halter) von beiden Mengen geteilt */
-            src->slots[i] = rt_to_shared(src->slots[i]);
-            rv x = rt_own_copy(rv_view(src->slots[i]));
-            int64_t hv;
-            int st = rt_hash(&hv, x);
-            if (st) return st;
-            rt_vec_push(o, x);
-            hidx_add(o, hv, o->len - 1);
-            return ST_OK;
-        }
-        if (!strcmp(m, "remove")) {
-            int64_t pos;
-            int st = find_key(&pos, o, args[0], map);
-            if (st) return st;
-            if (pos < 0) { *out = map ? rv_null() : rv_void(); return ST_OK; }
-            rv item = o->slots[pos];
-            memmove(o->slots + pos, o->slots + pos + 1, sizeof(rv) * (size_t)(o->len - pos - 1));
-            o->len--;
-            st = reindex(o, map);
-            if (st) return st;
-            if (!map) return rt_drop(item);
-            RObj* e = (RObj*)item.v.p;
-            rv value = e->slots[1];
-            e->slots[1] = rv_moved();
-            st = rt_drop(item);
-            if (st) return st;
-            *out = value;
-            return ST_OK;
-        }
-        if (!strcmp(m, "clear")) {
-            rv* items = o->slots;
-            int64_t k = o->len;
-            o->slots = (rv*)xmalloc(sizeof(rv) * 4);
-            o->len = 0;
-            o->cap = 4;
-            HIdx* h = hidx(o);
-            h->nb = 0;
-            for (int64_t i = 0; i < k; i++) {
-                int st = rt_drop(items[i]);
-                if (st) { xfree(items); return st; }
-            }
-            xfree(items);
-            return ST_OK;
-        }
     }
 #undef IS
     return rt_fatal("InternalError", "%s ist nicht eingebaut", name);

@@ -435,6 +435,22 @@ private:
 
     // ================================================================ Textausgabe
 
+    // Nummer einer eingebauten Methode als C-Konstante (BM_…), "" wenn die Laufzeit sie nicht kennt;
+    // dieselbe Liste steht in rpp_rt.h (BM_LIST, M7)
+    static string builtinMethodId(string name) {
+        string[] known = ["abs", "byteAt", "bytes", "clear", "contains", "endsWith", "first", "indexOf",
+            "insert", "isDigit", "isLetter", "isLower", "isUpper", "isWhitespace", "last", "max",
+            "min", "partitionPoint", "pop", "push", "remove", "replace", "sort", "sortBy",
+            "split", "startsWith", "substring", "toLower", "toString", "toUpper", "trim", "tryAdd",
+            "tryMul", "trySub"];
+        for (string k : known) {
+            if (k == name) {
+                return "BM_" + name;
+            }
+        }
+        return "";
+    }
+
     static string cstr(string s) {
         StringBuilder b = new StringBuilder();
         b.append("\"");
@@ -3563,7 +3579,12 @@ private:
             tempEmit(recv);
             i64[] none = [];
             string arr = args(argsNode, t.params, none);
-            call("rt_builtin_method(&" + r + ", " + recv + ", " + cstr(t.name) + ", " + argsNode.kids.length.toString() + ", " + arr + ")");
+            string bid = builtinMethodId(t.name);
+            if (bid != "") {
+                call("rt_bm(&" + r + ", " + recv + ", " + bid + ", " + argsNode.kids.length.toString() + ", " + arr + ")");
+            } else {
+                call("rt_builtin_method(&" + r + ", " + recv + ", " + cstr(t.name) + ", " + argsNode.kids.length.toString() + ", " + arr + ")");
+            }
             if (safe) {
                 emit("}");
             }

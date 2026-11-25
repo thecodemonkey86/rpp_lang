@@ -568,6 +568,22 @@ RN_INLINE int rn_len(int64_t* out, rv obj, int bytes) {
 /* eingebaute Funktionen und Methoden */
 void rt_print(rv v);
 int rt_builtin_method(rv* out, rv recv, const char* name, int n, rv* args);
+/* Nummern der eingebauten Methoden (M7); dieselbe Liste steht in CGen.rpp (builtinMethodIds) */
+#define BM_LIST(X) \
+    X(abs) X(byteAt) X(bytes) X(clear) X(contains) X(endsWith) X(first) X(indexOf) \
+    X(insert) X(isDigit) X(isLetter) X(isLower) X(isUpper) X(isWhitespace) X(last) X(max) \
+    X(min) X(partitionPoint) X(pop) X(push) X(remove) X(replace) X(sort) X(sortBy) \
+    X(split) X(startsWith) X(substring) X(toLower) X(toString) X(toUpper) X(trim) X(tryAdd) \
+    X(tryMul) X(trySub)
+enum {
+    BM_NONE = 0,
+#define BM_X(x) BM_##x,
+    BM_LIST(BM_X)
+#undef BM_X
+    BM_COUNT
+};
+int rt_bm_id(const char* name);
+int rt_bm(rv* out, rv recv, int id, int n, rv* args);
 int rt_builtin_static(rv* out, uint8_t ptag, const char* name, int n, rv* args);
 int rt_prim_mixin(rv* out, const char* name, rv v, rv* args, int* handled);
 int rt_hash(int64_t* out, rv v);
