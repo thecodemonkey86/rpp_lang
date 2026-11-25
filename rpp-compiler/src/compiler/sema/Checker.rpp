@@ -3791,6 +3791,18 @@ private:
         if (k == 2) {
             return new ArgShape(2, Ty::error());
         }
+        // Lokaler Name, den kein Lambda erfasst: Die Probe liefert localType und hinterlässt
+        // nichts, was sie nicht selbst zurücksetzt (Fluss, Loans; Erfassungen gibt es keine).
+        // Dasselbe Ergebnis ohne Sichern und Zurücksetzen des Flussstands (M7).
+        if (x.kind == "name") {
+            i64 li = findLocal(x.text);
+            if (li >= 0) {
+                (i64 from, i64 to) = capturingFrames(locals[li].id);
+                if (from >= to) {
+                    return new ArgShape(0, localType(li));
+                }
+            }
+        }
         return new ArgShape(0, probeExpr(x));
     }
 
