@@ -338,11 +338,10 @@ private:
     void endProbe(mut ProbeState s) mut {
         hasLastCall = s.hasLastCall;
         lastFacts = s.lastFacts;
-        flow = s.flow.dup();
-        loans = [];
-        for (Loan l : s.loans) {
-            loans.push(l.dup());
-        }
+        // s wird danach nicht mehr gebraucht: Stand und Loans übernehmen statt kopieren (M7)
+        flow = replace(mut s.flow, new Flow());
+        Loan[] none = [];
+        loans = replace(mut s.loans, none);
         pendingRecv = take(mut s.pending);
         quiet--;
     }
@@ -1017,10 +1016,10 @@ private:
         if (frames.length == 0) {
             return;
         }
-        Flow f = flow.dup();
+        // join liest den Stand nur; keine Kopie, auch nicht ohne offenes try (M7)
         i64 t = top();
         for (i64 i = 0; i < frames[t].tries.length; i++) {
-            Flow j = frames[t].tries[i].join(f, "R-6.12", "R-9.17");
+            Flow j = frames[t].tries[i].join(flow, "R-6.12", "R-9.17");
             frames[t].tries[i] = j;
         }
     }
