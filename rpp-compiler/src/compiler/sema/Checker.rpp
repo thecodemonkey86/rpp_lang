@@ -903,13 +903,13 @@ private:
         if (flow.dead) {
             return;
         }
-        discard flow.unassigned.remove(id);
-        discard flow.moved.take(id);
+        discard flow.removeUnassigned(id);
+        discard flow.takeMoved(id);
         if (Tys::nullable(value) && !value.isError()) {
             flow.unnarrow(id, "R-6.11");
         } else {
-            flow.nonnull.add(id);
-            discard flow.lost.take(id);
+            flow.addNonnull(id);
+            discard flow.takeLost(id);
         }
     }
 
@@ -980,7 +980,7 @@ private:
                 return;
             }
             access(new Place(id), true, e.line, e.col);
-            flow.moved.put(id, reason);
+            flow.putMoved(id, reason);
             if (callMoved.length > 0) {
                 callMoved[callMoved.length - 1].ids.push(id);
             }
@@ -1595,14 +1595,17 @@ private:
         Flow e = acc.dup();
         for (i64 x : pre.nonnull.items) {
             if (!acc.nonnull.has(x)) {
-                e.lost.put(x, "R-6.12");
+                e.putLost(x, "R-6.12");
             }
         }
-        for (i64 i = 0; i < e.moved.keys.length; i++) {
-            if (!pre.moved.has(e.moved.keys[i])) {
-                e.moved.vals[i] = "R-9.17";
+        // moved ist geteilt (Kopie beim Schreiben): eine eigene Kopie umbenennen
+        IdMap m = e.moved.dup();
+        for (i64 i = 0; i < m.keys.length; i++) {
+            if (!pre.moved.has(m.keys[i])) {
+                m.vals[i] = "R-9.17";
             }
         }
+        e.moved = m;
         return e;
     }
 
@@ -1790,7 +1793,7 @@ private:
         if (hasInit && vt != null) {
             initLocal(id, d.kids[2], vt, ty);
         } else if (!flow.dead) {
-            flow.unassigned.add(id);
+            flow.addUnassigned(id);
         }
     }
 
@@ -2032,7 +2035,7 @@ private:
             if (target.kind != "name") {
                 Place? pl = placeOf(target);
                 if (pl != null && pl.root != -1) {
-                    string reason = flow.moved.take(pl.root);
+                    string reason = flow.takeMoved(pl.root);
                     if (reason != "") {
                         string nm = placeName(new Place(pl.root));
                         string[] a = [reason, "R-5.7", "R-5.13"];
@@ -2768,10 +2771,10 @@ private:
             LK kind = locals[li].kind;
             bool borrow = locals[li].isBorrow();
             if (!flow.dead) {
-                if (flow.unassigned.remove(id)) {
+                if (flow.removeUnassigned(id)) {
                     err(n.line, n.col, "R-4.46", nm + " is not assigned on every path");
                 }
-                string reason = flow.moved.take(id);
+                string reason = flow.takeMoved(id);
                 if (reason != "") {
                     string[] also = [reason];
                     bool inCall = false;
@@ -4525,7 +4528,7 @@ private:
                     continue;
                 }
                 if (locals[li].frame <= frames.length && movable(locals[li].ty) && !locals[li].isBorrow() && !flow.dead) {
-                    flow.moved.put(id, "R-10.8");
+                    flow.putMoved(id, "R-10.8");
                 }
             }
         }

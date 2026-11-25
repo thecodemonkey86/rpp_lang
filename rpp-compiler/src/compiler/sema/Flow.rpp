@@ -215,14 +215,17 @@ export class Flow {
 public:
     // nicht erreichbar (nach return, throw, break, continue, fail)
     bool dead = false;
+    // Kopie beim Schreiben (M7): Die vier Mengen sind geteilt und werden nie verändert.
+    // dup teilt sie; jede Änderung läuft über die Methoden unten (addNonnull, putMoved, …),
+    // die die Menge durch eine veränderte Kopie ersetzen, und nur, wenn sich etwas ändert.
     // verengte nullbare Variablen (R-6.5)
-    IdSet nonnull = new IdSet();
+    shared IdSet nonnull = new IdSet();
     // warum eine Variable nicht (mehr) verengt ist
-    IdMap lost = new IdMap();
+    shared IdMap lost = new IdMap();
     // möglicherweise noch nicht zugewiesen (R-4.46)
-    IdSet unassigned = new IdSet();
+    shared IdSet unassigned = new IdSet();
     // möglicherweise verschoben, mit der Regel, die den Move begründet
-    IdMap moved = new IdMap();
+    shared IdMap moved = new IdMap();
 
     static Flow deadFlow() {
         Flow f = new Flow();
@@ -233,10 +236,10 @@ public:
     Flow dup() {
         Flow c = new Flow();
         c.dead = dead;
-        c.nonnull = nonnull.dup();
-        c.lost = lost.dup();
-        c.unassigned = unassigned.dup();
-        c.moved = moved.dup();
+        c.nonnull = nonnull;
+        c.lost = lost;
+        c.unassigned = unassigned;
+        c.moved = moved;
         return c;
     }
 
@@ -275,15 +278,94 @@ public:
     void narrow(IdSet ids) mut {
         if (!dead) {
             for (i64 x : ids.items) {
-                nonnull.add(x);
+                addNonnull(x);
             }
         }
     }
 
     void unnarrow(i64 id, string rule) mut {
-        if (nonnull.remove(id) || !lost.has(id)) {
-            lost.put(id, rule);
+        if (removeNonnull(id) || !lost.has(id)) {
+            putLost(id, rule);
         }
+    }
+
+    // ------------------------------------------------------------ Änderungen (Kopie beim Schreiben)
+
+    void addNonnull(i64 x) mut {
+        if (!nonnull.has(x)) {
+            IdSet n = nonnull.dup();
+            n.add(x);
+            nonnull = n;
+        }
+    }
+
+    bool removeNonnull(i64 x) mut {
+        if (!nonnull.has(x)) {
+            return false;
+        }
+        IdSet n = nonnull.dup();
+        discard n.remove(x);
+        nonnull = n;
+        return true;
+    }
+
+    void addUnassigned(i64 x) mut {
+        if (!unassigned.has(x)) {
+            IdSet n = unassigned.dup();
+            n.add(x);
+            unassigned = n;
+        }
+    }
+
+    bool removeUnassigned(i64 x) mut {
+        if (!unassigned.has(x)) {
+            return false;
+        }
+        IdSet n = unassigned.dup();
+        discard n.remove(x);
+        unassigned = n;
+        return true;
+    }
+
+    void putLost(i64 k, string v) mut {
+        i64 at = lost.find(k);
+        if (at >= 0 && lost.vals[at] == v) {
+            return;
+        }
+        IdMap m = lost.dup();
+        m.put(k, v);
+        lost = m;
+    }
+
+    // entfernt k und liefert seinen Wert; "", wenn es fehlte
+    string takeLost(i64 k) mut {
+        if (!lost.has(k)) {
+            return "";
+        }
+        IdMap m = lost.dup();
+        string v = m.take(k);
+        lost = m;
+        return v;
+    }
+
+    void putMoved(i64 k, string v) mut {
+        i64 at = moved.find(k);
+        if (at >= 0 && moved.vals[at] == v) {
+            return;
+        }
+        IdMap m = moved.dup();
+        m.put(k, v);
+        moved = m;
+    }
+
+    string takeMoved(i64 k) mut {
+        if (!moved.has(k)) {
+            return "";
+        }
+        IdMap m = moved.dup();
+        string v = m.take(k);
+        moved = m;
+        return v;
     }
 }
 
