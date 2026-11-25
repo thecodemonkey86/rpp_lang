@@ -1,0 +1,248 @@
+// Standardbibliothek: rpp.json (Kapitel 13, R-13.34 bis R-13.36)
+package rpp.json;
+
+using rpp.collections.Map;
+using rpp.core.ArgumentException;
+using rpp.core.FormatException;
+using rpp.text.StringBuilder;
+
+export enum JsonKind { Null, Boolean, Number, String, Array, Object }
+
+export class JsonParseException : FormatException {
+public:
+    i64 line;
+    i64 column;
+
+    constructor(string message, i64 line, i64 column) : base(message) {
+        this.line = line;
+        this.column = column;
+    }
+}
+
+export class Json {
+private:
+    static const i64 MAX_DEPTH = 128;
+    JsonKind type;
+    bool booleanValue = false;
+    string textValue = "";
+    Json[] items = [];
+    string[] keys = [];
+    Map<string, i64>? members = null;
+    // Ein leerer Borrow muss wie jeder Rückgabe-Borrow von this ausgehen.
+    Json? missing = null;
+
+    constructor(JsonKind type) { this.type = type; }
+
+    void requireKind(JsonKind expected) {
+        if (type != expected) { fail("Unexpected JSON kind"); }
+    }
+
+    static Json fromNumberText(string text) {
+        Json value = new Json(JsonKind::Number);
+        value.textValue = text;
+        return value;
+    }
+
+    static Json readArray(mut JsonCursor cursor, i64 depth) {
+        Json value = newArray();
+        cursor.skipWhitespace();
+        if (cursor.eat(']')) { return value; }
+        while (true) {
+            value.append(readValue(mut cursor, depth));
+            cursor.skipWhitespace();
+            if (cursor.eat(']')) { return value; }
+            cursor.expect(',', "Expected ',' or ']'");
+        }
+    }
+
+    static Json readObject(mut JsonCursor cursor, i64 depth) {
+        Json value = newObject();
+        cursor.skipWhitespace();
+        if (cursor.eat('}')) { return value; }
+        while (true) {
+            cursor.skipWhitespace();
+            i64 line = cursor.line;
+            i64 column = cursor.column;
+            string key = cursor.readString();
+            if (value.get(key) != null) {
+                throw new JsonParseException("Duplicate object key", line, column);
+            }
+            cursor.skipWhitespace();
+            cursor.expect(':', "Expected ':' after object key");
+            value.addMember(key, readValue(mut cursor, depth));
+            cursor.skipWhitespace();
+            if (cursor.eat('}')) { return value; }
+            cursor.expect(',', "Expected ',' or '}'");
+        }
+    }
+
+    static Json readValue(mut JsonCursor cursor, i64 depth) {
+        cursor.skipWhitespace();
+        char first = cursor.peek();
+        if (first == '[' || first == '{') {
+            if (depth == MAX_DEPTH) { throw cursor.error("JSON nesting limit exceeded"); }
+            cursor.advance();
+            if (first == '[') { return readArray(mut cursor, depth + 1); }
+            return readObject(mut cursor, depth + 1);
+        }
+        switch (first) {
+            case 'n': cursor.literal("null"); return newNull();
+            case 't': cursor.literal("true"); return fromBoolean(true);
+            case 'f': cursor.literal("false"); return fromBoolean(false);
+            case '"': return fromString(cursor.readString());
+            default:
+                if (first == '-' || JsonCursor::isDigit(first)) {
+                    return fromNumberText(cursor.readNumber());
+                }
+                throw cursor.error("Expected a JSON value");
+        }
+    }
+
+    static void writeString(mut StringBuilder output, string text) {
+        output.appendChar('"');
+        for (char c : text) {
+            switch (c) {
+                case '"': output.append("\\\""); break;
+                case '\\': output.append("\\\\"); break;
+                default:
+                    i64 code = cast<i64>(c);
+                    if (code < 32) {
+                        string hex = "0123456789abcdef";
+                        output.append("\\u00");
+                        output.appendChar(hex[code / 16]);
+                        output.appendChar(hex[code % 16]);
+                    } else {
+                        output.appendChar(c);
+                    }
+                    break;
+            }
+        }
+        output.appendChar('"');
+    }
+
+    static void writeValue(mut StringBuilder output, Json value, i64 depth) {
+        switch (value.type) {
+            case JsonKind::Null: output.append("null"); break;
+            case JsonKind::Boolean: output.append(value.booleanValue ? "true" : "false"); break;
+            case JsonKind::Number: output.append(value.textValue); break;
+            case JsonKind::String: writeString(mut output, value.textValue); break;
+            case JsonKind::Array:
+                if (depth == MAX_DEPTH) { throw new ArgumentException("JSON nesting limit exceeded"); }
+                output.appendChar('[');
+                for (i64 i = 0; i < value.items.length; i++) {
+                    if (i != 0) { output.appendChar(','); }
+                    writeValue(mut output, value.items[i], depth + 1);
+                }
+                output.appendChar(']');
+                break;
+            case JsonKind::Object:
+                if (depth == MAX_DEPTH) { throw new ArgumentException("JSON nesting limit exceeded"); }
+                output.appendChar('{');
+                for (i64 i = 0; i < value.items.length; i++) {
+                    if (i != 0) { output.appendChar(','); }
+                    writeString(mut output, value.keyAt(i));
+                    output.appendChar(':');
+                    writeValue(mut output, value.items[i], depth + 1);
+                }
+                output.appendChar('}');
+                break;
+        }
+    }
+
+public:
+    nodiscard static Json parse(string text) {
+        JsonCursor cursor = new JsonCursor(text);
+        Json value = readValue(mut cursor, 0);
+        cursor.skipWhitespace();
+        if (!cursor.atEnd()) { throw cursor.error("Unexpected text after JSON value"); }
+        return value;
+    }
+
+    nodiscard static string stringify(Json value) {
+        StringBuilder output = new StringBuilder();
+        writeValue(mut output, value, 0);
+        return output.toString();
+    }
+
+    nodiscard static Json newNull() { return new Json(JsonKind::Null); }
+
+    nodiscard static Json fromBoolean(bool boolean) {
+        Json value = new Json(JsonKind::Boolean);
+        value.booleanValue = boolean;
+        return value;
+    }
+
+    nodiscard static Json fromNumber(string text) {
+        JsonCursor cursor = new JsonCursor(text);
+        string number = cursor.readNumber();
+        if (!cursor.atEnd()) { throw cursor.error("Unexpected text after JSON number"); }
+        return fromNumberText(number);
+    }
+
+    nodiscard static Json fromString(string text) {
+        Json value = new Json(JsonKind::String);
+        value.textValue = text;
+        return value;
+    }
+
+    nodiscard static Json newArray() { return new Json(JsonKind::Array); }
+    nodiscard static Json newObject() {
+        Json value = new Json(JsonKind::Object);
+        value.members = new Map<string, i64>();
+        return value;
+    }
+
+    nodiscard JsonKind kind() { return type; }
+
+    nodiscard bool asBoolean() {
+        requireKind(JsonKind::Boolean);
+        return booleanValue;
+    }
+
+    nodiscard string asNumberText() {
+        requireKind(JsonKind::Number);
+        return textValue;
+    }
+
+    nodiscard string asString() {
+        requireKind(JsonKind::String);
+        return textValue;
+    }
+
+    nodiscard i64 length() {
+        if (type != JsonKind::Object) { requireKind(JsonKind::Array); }
+        return items.length;
+    }
+
+    ref Json at(i64 index) {
+        requireKind(JsonKind::Array);
+        return this.items[index];
+    }
+
+    ref Json? get(string key) {
+        requireKind(JsonKind::Object);
+        i64? index = this.members?.get(key);
+        if (index == null) { return this.missing; }
+        return this.items[index];
+    }
+
+    nodiscard string keyAt(i64 index) {
+        requireKind(JsonKind::Object);
+        return keys[index];
+    }
+
+    void append(own Json value) mut {
+        requireKind(JsonKind::Array);
+        items.push(value);
+    }
+
+    void addMember(string key, own Json value) mut {
+        requireKind(JsonKind::Object);
+        ref mut Map<string, i64>? lookup = mut this.members;
+        if (lookup == null) { fail("Missing JSON object index"); }
+        if (lookup.contains(key)) { throw new ArgumentException("Duplicate object key"); }
+        lookup.put(key, items.length);
+        keys.push(key);
+        items.push(value);
+    }
+}

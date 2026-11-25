@@ -1,8 +1,8 @@
 # R++ Standardbibliothek (Kapitel 13)
 
-Stand: 23.11.2026, Entwurf 0.8. Dieses Dokument füllt Kapitel 13 des „R++ Spezifikationsgerüsts“ mit einem **ersten Schnitt**: genau dem, was ein Compiler für R++ braucht, der in R++ geschrieben ist und sich selbst übersetzt (Abschnitte 2 bis 7). Threads, Netz, Zeit, reguläre Ausdrücke und Datenformate wie JSON gehören nicht dazu. Abschnitt 9 beschreibt den Ausbau darüber hinaus; die Abschnitte 10 bis 15 legen die ersten Ausbau-Pakete `rpp.random`, die Vektor-Algorithmen, `rpp.math`, die Text-Hilfen, die Datei-Operationen sowie `Deque` und `getOrPut` fest.
+Stand: 25.11.2026, Entwurf 0.8. Dieses Dokument füllt Kapitel 13 des „R++ Spezifikationsgerüsts“ mit einem **ersten Schnitt**: genau dem, was ein Compiler für R++ braucht, der in R++ geschrieben ist und sich selbst übersetzt (Abschnitte 2 bis 7). Abschnitt 9 beschreibt den weiteren Ausbau. Die Abschnitte 10 bis 16 legen `rpp.random`, die Vektor-Algorithmen, `rpp.math`, die Text- und Datei-Hilfen, `Deque`, `getOrPut` und `rpp.json` fest.
 
-Normativ sind in diesem Entwurf nur die Grundsätze (Abschnitt 1), die Teile, auf die sich andere Kapitel stützen (`Exception`, `Equatable`, `Comparable`, `Hashable`, `Iterable`), und die Ausbau-Pakete `rpp.random` (Abschnitt 10), `Vectors` (Abschnitt 11), `rpp.math` (Abschnitt 12), `Text` (Abschnitt 13), der `File`-Ausbau (Abschnitt 14) sowie `Deque` und `getOrPut` (Abschnitt 15). Die übrigen Schnittstellen sind ein Arbeitsstand: Die Bibliotheken unter `rpp` bleiben bis zum Abschluss der Selbstübersetzung auf Version 0.x und dürfen sich ändern.
+Normativ sind in diesem Entwurf die Grundsätze (Abschnitt 1), die Teile, auf die sich andere Kapitel stützen (`Exception`, `Equatable`, `Comparable`, `Hashable`, `Iterable`), und die Ausbau-Pakete in den Abschnitten 10 bis 16. Die übrigen Schnittstellen sind ein Arbeitsstand: Die Bibliotheken unter `rpp` bleiben bis zum Abschluss der Selbstübersetzung auf Version 0.x und dürfen sich ändern.
 
 Grundsätze, die beim Schreiben zusätzlich festgelegt werden mussten, stehen in Abschnitt 0; sie sind am 21.11.2026 alle angenommen worden.
 
@@ -25,7 +25,7 @@ Grundsätze, die beim Schreiben zusätzlich festgelegt werden mussten, stehen in
 
 ## 1. Grundsätze
 
-**R-13.1 (Aufbau).** Die Standardbibliothek besteht aus den Bibliotheken in Abschnitt 2 bis 7 und den Ausbau-Bibliotheken in Abschnitt 10 bis 15. Sie stehen unter dem reservierten Besitzer `rpp` (Designentscheidungen, Abschnitt 13b); niemand sonst kann unter `rpp` veröffentlichen.
+**R-13.1 (Aufbau).** Die Standardbibliothek besteht aus den Bibliotheken in Abschnitt 2 bis 7 und den Ausbau-Bibliotheken in Abschnitt 10 bis 16. Sie stehen unter dem reservierten Besitzer `rpp` (Designentscheidungen, Abschnitt 13b); niemand sonst kann unter `rpp` veröffentlichen.
 
 **R-13.2 (Version).** Bis ein in R++ geschriebener Compiler sich selbst übersetzt, tragen die Bibliotheken unter `rpp` Versionen 0.x. Ihre Schnittstellen dürfen sich in dieser Zeit ohne neue Hauptversion ändern.
 
@@ -300,7 +300,7 @@ public:
 
 ## 9. Ausbau über den ersten Schnitt hinaus (Arbeitsstand)
 
-Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. Darüber hinaus wächst die Bibliothek in Paketen unter `rpp` (V-13.9). Dieser Abschnitt ist ein Arbeitsstand, keine normative Festlegung; nur Abschnitt 10 ist normativ.
+Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. Darüber hinaus wächst die Bibliothek in Paketen unter `rpp` (V-13.9). Dieser Abschnitt beschreibt den Arbeitsstand. Die normativen Festlegungen zum Ausbau stehen in den Abschnitten 10 bis 16.
 
 **Übersetzungsregeln beim Portieren aus anderen Sprachen.** Nicht die API wird kopiert, sondern das Konzept an R++ angepasst:
 
@@ -325,7 +325,7 @@ Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. 
 | A | `rpp.io` (Ausbau) | Datei-Operationen und gepuffertes Lesen mit `TextReader` (Abschnitt 14, **festgelegt**). Offen ist die Änderungszeit (braucht `rpp.time`). | Java `BufferedReader`, Go `os` |
 | B | `rpp.iter` | lazy `map`/`filter`/`take`/`flatMap`/`chain` über dem Cursor-Protokoll | Rust Iterator, Kotlin Sequence, C++20 ranges |
 | B | `rpp.regex` | lineare Zeit, kein katastrophales Backtracking | RE2 (Go) |
-| B | `rpp.json` | Pull-Parser und Baum; Parsefehler mit Zeile/Spalte | Go `encoding/json`, Rust `serde_json` |
+| B | `rpp.json` | Typisierter Baum, `parse` und `stringify`, Parsefehler mit Zeile und Spalte (Abschnitt 16, **festgelegt**). Offen bleibt der Pull-Parser. | Go `encoding/json`, Rust `serde_json` |
 | B | `rpp.time` | `Duration`, monotone `Instant` (Ausbau von `ElapsedTimer`) | Rust `std::time`, Java `java.time` |
 | B | `rpp.encoding` | Base64, Hex, UTF-16 | Go, Rust |
 | B | `rpp.hash` | SHA-256 (wird für die Prüfsummen in `rpp.lock` gebraucht, Designentscheidungen 13b) | Rust `sha2` |
@@ -566,8 +566,57 @@ ref mut V getOrPut(own K key, Func<V> factory) mut;
 
 Liefert einen Borrow auf den Wert zum Schlüssel. Fehlt der Schlüssel, wird `factory()` aufgerufen, der Wert eingesetzt und sein Borrow zurückgegeben; die Factory wird **nur** im fehlenden Fall aufgerufen. Der Rückgabewert ist ein veränderlicher Borrow (`ref mut V`). `getOrPut` ist eingebaut (`fail("eingebaut")`), damit es auch für `own`-Schlüssel funktioniert – eine reine R++-Fassung müsste den Schlüssel nach `put` erneut verwenden, was bei verschobenen `own`-Schlüsseln nicht geht. Als R++-Methode behandeln beide Compiler die Signatur gleich (V-13.10).
 
+## 16. rpp.json
 
+**R-13.34 (JSON-Baum).** Ein `Json`-Knoten hat genau eine der sechs Arten aus `JsonKind`. Ein Array besitzt seine Elemente, ein Objekt seine Feldwerte. `append` und `addMember` übernehmen den Besitz des übergebenen Knotens. Die Feldnamen sind eindeutig. `addMember` wirft bei einem vorhandenen Schlüssel eine `ArgumentException` und lässt das Objekt unverändert.
 
+```cpp
+export enum JsonKind { Null, Boolean, Number, String, Array, Object }
 
+export class JsonParseException : FormatException {
+public:
+    i64 line;
+    i64 column;
+    constructor(string message, i64 line, i64 column);
+}
 
+export class Json {
+public:
+    nodiscard static Json parse(string text);
+    nodiscard static string stringify(Json value);
+    nodiscard static Json newNull();
+    nodiscard static Json fromBoolean(bool boolean);
+    nodiscard static Json fromNumber(string text);
+    nodiscard static Json fromString(string text);
+    nodiscard static Json newArray();
+    nodiscard static Json newObject();
+    nodiscard JsonKind kind();
+    nodiscard bool asBoolean();
+    nodiscard string asNumberText();
+    nodiscard string asString();
+    nodiscard i64 length();
+    ref Json at(i64 index);
+    ref Json? get(string key);
+    nodiscard string keyAt(i64 index);
+    void append(own Json value) mut;
+    void addMember(string key, own Json value) mut;
+}
+```
 
+`length()` zählt die Elemente eines Arrays oder die Felder eines Objekts. `at(index)` liefert einen Borrow auf ein Array-Element. `keyAt(index)` liefert den Feldnamen an der angegebenen Position in Einfügereihenfolge. Beide Indizes beginnen bei 0. `get(key)` liefert einen Borrow auf den Feldwert oder R++-`null`, wenn der Schlüssel fehlt. Ein vorhandenes Feld mit JSON-`null` liefert einen Knoten der Art `JsonKind::Null`. Schlüssel werden nach den dekodierten String-Inhalten verglichen. Aufrufe für die falsche Knotenart sind Programmfehler. Ungültige Indizes führen zu einem `IndexError`.
+
+Zahlen speichern ihren gültigen JSON-Zahlentext einschließlich Vorzeichen, Nachkommastellen und Exponent. `fromNumber(text)` prüft genau eine Zahl gemäß R-13.35 ohne umgebenden Leerraum und wirft sonst `JsonParseException`. `asNumberText()` liefert die ursprüngliche Schreibweise. Dadurch bleiben auch Zahlen außerhalb der eingebauten R++-Zahlentypen exakt erhalten. Aufrufer können den Text bei Bedarf mit `tryParse` in einen passenden R++-Zahlentyp umwandeln.
+
+**R-13.35 (Einlesen).** `Json::parse` liest genau einen JSON-Wert aus einem R++-`string`. An der Wurzel darf jede Knotenart stehen. Außerhalb von Strings gelten Leerzeichen, Tabulator, CR und LF als Leerraum. Literale heißen `null`, `true` und `false`. Arrays trennen Werte mit Kommas, Objekte trennen Felder mit Kommas und setzen einen Doppelpunkt zwischen den als String geschriebenen Schlüssel und seinen Wert. Beide Container dürfen leer sein. Ein abschließendes Komma, ein doppelter Schlüssel, ein Kommentar, eine BOM oder weiterer Text nach dem Wert sind Syntaxfehler.
+
+```text
+number = '-'? ('0' | [1-9][0-9]*) ('.' [0-9]+)? ([eE] [+-]? [0-9]+)?
+```
+
+Strings stehen in doppelten Anführungszeichen. Zulässige Escapes sind `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t` und `\u` mit genau vier hexadezimalen Ziffern. Ein High Surrogate muss unmittelbar von einem als `\u` geschriebenen Low Surrogate gefolgt werden. Das Paar ergibt einen Unicode-Skalarwert. Einzelne Surrogates und unmaskierte Steuerzeichen von U+0000 bis U+001F sind Syntaxfehler.
+
+Ein Syntaxfehler wirft `JsonParseException`. `line` und `column` beginnen bei 1 und bezeichnen die Fehlerstelle in Unicode-Skalarwerten. CR, LF und CRLF zählen jeweils als ein Zeilenumbruch. Bei unerwartetem Eingabeende zeigt die Position unmittelbar hinter das letzte Zeichen. Bei einem doppelten Schlüssel zeigt sie auf das öffnende Anführungszeichen des zweiten Schlüssels.
+
+Es sind bis zu 128 gleichzeitig geöffnete Arrays und Objekte zulässig. Ein Container an der Wurzel zählt als einer. Skalare erhöhen die Schachtelungstiefe nicht. Beim 129. öffnenden Container wirft `parse` eine `JsonParseException` an dessen öffnender Klammer.
+
+**R-13.36 (Schreiben).** `Json::stringify` gibt kompaktes JSON aus. Arrays folgen der Elementreihenfolge, Objekte der Einfügereihenfolge. Zahlen werden in ihrer gespeicherten Schreibweise ausgegeben. Strings und Schlüssel werden in Anführungszeichen gesetzt. Anführungszeichen und Rückstriche werden maskiert. Steuerzeichen von U+0000 bis U+001F erscheinen als `\u00xx` mit kleingeschriebenen Hexziffern. Die übrigen Unicode-Skalarwerte erscheinen direkt. Wird die in R-13.35 festgelegte Schachtelungstiefe überschritten, wirft `stringify` eine `ArgumentException`.

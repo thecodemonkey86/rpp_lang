@@ -19,6 +19,7 @@ CONFORMANCE = ROOT / "konformitaet"
 ARGUMENTS = CONFORMANCE / "kap12_ausfuehrung/laufzeit/l08_argumente.rpp"
 DIVISION = CONFORMANCE / "kap04_typen/laufzeit/l02_division_durch_null.rpp"
 NULL_ERROR = CONFORMANCE / "kap06_null/abgelehnt/n08_ersatz_nicht_nullbar.rpp"
+JSON_RUNTIME = CONFORMANCE / "kap13_bibliothek/laufzeit"
 
 
 def rppc(profile):
@@ -97,6 +98,13 @@ def check_native():
         ("arguments", ARGUMENTS, True, ["Ada", "two words"], 0, "2\nAda\ntwo words\n", ""),
         ("division", DIVISION, False, [], 2, "vorher\n", "DivisionError: Division by zero"),
     ]
+    for name, source, expected in (
+        ("json-tree", "l41_json_baum.rpp", "JSON tree OK\n"),
+        ("json-errors", "l42_json_fehler.rpp", "JSON errors OK\n"),
+        ("json-depth", "l43_json_tiefe.rpp", "JSON depth OK\n"),
+    ):
+        for mode in ("debug", "release"):
+            cases.append((f"{name}-{mode}", JSON_RUNTIME / source, mode == "release", [], 0, expected, ""))
     for name, source, release, args, exit_code, stdout, stderr in cases:
         print(f"Building native {name} test", flush=True)
         with tempfile.TemporaryDirectory(prefix="rpp-native-") as directory:

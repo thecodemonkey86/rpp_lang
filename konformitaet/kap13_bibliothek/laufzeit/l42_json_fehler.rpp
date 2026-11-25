@@ -1,0 +1,68 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.34, R-13.35
+// Erwartet: Ausgabe "JSON errors OK"; Exit-Code 0
+using rpp.json.Json;
+using rpp.json.JsonParseException;
+
+class Verify {
+public:
+    static void invalid(string text, i64 line, i64 column) {
+        try {
+            Json value = Json::parse(text);
+            fail("Accepted invalid JSON: " + Json::stringify(value));
+        } catch (JsonParseException error) {
+            if (error.line != line || error.column != column) {
+                fail("Unexpected JSON error position: " + error.line.toString() + ":" + error.column.toString());
+            }
+        }
+    }
+}
+
+i32 main(string[] args) {
+    Verify::invalid("", 1, 1);
+    Verify::invalid("null false", 1, 6);
+    Verify::invalid("truX", 1, 4);
+    Verify::invalid("[1,]", 1, 4);
+    Verify::invalid("[1 2]", 1, 4);
+    Verify::invalid("{\"x\":1,}", 1, 8);
+    Verify::invalid("{\"x\" 1}", 1, 6);
+    Verify::invalid("{\"x\":", 1, 6);
+    Verify::invalid("{\n\"a\":1,\r\n\"\\u0061\":2}", 3, 1);
+    Verify::invalid("[\"😀\",?]", 1, 6);
+    Verify::invalid("[\r?]", 2, 1);
+    Verify::invalid("\"x\ny\"", 1, 3);
+    Verify::invalid("\"x\0y\"", 1, 3);
+    Verify::invalid("\"abc", 1, 5);
+    Verify::invalid("\"\\q\"", 1, 3);
+    Verify::invalid("\"\\u12g4\"", 1, 6);
+    Verify::invalid("\"\\ud800\"", 1, 8);
+    Verify::invalid("\"\\ud800\\u0041\"", 1, 10);
+    Verify::invalid("\"\\udfff\"", 1, 4);
+    Verify::invalid("-", 1, 2);
+    Verify::invalid("01", 1, 2);
+    Verify::invalid("1.", 1, 3);
+    Verify::invalid("1e+", 1, 4);
+    Verify::invalid("+1", 1, 1);
+    Verify::invalid(".5", 1, 1);
+    Verify::invalid("0x10", 1, 2);
+    Verify::invalid("NaN", 1, 1);
+    Verify::invalid("\"ok\"" + cast<char>(160).toString(), 1, 5);
+
+    try {
+        Json value = Json::fromNumber("12 ");
+        fail("Accepted invalid JSON number: " + value.asNumberText());
+    } catch (FormatException error) {
+        if (error.message == "") { fail("Missing format error message"); }
+    }
+
+    Json object = Json::newObject();
+    object.addMember("a", Json::newNull());
+    try {
+        object.addMember("a", Json::fromBoolean(false));
+        fail("Accepted duplicate member");
+    } catch (ArgumentException error) {
+        if (Json::stringify(object) != "{\"a\":null}") { fail("Object changed on duplicate member"); }
+    }
+    print("JSON errors OK");
+    return 0;
+}

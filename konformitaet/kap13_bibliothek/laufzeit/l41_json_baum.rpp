@@ -1,0 +1,54 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.34, R-13.35, R-13.36
+// Erwartet: Ausgabe "JSON tree OK"; Exit-Code 0
+using rpp.json.Json;
+using rpp.json.JsonKind;
+
+class Verify {
+public:
+    static void check(bool condition, string message) {
+        if (!condition) { fail(message); }
+    }
+}
+
+i32 main(string[] args) {
+    string number = "18446744073709551616000001";
+    string text = " { \"z\":null, \"a\":[false," + number + ",-0,1.25E+400,{},[]],"
+        + "\"s\":\"Grüße \\uD83D\\uDE00\\/\\\"\\\\\\b\\f\\n\\r\\t\\u0000\\u001f\" }\r\n";
+    Json root = Json::parse(text);
+    Verify::check(root.kind() == JsonKind::Object && root.length() == 3, "object kind and length");
+    Verify::check(root.keyAt(0) == "z" && root.keyAt(1) == "a" && root.keyAt(2) == "s", "key order");
+    ref Json? nullValue = root.get("z");
+    Verify::check(nullValue != null && nullValue.kind() == JsonKind::Null, "JSON null");
+    Verify::check(root.get("missing") == null, "missing object member");
+    ref Json? array = root.get("a");
+    if (array == null) { fail("missing array"); }
+    Verify::check(array.kind() == JsonKind::Array && array.length() == 6, "array kind and length");
+    Verify::check(array.at(0).kind() == JsonKind::Boolean && !array.at(0).asBoolean(), "boolean");
+    Verify::check(array.at(1).kind() == JsonKind::Number && array.at(1).asNumberText() == number, "large integer");
+    Verify::check(array.at(2).asNumberText() == "-0" && array.at(3).asNumberText() == "1.25E+400", "exact numbers");
+    Verify::check(array.at(4).kind() == JsonKind::Object && array.at(4).length() == 0, "empty object");
+    Verify::check(array.at(5).kind() == JsonKind::Array && array.at(5).length() == 0, "empty array");
+    ref Json? stringValue = root.get("s");
+    if (stringValue == null) { fail("missing string"); }
+    string decoded = "Grüße 😀/\"\\" + cast<char>(8).toString() + cast<char>(12).toString()
+        + "\n\r\t\0" + cast<char>(31).toString();
+    Verify::check(stringValue.kind() == JsonKind::String && stringValue.asString() == decoded, "decoded escapes");
+
+    string compact = "{\"z\":null,\"a\":[false," + number + ",-0,1.25E+400,{},[]],"
+        + "\"s\":\"Grüße 😀/\\\"\\\\\\u0008\\u000c\\u000a\\u000d\\u0009\\u0000\\u001f\"}";
+    Verify::check(Json::stringify(root) == compact, "compact JSON and escaped controls");
+    Verify::check(Json::stringify(Json::parse(compact)) == compact, "round trip");
+    Verify::check(Json::parse("\ttrue ").asBoolean(), "top-level primitive");
+
+    Json built = Json::newObject();
+    Json items = Json::newArray();
+    items.append(Json::newNull());
+    items.append(Json::fromBoolean(true));
+    items.append(Json::fromNumber("-2e-1000"));
+    items.append(Json::fromString(""));
+    built.addMember("\"", items);
+    Verify::check(Json::stringify(built) == "{\"\\\"\":[null,true,-2e-1000,\"\"]}", "constructed tree");
+    print("JSON tree OK");
+    return 0;
+}

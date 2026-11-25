@@ -1,0 +1,28 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.35, R-13.36
+// Erwartet: Ausgabe "JSON depth OK"; Exit-Code 0
+using rpp.json.Json;
+using rpp.json.JsonParseException;
+using rpp.text.Text;
+
+i32 main(string[] args) {
+    string nested = Text::repeat("[", 128) + "null" + Text::repeat("]", 128);
+    Json value = Json::parse(nested);
+    if (Json::stringify(value) != nested) { fail("128 nested arrays must round-trip"); }
+    Json deeper = Json::newObject();
+    deeper.addMember("extra", value);
+    try {
+        string result = Json::stringify(deeper);
+        fail("Serialized excessive nesting: " + result);
+    } catch (ArgumentException error) {
+        if (error.message == "") { fail("Missing depth error message"); }
+    }
+    try {
+        Json excess = Json::parse("{\"extra\":" + nested + "}");
+        fail("Parsed excessive nesting: " + excess.length().toString());
+    } catch (JsonParseException error) {
+        if (error.line != 1 || error.column != 137) { fail("Wrong nesting error position"); }
+    }
+    print("JSON depth OK");
+    return 0;
+}
