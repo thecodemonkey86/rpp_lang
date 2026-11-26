@@ -119,7 +119,7 @@ impl Interp {
         body_is_native.then(|| format!("{}.{}.{}", def.package, def.name, m.name))
     }
 
-    fn std_throw(&mut self, class: &str, args: Vec<Value>) -> R<Value> {
+    fn std_throw(&mut self, class: &str, args: &mut [Value]) -> R<Value> {
         let Some(d) = self.p.std_def(class) else { return Err(self.internal(format!("{class} fehlt"))) };
         let ctor = self.p.defs[d].ctors.iter().find(|c| c.params.len() == args.len()).map(|c| Ctor { ast: c.ast, params: c.params.clone() });
         let o = self.new_object(d, ctor, args)?;
@@ -127,7 +127,7 @@ impl Interp {
     }
 
     fn io_error(&mut self, msg: String, path: &str) -> R<Value> {
-        self.std_throw("rpp.core.IOException", vec![str_value(msg), str_value(path)])
+        self.std_throw("rpp.core.IOException", &mut [str_value(msg), str_value(path)])
     }
 
     /// Objekt ohne Konstruktor anlegen (für eingebaute Rückgabewerte).
@@ -149,7 +149,7 @@ impl Interp {
         let Some(d) = v.obj().and_then(|o| o.class) else { return Ok(0) };
         let m = self.p.methods_of(&Ty::Named(d, Vec::new()), "hash").into_iter().find(|m| m.params.is_empty() && m.has_body);
         match m {
-            Some(m) => Ok(self.call_method(&m, Some(v.view()), Vec::new())?.as_i128().unwrap_or(0) as i64),
+            Some(m) => Ok(self.call_method(&m, Some(v.view()), &mut [])?.as_i128().unwrap_or(0) as i64),
             None => Ok(0),
         }
     }
@@ -198,28 +198,28 @@ impl Interp {
         Ok(())
     }
 
-    pub(crate) fn native(&mut self, name: &str, m: &MethodInfo, this: Option<Value>, mut args: Vec<Value>) -> R<Value> {
-        let text = |args: &Vec<Value>, i: usize| args.get(i).map(to_text).unwrap_or_default();
+    pub(crate) fn native(&mut self, name: &str, m: &MethodInfo, this: Option<Value>, args: &mut [Value]) -> R<Value> {
+        let text = |args: &[Value], i: usize| args.get(i).map(to_text).unwrap_or_default();
         let o = this.as_ref().and_then(|t| t.obj().cloned());
-        let int = |args: &Vec<Value>, i: usize| args.get(i).and_then(Value::as_i128).unwrap_or(0);
+        let int = |args: &[Value], i: usize| args.get(i).and_then(Value::as_i128).unwrap_or(0);
         if let Some(method) = name.strip_prefix("rpp.text.StringView.") {
-            return self.string_view(method, m.owner, &o.unwrap(), &args);
+            return self.string_view(method, m.owner, &o.unwrap(), args);
         }
         match name {
             // ---------------------------------------------------------------- rpp.io
             "rpp.io.Console.write" => {
-                self.console.write_stdout(&text(&args, 0));
+                self.console.write_stdout(&text(args, 0));
                 Ok(Value::Void)
             }
             "rpp.io.Console.error" => {
-                self.console.write_stderr(&format!("{}\n", text(&args, 0)));
+                self.console.write_stderr(&format!("{}\n", text(args, 0)));
                 Ok(Value::Void)
             }
             "rpp.io.Console.readLine" => {
                 Ok(self.console.read_line().map_or(Value::Null, str_value))
             }
             "rpp.io.File.open" => {
-                let path = text(&args, 0);
+                let path = text(args, 0);
                 if !std::path::Path::new(&path).is_file() {
                     return self.io_error(format!("File not found: {path}"), &path);
                 }
@@ -228,7 +228,7 @@ impl Interp {
                 Ok(Value::Obj(f, Form::Own))
             }
             "rpp.io.File.openTextReader" => {
-                let path = text(&args, 0);
+                let path = text(args, 0);
                 let file = match std::fs::File::open(&path) {
                     Ok(file) => file,
                     Err(e) => return self.io_error(format!("{path}: {e}"), &path),
@@ -267,7 +267,7 @@ impl Interp {
                 }
                 match String::from_utf8(line) {
                     Ok(s) => Ok(str_value(s)),
-                    Err(_) => self.std_throw("rpp.core.FormatException", vec![str_value(format!("{}: kein gültiges UTF-8", Self::sb_text(&object)))]),
+                    Err(_) => self.std_throw("rpp.core.FormatException", &mut [str_value(format!("{}: kein gültiges UTF-8", Self::sb_text(&object)))]),
                 }
             }
             "rpp.io.File.readAllText" | "rpp.io.File.readAllBytes" => {
@@ -282,11 +282,11 @@ impl Interp {
                 }
                 match String::from_utf8(bytes) {
                     Ok(s) => Ok(str_value(s)),
-                    Err(_) => self.std_throw("rpp.core.FormatException", vec![str_value(format!("{path}: kein gültiges UTF-8"))]),
+                    Err(_) => self.std_throw("rpp.core.FormatException", &mut [str_value(format!("{path}: kein gültiges UTF-8"))]),
                 }
             }
             "rpp.io.File.writeText" | "rpp.io.File.writeBytes" => {
-                let path = text(&args, 0);
+                let path = text(args, 0);
                 let data = file_data(&args[1]);
                 match std::fs::write(&path, data) {
                     Ok(()) => Ok(Value::Void),
@@ -295,8 +295,8 @@ impl Interp {
             }
             // ---------------------------------------------------------------- rpp.io Datei-Operationen (R-13.31)
             "rpp.io.File.appendText" => {
-                let path = text(&args, 0);
-                let data = text(&args, 1);
+                let path = text(args, 0);
+                let data = text(args, 1);
                 let r = std::fs::OpenOptions::new().append(true).create(true).open(&path)
                     .and_then(|mut f| std::io::Write::write_all(&mut f, data.as_bytes()));
                 match r {
@@ -305,16 +305,16 @@ impl Interp {
                 }
             }
             "rpp.io.File.copyFile" => {
-                let from = text(&args, 0);
-                let to = text(&args, 1);
+                let from = text(args, 0);
+                let to = text(args, 1);
                 match std::fs::copy(&from, &to) {
                     Ok(n) => Ok(Value::I64(n as i64)),
                     Err(e) => self.io_error(format!("{from}: {e}"), &from),
                 }
             }
             "rpp.io.File.moveFile" => {
-                let from = text(&args, 0);
-                let to = text(&args, 1);
+                let from = text(args, 0);
+                let to = text(args, 1);
                 match std::fs::rename(&from, &to) {
                     Ok(()) => Ok(Value::Void),
                     // Auf Windows schlägt rename fehl, wenn das Ziel existiert: ersetzen.
@@ -328,21 +328,21 @@ impl Interp {
                 }
             }
             "rpp.io.File.delete" => {
-                let path = text(&args, 0);
+                let path = text(args, 0);
                 match std::fs::remove_file(&path) {
                     Ok(()) => Ok(Value::Void),
                     Err(e) => self.io_error(format!("{path}: {e}"), &path),
                 }
             }
             "rpp.io.File.size" => {
-                let path = text(&args, 0);
+                let path = text(args, 0);
                 match std::fs::metadata(&path) {
                     Ok(md) => Ok(Value::I64(md.len() as i64)),
                     Err(e) => self.io_error(format!("{path}: {e}"), &path),
                 }
             }
             "rpp.io.SaveFile.open" => {
-                let path = text(&args, 0);
+                let path = text(args, 0);
                 match save_file::SaveFile::open(std::path::Path::new(&path)) {
                     Ok(save) => {
                         let object = self.raw_object(m.owner, vec![str_value(&path)]);
@@ -375,7 +375,7 @@ impl Interp {
                 }
             }
             "rpp.io.Dir.list" => {
-                let path = text(&args, 0);
+                let path = text(args, 0);
                 let rd = match std::fs::read_dir(&path) {
                     Ok(rd) => rd,
                     Err(e) => return self.io_error(format!("{path}: {e}"), &path),
@@ -387,7 +387,7 @@ impl Interp {
                 Ok(Value::Obj(self.new_vec(v), Form::Own))
             }
             "rpp.io.Dir.entries" => {
-                let dir = text(&args, 0);
+                let dir = text(args, 0);
                 let Some(entry_class) = self.p.std_def("rpp.io.DirEntry") else { return Err(self.internal("DirEntry fehlt")) };
                 let Some(kind_enum) = self.p.std_def("rpp.io.FileType") else { return Err(self.internal("FileType fehlt")) };
                 let read = std::fs::read_dir(&dir).and_then(|rd| rd.map(|entry| {
@@ -414,28 +414,28 @@ impl Interp {
                 Ok(Value::Obj(self.new_vec(values), Form::Own))
             }
             // V-13.8
-            "rpp.io.File.exists" => Ok(Value::Bool(std::path::Path::new(&text(&args, 0)).is_file())),
+            "rpp.io.File.exists" => Ok(Value::Bool(std::path::Path::new(&text(args, 0)).is_file())),
             "rpp.io.Path.absolute" => {
-                let p = rpp_sema::project::normalize(std::path::Path::new(&text(&args, 0)));
+                let p = rpp_sema::project::normalize(std::path::Path::new(&text(args, 0)));
                 Ok(str_value(rpp_sema::project::slash_path(&p)))
             }
             "rpp.io.Path.normalizedText" => {
-                let p = rpp_sema::project::lexical_path(&text(&args, 0));
+                let p = rpp_sema::project::lexical_path(&text(args, 0));
                 Ok(str_value(if p.as_os_str().is_empty() { ".".into() } else { rpp_sema::project::slash_path(&p) }))
             }
             "rpp.io.Path.relativeText" => {
-                Ok(rpp_sema::project::relative_to(&text(&args, 0), &text(&args, 1)).map(str_value).unwrap_or(Value::Null))
+                Ok(rpp_sema::project::relative_to(&text(args, 0), &text(args, 1)).map(str_value).unwrap_or(Value::Null))
             }
-            "rpp.io.Dir.exists" => Ok(Value::Bool(std::path::Path::new(&text(&args, 0)).is_dir())),
+            "rpp.io.Dir.exists" => Ok(Value::Bool(std::path::Path::new(&text(args, 0)).is_dir())),
             "rpp.io.Dir.create" => {
-                let path = text(&args, 0);
+                let path = text(args, 0);
                 match std::fs::create_dir_all(&path) {
                     Ok(()) => Ok(Value::Void),
                     Err(e) => self.io_error(format!("{path}: {e}"), &path),
                 }
             }
             "rpp.io.Path.join" => {
-                let (a, b) = (slash(&text(&args, 0)), slash(&text(&args, 1)));
+                let (a, b) = (slash(&text(args, 0)), slash(&text(args, 1)));
                 Ok(str_value(if a.is_empty() {
                     b
                 } else if a.ends_with('/') {
@@ -445,11 +445,11 @@ impl Interp {
                 }))
             }
             "rpp.io.Path.fileName" => {
-                let p = slash(&text(&args, 0));
+                let p = slash(&text(args, 0));
                 Ok(str_value(p.rsplit('/').next().unwrap_or("")))
             }
             "rpp.io.Path.extension" => {
-                let p = slash(&text(&args, 0));
+                let p = slash(&text(args, 0));
                 let file = p.rsplit('/').next().unwrap_or("");
                 Ok(str_value(match file.rfind('.') {
                     Some(i) if i > 0 => &file[i + 1..],
@@ -457,14 +457,14 @@ impl Interp {
                 }))
             }
             "rpp.io.Path.parent" => {
-                let p = slash(&text(&args, 0));
+                let p = slash(&text(args, 0));
                 Ok(str_value(match p.rfind('/') {
                     Some(i) => &p[..i],
                     None => "",
                 }))
             }
             // ---------------------------------------------------------------- rpp.env
-            "rpp.env.Env.get" => Ok(std::env::var(text(&args, 0)).map(str_value).unwrap_or(Value::Null)),
+            "rpp.env.Env.get" => Ok(std::env::var(text(args, 0)).map(str_value).unwrap_or(Value::Null)),
             "rpp.env.ElapsedTimer.monotonicNanos" => {
                 static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
                 let elapsed = ORIGIN.get_or_init(std::time::Instant::now).elapsed();
@@ -484,8 +484,8 @@ impl Interp {
             }
             // ---------------------------------------------------------------- rpp.fmt
             "rpp.fmt.Fmt.padLeft" | "rpp.fmt.Fmt.padRight" => {
-                let s = text(&args, 0);
-                let w = int(&args, 1).max(0) as usize;
+                let s = text(args, 0);
+                let w = int(args, 1).max(0) as usize;
                 let n = s.chars().count();
                 let pad = " ".repeat(w.saturating_sub(n));
                 Ok(str_value(if name.ends_with("Left") { format!("{pad}{s}") } else { format!("{s}{pad}") }))
@@ -498,7 +498,7 @@ impl Interp {
             })),
             "rpp.fmt.Fmt.fixed" => {
                 let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
-                let d = int(&args, 1).clamp(0, 300) as usize;
+                let d = int(args, 1).clamp(0, 300) as usize;
                 Ok(str_value(format!("{x:.d$}")))
             }
             // ---------------------------------------------------------------- rpp.math
@@ -515,10 +515,10 @@ impl Interp {
                 match name.rsplit('.').next().unwrap_or("") {
                     "clear" => s.clear(),
                     "appendLine" => {
-                        s.push_str(&text(&args, 0));
+                        s.push_str(&text(args, 0));
                         s.push('\n');
                     }
-                    _ => s.push_str(&text(&args, 0)),
+                    _ => s.push_str(&text(args, 0)),
                 }
                 let mut slots = o.slots.borrow_mut();
                 if slots.is_empty() {
@@ -537,10 +537,10 @@ impl Interp {
                 match method {
                     "length" => Ok(Value::I64(len as i64)),
                     "begin" => Ok(Value::I64(0)),
-                    "done" => Ok(Value::Bool(int(&args, 0) >= len as i128)),
-                    "next" => Ok(Value::I64(int(&args, 0) as i64 + 1)),
+                    "done" => Ok(Value::Bool(int(args, 0) >= len as i128)),
+                    "next" => Ok(Value::I64(int(args, 0) as i64 + 1)),
                     "at" if !m.mut_this && m.params.first().is_some_and(|p| matches!(p.ty, Ty::Prim(P::I64))) => {
-                        let i = int(&args, 0);
+                        let i = int(args, 0);
                         if i < 0 || i as usize >= len {
                             return Err(self.fatal("IndexError", format!("Cursor {i} is outside 0..{len}")));
                         }
@@ -549,13 +549,14 @@ impl Interp {
                     "contains" => Ok(Value::Bool(self.find(&o, &args[0], map)?.is_some())),
                     "getOrPut" => {
                         // R-13.33: Wert zum Schlüssel, sonst factory() einsetzen.
-                        let factory = args.pop().unwrap_or(Value::Null);
-                        let key = args.pop().unwrap_or(Value::Null);
+                        let mut args = args.iter_mut().rev().map(take_argument);
+                        let factory = args.next().unwrap_or(Value::Null);
+                        let key = args.next().unwrap_or(Value::Null);
                         let i = match self.find(&o, &key, true)? {
                             Some(i) => { self.drop_value(key)?; i }
                             None => {
                                 let value = match &factory {
-                                    Value::Func(c) => self.call_closure(c, vec![])?,
+                                    Value::Func(c) => self.call_closure(c, &mut [])?,
                                     _ => return Err(self.internal("getOrPut ohne Factory")),
                                 };
                                 let Some(d) = self.p.std_def("rpp.collections.Entry") else { return Err(self.internal("Entry fehlt")) };
@@ -581,8 +582,9 @@ impl Interp {
                         }
                     }
                     "put" => {
-                        let value = args.pop().unwrap_or(Value::Null);
-                        let key = args.pop().unwrap_or(Value::Null);
+                        let mut args = args.iter_mut().rev().map(take_argument);
+                        let value = args.next().unwrap_or(Value::Null);
+                        let key = args.next().unwrap_or(Value::Null);
                         match self.find(&o, &key, true)? {
                             // R-13.17: ersetzt den Wert, behält die Position; der alte Wert wird freigegeben
                             Some(i) => {
@@ -604,7 +606,7 @@ impl Interp {
                         Ok(Value::Void)
                     }
                     "add" => {
-                        let x = args.pop().unwrap_or(Value::Null);
+                        let x = args.last_mut().map(take_argument).unwrap_or(Value::Null);
                         if self.find(&o, &x, false)?.is_some() {
                             self.drop_value(x)?;
                         } else {
@@ -623,7 +625,7 @@ impl Interp {
                     }
                     "appendEntry" => {
                         let source = args[0].obj().unwrap();
-                        let i = int(&args, 1) as usize;
+                        let i = int(args, 1) as usize;
                         let key = Self::key_at(source, i, false);
                         self.add_to_index(&o, &key, len)?;
                         let entry = self.own_copy(source.slots.borrow()[i].clone());

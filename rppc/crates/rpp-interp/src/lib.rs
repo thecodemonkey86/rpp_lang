@@ -23,7 +23,7 @@ pub mod value;
 use console::Console;
 use literals::{FileLiterals, PreparedLiteral};
 use rpp_sema::defs::{AstRef, MethodInfo, PInfo, Program, Ret};
-use rpp_sema::rt::{Key, Target};
+use rpp_sema::rt::{ExpressionInfo, Key, Target};
 use rpp_sema::ty::{self, DefId, Form as TForm, Mode, Ty};
 use rpp_syntax::ast::{self, BinaryOp as B, ExprKind as E, Primitive as P, StmtKind as S, UnaryOp as U};
 use std::cell::{Cell, RefCell};
@@ -37,6 +37,7 @@ const MAX_SPARE_SCOPES: usize = 64;
 const MAX_SPARE_BINDINGS: usize = 512;
 const MAX_SPARE_SCOPE_CAPACITY: usize = 64;
 const MAX_SPARE_NAME_CAPACITY: usize = 128;
+const INLINE_ARGS: usize = 4;
 
 pub struct Options {
     pub release: bool,
@@ -139,6 +140,42 @@ struct CachedField {
 enum Slot {
     Cell(Cellv),
     Field(ORef, usize),
+}
+
+impl Slot {
+    fn read(&self, read: impl FnOnce(&Value) -> Value) -> Value {
+        match self {
+            Self::Cell(cell) => read(&cell.borrow()),
+            Self::Field(object, index) => read(&object.slots.borrow()[*index]),
+        }
+    }
+}
+
+/// Speicher für ausgewertete Argumente eines Aufrufs.
+enum ArgumentBuffer {
+    Inline { values: [Value; INLINE_ARGS], len: usize },
+    Heap(Vec<Value>),
+}
+
+impl ArgumentBuffer {
+    fn new(len: usize) -> Self {
+        if len <= INLINE_ARGS {
+            Self::Inline { values: [const { Value::Void }; INLINE_ARGS], len }
+        } else {
+            Self::Heap(vec![Value::Void; len])
+        }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [Value] {
+        match self {
+            Self::Inline { values, len } => &mut values[..*len],
+            Self::Heap(values) => values,
+        }
+    }
+}
+
+fn take_argument(arg: &mut Value) -> Value {
+    std::mem::replace(arg, Value::Void)
 }
 
 /// Konstruktor: Verweis auf die Deklaration und Parameter.
@@ -326,6 +363,10 @@ impl Interp {
 
     fn key(&self, e: &ast::Expr) -> Key {
         (self.file(), e.id)
+    }
+
+    fn expr_info(&self, e: &ast::Expr) -> ExpressionInfo<'static> {
+        self.p.rt.expression(self.key(e))
     }
 
     fn trace(&self) -> Vec<String> {
@@ -740,7 +781,7 @@ impl Interp {
         let Some(d) = o.class else { return String::new() };
         let m = self.p.methods_of(&Ty::Named(d, Vec::new()), "describe").into_iter().find(|m| m.params.is_empty() && m.has_body);
         match m {
-            Some(m) => match self.call_method(&m, Some(Value::Obj(o, Form::Borrow)), Vec::new()) {
+            Some(m) => match self.call_method(&m, Some(Value::Obj(o, Form::Borrow)), &mut []) {
                 Ok(v) => v.as_str().unwrap_or("").to_string(),
                 Err(_) => String::new(),
             },
@@ -1094,12 +1135,12 @@ impl Interp {
         let (Some(begin), Some(done), Some(next), Some(at)) = (find(self, "begin", 0), find(self, "done", 1), find(self, "next", 1), find(self, "at", 1)) else {
             return Err(self.internal("die Klasse ist nicht iterierbar"));
         };
-        let mut c = self.call_method(&begin, Some(coll.clone()), Vec::new())?;
+        let mut c = self.call_method(&begin, Some(coll.clone()), &mut [])?;
         loop {
-            if self.call_method(&done, Some(coll.clone()), vec![c.clone()])?.as_bool() {
+            if self.call_method(&done, Some(coll.clone()), &mut [c.clone()])?.as_bool() {
                 break;
             }
-            let item = self.call_method(&at, Some(coll.clone()), vec![c.clone()])?;
+            let item = self.call_method(&at, Some(coll.clone()), &mut [c.clone()])?;
             let r = self.with_scope(|it| {
                 it.declare(&name.name, item);
                 it.stmt(body)
@@ -1109,7 +1150,7 @@ impl Interp {
                 Err(Flow::Continue) | Ok(()) => {}
                 Err(e) => return Err(e),
             }
-            c = self.call_method(&next, Some(coll.clone()), vec![c])?;
+            c = self.call_method(&next, Some(coll.clone()), &mut [c])?;
         }
         Ok(())
     }
@@ -1325,13 +1366,6 @@ impl Interp {
         }
     }
 
-    fn get(&self, s: &Slot) -> Value {
-        match s {
-            Slot::Cell(c) => c.borrow().clone(),
-            Slot::Field(o, i) => o.slots.borrow()[*i].clone(),
-        }
-    }
-
     fn set(&self, s: &Slot, v: Value) -> Value {
         match s {
             Slot::Cell(c) => c.replace(v),
@@ -1345,8 +1379,8 @@ impl Interp {
             let Value::Tuple(vs) = v else { return Err(self.internal("Tupel erwartet")) };
             for (t, x) in items.iter().zip(vs) {
                 let s = self.slot(t)?;
-                let x = match self.p.rt.types.get(&self.key(t)).cloned() {
-                    Some(tt) => self.convert(x, &tt)?,
+                let x = match self.expr_info(t).ty() {
+                    Some(tt) => self.convert(x, tt)?,
                     None => x,
                 };
                 let old = self.set(&s, x);
@@ -1359,18 +1393,18 @@ impl Interp {
             self.check_place(target, true)?;
         }
         let s = self.slot(target)?;
-        let tt = self.p.rt.types.get(&self.key(target)).cloned();
+        let tt = self.expr_info(target).ty();
         if op == ast::AssignOp::Assign {
             let v = self.eval_store(value)?;
             self.untemp(&v);
-            let v = match &tt {
+            let v = match tt {
                 Some(t) => self.convert(v, t)?,
                 None => v,
             };
             let old = self.set(&s, v);
             return self.drop_value(old);
         }
-        let cur = self.get(&s).view();
+        let cur = s.read(Value::view);
         let rhs = self.eval(value)?;
         let bop = match op {
             ast::AssignOp::Add => B::Add,
@@ -1380,7 +1414,7 @@ impl Interp {
             _ => B::Rem,
         };
         let res = self.arith(bop, &cur, &rhs)?;
-        let res = match &tt {
+        let res = match tt {
             Some(t) => self.convert_exact(res, t)?,
             None => res,
         };
@@ -1432,7 +1466,7 @@ impl Interp {
     /// Wert für einen Besitzer (Initialisierer, Zuweisung, own-Argument, return, throw):
     /// own-Variablen werden verschoben, shared-Verweise gezählt kopiert (Kapitel 5, Abschnitt 7).
     fn eval_store(&mut self, e: &'static ast::Expr) -> R<Value> {
-        let v = match &e.kind {
+        match &e.kind {
             E::Paren(x) => return self.eval_store(x),
             E::Conditional { cond, then, otherwise } => {
                 return if self.cond(cond)? { self.eval_store(then) } else { self.eval_store(otherwise) };
@@ -1441,11 +1475,16 @@ impl Interp {
                 let l = self.eval_store(left)?;
                 return if l.is_null() { self.eval_store(right) } else { Ok(l) };
             }
-            _ if self.p.rt.consumes.contains(&self.key(e)) => self.transfer(e)?,
-            _ => self.eval(e)?,
+            _ => {}
+        }
+        let info = self.expr_info(e);
+        let v = if info.consumes() {
+            self.transfer(e)?
+        } else {
+            self.eval(e)?
         };
-        match self.p.rt.stores.get(&self.key(e)).cloned() {
-            Some(t) => self.convert(v, &t),
+        match info.store() {
+            Some(t) => self.convert(v, t),
             None => Ok(v),
         }
     }
@@ -1583,7 +1622,7 @@ impl Interp {
                     if let Some(d) = o.class {
                         if let Some(i) = self.field_index(self.key(e), d, &n.name) {
                             let s = Slot::Field(o, i);
-                            return Ok(self.get(&s).view());
+                            return Ok(s.read(Value::view));
                         }
                     }
                 }
@@ -1615,15 +1654,17 @@ impl Interp {
                 Ok(Value::Obj(self.new_vec(vs), Form::Own))
             }
             E::New { .. } => {
-                let info = self.p.rt.calls.get(&self.key(e)).cloned();
-                match info.map(|c| c.target) {
+                let info = self.expr_info(e);
+                match info.call().map(|c| c.target.clone()) {
                     Some(Target::Ctor(d, m)) => {
                         let ctor = m.map(|m| Ctor { ast: m.ast, params: m.params });
                         let E::New { args, .. } = &e.kind else { unreachable!() };
                         let params = ctor.as_ref().map(|c| c.params.clone()).unwrap_or_default();
-                        let vals = self.args(args, &params)?;
+                        let mut buffer = ArgumentBuffer::new(args.len());
+                        let vals = buffer.as_mut_slice();
+                        self.args(args, &params, vals)?;
                         // Typargumente mit der Belegung der umgebenden Typ-Parameter (R-7.26)
-                        let targs = match self.p.rt.types.get(&self.key(e)) {
+                        let targs = match info.ty() {
                             Some(Ty::Named(_, a)) if !a.is_empty() => {
                                 let map = self.tmap();
                                 a.iter().map(|t| t.subst(&map)).collect()
@@ -1639,7 +1680,7 @@ impl Interp {
                         Some(Ty::Named(d, a)) => {
                             let ctor = self.default_ctor(d);
                             self.pending_targs = a;
-                            let o = self.new_object(d, ctor, Vec::new())?;
+                            let o = self.new_object(d, ctor, &mut [])?;
                             Ok(Value::Obj(o, Form::Own))
                         }
                         _ => Err(self.internal("new T(): T ist zur Laufzeit nicht bekannt (Typargumente generischer Methoden werden noch nicht mitgeführt)")),
@@ -1649,17 +1690,17 @@ impl Interp {
             }
             E::Cast { expr, .. } => {
                 let v = self.eval(expr)?;
-                let t = self.p.rt.types.get(&self.key(e)).cloned().unwrap_or(Ty::Error);
-                self.cast(v, &t)
+                let t = self.expr_info(e).ty().unwrap_or(&Ty::Error);
+                self.cast(v, t)
             }
             E::Copy(x) => {
                 let v = self.eval(x)?;
                 let v = self.temp(v);
                 self.deep_copy(&v)
             }
-            E::Static(_) => match self.p.rt.calls.get(&self.key(e)).map(|c| c.target.clone()) {
-                Some(Target::Variant(d, i)) => Ok(Value::Enum(d, i, Vec::new())),
-                Some(Target::StaticField(d, n)) => self.static_field(d, &n),
+            E::Static(_) => match self.expr_info(e).call().map(|c| &c.target) {
+                Some(Target::Variant(d, i)) => Ok(Value::Enum(*d, *i, Vec::new())),
+                Some(Target::StaticField(d, n)) => self.static_field(*d, n),
                 _ => {
                     let E::Static(sr) = &e.kind else { unreachable!() };
                     match (&sr.owner, sr.member.name.as_str()) {
@@ -1674,8 +1715,8 @@ impl Interp {
             E::Binary { op, left, right } => self.binary(*op, left, right),
             E::As { expr, .. } => {
                 let v = self.eval(expr)?;
-                let t = self.p.rt.types.get(&self.key(e)).cloned().unwrap_or(Ty::Error);
-                let target = class_of(&t);
+                let t = self.expr_info(e).ty().unwrap_or(&Ty::Error);
+                let target = class_of(t);
                 Ok(match (&v, target) {
                     (Value::Obj(o, _), Some(d)) if o.class.is_some_and(|c| self.is_subclass(c, d)) => v.view(),
                     _ => Value::Null,
@@ -1710,7 +1751,7 @@ impl Interp {
                     (Value::Slice(_, a, b), "length") => Ok(Value::I64((b - a) as i64)),
                     (Value::Obj(o, _), _) => {
                         let s = self.field_slot(self.key(e), o.clone(), &name.name)?;
-                        Ok(self.get(&s).view())
+                        Ok(s.read(Value::view))
                     }
                     _ => Err(self.internal(format!("Feld {} auf diesem Wert", name.name))),
                 }
@@ -1730,7 +1771,7 @@ impl Interp {
                     }
                     _ => {
                         let s = self.slot_of_index(&ov, i)?;
-                        Ok(self.get(&s).view())
+                        Ok(s.read(Value::view))
                     }
                 }
             }
@@ -1757,7 +1798,7 @@ impl Interp {
             }
             E::PostInc(x) | E::PostDec(x) => {
                 let s = self.slot(x)?;
-                let cur = self.get(&s);
+                let cur = s.read(Value::clone);
                 let p = prim_of_value(&cur).unwrap_or(P::I32);
                 let d = if matches!(e.kind, E::PostInc(_)) { 1 } else { -1 };
                 let nv = self.int_result(cur.as_i128().unwrap_or(0) + d, p)?;
@@ -1828,7 +1869,7 @@ impl Interp {
             }
             U::PreInc | U::PreDec => {
                 let s = self.slot(x)?;
-                let cur = self.get(&s);
+                let cur = s.read(Value::clone);
                 let p = prim_of_value(&cur).unwrap_or(P::I32);
                 let d = if op == U::PreInc { 1 } else { -1 };
                 let nv = self.int_result(cur.as_i128().unwrap_or(0) + d, p)?;
@@ -1960,7 +2001,7 @@ impl Interp {
                 let Some(d) = o.class else { return Ok(Rc::ptr_eq(o, q)) };
                 let m = self.p.methods_of(&Ty::Named(d, Vec::new()), "equals").into_iter().find(|m| m.params.len() == 1 && m.has_body);
                 match m {
-                    Some(m) => self.call_method(&m, Some(a.view()), vec![b.view()])?.as_bool(),
+                    Some(m) => self.call_method(&m, Some(a.view()), &mut [b.view()])?.as_bool(),
                     None => Rc::ptr_eq(o, q),
                 }
             }
@@ -1988,7 +2029,7 @@ impl Interp {
                 let Some(d) = o.class else { return Err(self.internal("Vergleich von Vektoren")) };
                 let m = self.p.methods_of(&Ty::Named(d, Vec::new()), "compareTo").into_iter().find(|m| m.params.len() == 1 && m.has_body);
                 let Some(m) = m else { return Err(self.internal("compareTo fehlt")) };
-                let r = self.call_method(&m, Some(a.view()), vec![b.view()])?.as_i128().unwrap_or(0);
+                let r = self.call_method(&m, Some(a.view()), &mut [b.view()])?.as_i128().unwrap_or(0);
                 r.cmp(&0)
             }
             _ => {
@@ -2152,7 +2193,7 @@ impl Interp {
         map
     }
 
-    fn new_object(&mut self, d: DefId, ctor: Option<Ctor>, args: Vec<Value>) -> R<ORef> {
+    fn new_object(&mut self, d: DefId, ctor: Option<Ctor>, args: &mut [Value]) -> R<ORef> {
         let targs = std::mem::take(&mut self.pending_targs);
         let lay = self.layout(d);
         let o = Rc::new(Obj { class: Some(d), slots: RefCell::new(vec![Value::Uninit; lay.len]), rc: Cell::new(0), alive: Cell::new(true), dying: Cell::new(false), lock: Cell::new(0), targs: RefCell::new(targs), index: Default::default() });
@@ -2194,7 +2235,7 @@ impl Interp {
         Ok(())
     }
 
-    fn construct(&mut self, o: &ORef, c: DefId, ctor: Option<Ctor>, args: Vec<Value>) -> R<()> {
+    fn construct(&mut self, o: &ORef, c: DefId, ctor: Option<Ctor>, args: &mut [Value]) -> R<()> {
         let lay = self.layout(o.class.unwrap());
         let level = lay.levels.iter().position(|(x, _)| *x == c).unwrap_or(0);
         let decl = ctor.as_ref().and_then(|k| match self.member_at(k.ast) {
@@ -2205,27 +2246,34 @@ impl Interp {
         self.enter(Frame { scope_start: self.scopes.len(), env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label: FrameLabel::Member(c, "constructor"), locks: Vec::new(), mtargs: Vec::new() })?;
         if let Some(k) = &ctor {
             for (pi, v) in k.params.iter().zip(args) {
-                self.declare(&pi.name, v);
+                self.declare(&pi.name, take_argument(v));
             }
         }
         // 1. Basisanteil
         let mut base_done = false;
         let r: R<()> = (|| {
             if let Some(b) = self.base_of(c) {
-                let (bctor, bargs) = match decl.and_then(|cd| cd.base_args.as_ref().map(|a| (cd, a))) {
+                let base_args = decl.and_then(|cd| cd.base_args.as_ref().map(|a| (cd, a)));
+                let mut buffer = ArgumentBuffer::new(base_args.map_or(0, |(_, args)| args.len()));
+                let bargs = buffer.as_mut_slice();
+                let bctor = match base_args {
                     Some((cd, a)) => {
                         let m = self.p.rt.base_ctors.get(&(file, cd.span)).cloned().flatten();
                         let k = m.map(|m| Ctor { ast: m.ast, params: m.params });
                         let params = k.as_ref().map(|k| k.params.clone()).unwrap_or_default();
                         self.temps.push(Vec::new());
-                        let vals = self.args(a, &params);
+                        let result = self.args(a, &params, bargs);
+                        if result.is_err() {
+                            bargs.fill_with(|| Value::Void);
+                        }
                         let temps = self.temps.pop().unwrap_or_default();
                         for t in temps {
                             self.drop_value(t)?;
                         }
-                        (k, vals?)
+                        result?;
+                        k
                     }
-                    None => (self.default_ctor(b), Vec::new()),
+                    None => self.default_ctor(b),
                 };
                 self.construct(o, b, bctor, bargs)?;
                 base_done = true;
@@ -2261,13 +2309,13 @@ impl Interp {
     // ------------------------------------------------------------ Aufrufe
 
     /// Argumente nach den Parametern: `own` und shared-Ziele übernehmen, sonst leihen.
-    fn args(&mut self, args: &'static [ast::Arg], params: &[PInfo]) -> R<Vec<Value>> {
+    fn args(&mut self, args: &'static [ast::Arg], params: &[PInfo], out: &mut [Value]) -> R<()> {
         let locked = std::mem::take(&mut self.locked_args);
-        let mut out = Vec::new();
-        for (i, a) in args.iter().enumerate() {
+        for (i, (a, slot)) in args.iter().zip(out.iter_mut()).enumerate() {
             // own- und shared-/weak-Parameter übernehmen den Wert, auch aus `a ?? b`, `c ? a : b`, `(a)`
             let takes = params.get(i).is_some_and(|p| p.mode == Mode::Own || is_shared_ty(&p.ty) || is_weak_ty(&p.ty));
-            let v = if takes || self.p.rt.consumes.contains(&self.key(&a.expr)) {
+            let info = self.expr_info(&a.expr);
+            let v = if takes || info.consumes() {
                 self.eval_store(&a.expr)?
             } else {
                 // Ein geliehener Ort mit shared-Wurzel ist für den Aufruf gesperrt; er wird
@@ -2276,8 +2324,8 @@ impl Interp {
                 let v = self.eval(&a.expr);
                 self.binding.set(false);
                 let v = self.temp(v?);
-                match self.p.rt.stores.get(&self.key(&a.expr)).cloned() {
-                    Some(t) => self.convert(v, &t)?,
+                match info.store() {
+                    Some(t) => self.convert(v, t)?,
                     None => v,
                 }
             };
@@ -2285,14 +2333,14 @@ impl Interp {
                 Some(p) if prim_of(&p.ty).is_some() => self.convert(v, &p.ty)?,
                 _ => v,
             };
-            out.push(v);
+            *slot = v;
         }
-        Ok(out)
+        Ok(())
     }
 
     fn call(&mut self, e: &'static ast::Expr, callee: &'static ast::Expr, args: &'static [ast::Arg]) -> R<Value> {
         let key = self.key(e);
-        let Some(info) = self.p.rt.calls.get(&key) else {
+        let Some(info) = self.p.rt.expression(key).call() else {
             // direkt aufgerufenes Lambda
             let f = self.eval(callee)?;
             return self.call_value(f, args);
@@ -2331,11 +2379,15 @@ impl Interp {
                     return Ok(Value::Null);
                 }
                 let recv = self.temp(recv);
-                let vals = self.args(args, &info.params)?;
+                let mut buffer = ArgumentBuffer::new(args.len());
+                let vals = buffer.as_mut_slice();
+                self.args(args, &info.params, vals)?;
                 self.builtin_method(&recv, name, vals)
             }
             Target::BuiltinStatic(p, name) => {
-                let vals = self.args(args, &info.params)?;
+                let mut buffer = ArgumentBuffer::new(args.len());
+                let vals = buffer.as_mut_slice();
+                self.args(args, &info.params, vals)?;
                 self.builtin_static(*p, name, vals)
             }
             Target::Method(m) | Target::Exact(m) => {
@@ -2383,7 +2435,7 @@ impl Interp {
         // Geliehene Objektargumente sperren (R-5.9 zur Laufzeit, V-1); primitive Werte werden gelesen.
         let mut locked = Vec::new();
         for (i, (a, p)) in args.iter().zip(&m.params).enumerate() {
-            if p.mode != Mode::Own && prim_of(&p.ty).is_none() && !self.p.rt.consumes.contains(&self.key(&a.expr)) {
+            if p.mode != Mode::Own && prim_of(&p.ty).is_none() && !self.expr_info(&a.expr).consumes() {
                 if let Some(o) = self.shared_root(&a.expr) {
                     let mutable = p.mode == Mode::Mut;
                     self.acquire(&o, mutable).map_err(|f| self.at(f, &a.expr))?;
@@ -2393,7 +2445,9 @@ impl Interp {
             }
         }
         self.locked_args = locked;
-        let vals = self.args(args, &m.params)?;
+        let mut buffer = ArgumentBuffer::new(args.len());
+        let vals = buffer.as_mut_slice();
+        self.args(args, &m.params, vals)?;
         let target = match (&recv, virtual_site) {
             (Some(Value::Obj(o, _)), Some(site)) => o.class.and_then(|d| self.dispatch(site, d, m)),
             _ => None,
@@ -2417,9 +2471,9 @@ impl Interp {
         }).clone()
     }
 
-    fn call_method(&mut self, m: &MethodInfo, this: Option<Value>, args: Vec<Value>) -> R<Value> {
+    fn call_method(&mut self, m: &MethodInfo, this: Option<Value>, args: &mut [Value]) -> R<Value> {
         if let Some(v) = this.as_ref().filter(|v| prim_of_value(v).is_some()) {
-            if let Some(r) = self.prim_mixin(&m.name, v, &args) {
+            if let Some(r) = self.prim_mixin(&m.name, v, args) {
                 return r;
             }
         }
@@ -2439,7 +2493,7 @@ impl Interp {
         };
         self.enter(Frame { scope_start: self.scopes.len(), env: Vec::new(), this, class: Some(m.owner).filter(|o| *o != usize::MAX), file: m.ast.0, label: FrameLabel::Member(m.owner, &md.name.name), locks: Vec::new(), mtargs })?;
         for (p, v) in m.params.iter().zip(args) {
-            self.declare(&p.name, v);
+            self.declare(&p.name, take_argument(v));
         }
         let r = self.block(body);
         let v = self.leave(r)?;
@@ -2460,10 +2514,10 @@ impl Interp {
         };
         let env: Vec<(String, Cellv)> = if own {
             // R-10.8: Erfassung per Wert, own-Werte werden verschoben
-            let names = self.p.rt.captures.get(&self.key(e)).cloned().unwrap_or_default();
+            let names = self.expr_info(e).captures();
             let mut env = Vec::new();
             for n in names {
-                let Some(c) = self.lookup(&n) else { continue };
+                let Some(c) = self.lookup(n) else { continue };
                 let cur = c.borrow().clone();
                 let v = match cur {
                     Value::Tuple(_) | Value::Enum(..) if self.plain_value(&cur) => cur,
@@ -2471,7 +2525,7 @@ impl Interp {
                     Value::Func(ref g) if g.own => c.replace(Value::Moved),
                     other => self.own_copy(other),
                 };
-                env.push((n, Rc::new(RefCell::new(v))));
+                env.push((n.clone(), Rc::new(RefCell::new(v))));
             }
             env
         } else {
@@ -2488,28 +2542,30 @@ impl Interp {
 
     fn call_value(&mut self, f: Value, args: &'static [ast::Arg]) -> R<Value> {
         let Value::Func(c) = f else { return Err(self.internal("Aufruf eines Werts, der keine Funktion ist")) };
-        let mut vals = Vec::new();
-        for (i, a) in args.iter().enumerate() {
+        let mut buffer = ArgumentBuffer::new(args.len());
+        let vals = buffer.as_mut_slice();
+        for (i, (a, slot)) in args.iter().zip(vals.iter_mut()).enumerate() {
             let takes = c.params.get(i).is_some_and(|(_, m)| *m == Mode::Own);
-            let v = if takes || self.p.rt.consumes.contains(&self.key(&a.expr)) {
+            let info = self.expr_info(&a.expr);
+            let v = if takes || info.consumes() {
                 self.eval_store(&a.expr)?
             } else {
                 let v = self.eval(&a.expr)?;
                 let v = self.temp(v);
-                match self.p.rt.stores.get(&self.key(&a.expr)).cloned() {
-                    Some(t) => self.convert(v, &t)?,
+                match info.store() {
+                    Some(t) => self.convert(v, t)?,
                     None => v,
                 }
             };
-            vals.push(v);
+            *slot = v;
         }
         self.call_closure(&c, vals)
     }
 
-    fn call_closure(&mut self, c: &Rc<Closure>, vals: Vec<Value>) -> R<Value> {
+    fn call_closure(&mut self, c: &Rc<Closure>, vals: &mut [Value]) -> R<Value> {
         self.enter(Frame { scope_start: self.scopes.len(), env: c.env.clone(), this: c.this.clone(), class: c.class, file: c.file, label: FrameLabel::Bare("Lambda"), locks: Vec::new(), mtargs: c.mtargs.clone() })?;
         for ((n, _), v) in c.params.iter().zip(vals) {
-            self.declare(n, v);
+            self.declare(n, take_argument(v));
         }
         let r = match c.body {
             ast::LambdaBody::Expr(x) => match self.eval_store(x) {
@@ -2561,7 +2617,7 @@ impl Interp {
         }
     }
 
-    fn builtin_method(&mut self, recv: &Value, name: &str, args: Vec<Value>) -> R<Value> {
+    fn builtin_method(&mut self, recv: &Value, name: &str, args: &mut [Value]) -> R<Value> {
         if name == "partitionPoint" {
             let (items, start, end) = match recv {
                 Value::Obj(o, _) => (o, 0, o.slots.borrow().len()),
@@ -2574,7 +2630,7 @@ impl Interp {
                 let mid = lo + (hi - lo) / 2;
                 let item = items.slots.borrow().get(mid).map(Value::view)
                     .ok_or_else(|| self.fatal("IndexError", "Invalid range for partitionPoint"))?;
-                if self.call_closure(predicate, vec![item])?.as_bool() {
+                if self.call_closure(predicate, &mut [item])?.as_bool() {
                     lo = mid + 1;
                 } else {
                     hi = mid;
@@ -2673,11 +2729,11 @@ impl Interp {
         }
     }
 
-    fn vec_method(&mut self, o: &ORef, name: &str, mut args: Vec<Value>) -> R<Value> {
+    fn vec_method(&mut self, o: &ORef, name: &str, args: &mut [Value]) -> R<Value> {
         let len = o.slots.borrow().len();
         match name {
             "push" => {
-                o.slots.borrow_mut().push(args.remove(0));
+                o.slots.borrow_mut().push(take_argument(&mut args[0]));
                 Ok(Value::Void)
             }
             "insert" => {
@@ -2685,7 +2741,7 @@ impl Interp {
                 if i < 0 || i as usize > len {
                     return Err(self.fatal("IndexError", format!("Index {i} is outside 0..{}", len + 1)));
                 }
-                let v = args.remove(1);
+                let v = take_argument(&mut args[1]);
                 o.slots.borrow_mut().insert(i as usize, v);
                 Ok(Value::Void)
             }
@@ -2728,7 +2784,7 @@ impl Interp {
                     while j > 0 {
                         let ord = match &f {
                             Some(Value::Func(c)) => {
-                                let r = self.call_closure(c, vec![elems[j - 1].view(), elems[j].view()])?;
+                                let r = self.call_closure(c, &mut [elems[j - 1].view(), elems[j].view()])?;
                                 r.as_i128().unwrap_or(0).cmp(&0)
                             }
                             _ => self.compare(&elems[j - 1].view(), &elems[j].view())?,
@@ -2749,7 +2805,7 @@ impl Interp {
         }
     }
 
-    fn builtin_static(&mut self, p: P, name: &str, args: Vec<Value>) -> R<Value> {
+    fn builtin_static(&mut self, p: P, name: &str, args: &[Value]) -> R<Value> {
         match name {
             "parse" | "tryParse" => {
                 let text = args[0].as_str().unwrap_or("").to_string();
@@ -2794,7 +2850,7 @@ impl Interp {
     fn throw_std(&mut self, class: &str, msg: &str) -> R<Value> {
         let Some(d) = self.p.std_def(class) else { return Err(self.internal(format!("{class} fehlt"))) };
         let ctor = self.p.defs[d].ctors.iter().find(|c| c.params.len() == 1).map(|c| Ctor { ast: c.ast, params: c.params.clone() });
-        let o = self.new_object(d, ctor, vec![Value::Str(Rc::from(msg))])?;
+        let o = self.new_object(d, ctor, &mut [Value::Str(Rc::from(msg))])?;
         Err(Flow::Throw(Value::Obj(o, Form::Own), self.trace()))
     }
 }

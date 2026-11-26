@@ -190,7 +190,7 @@ impl<'p> Checker<'p> {
             _ => Vec::new(),
         };
         let key = self.key(e);
-        self.p.rt.calls.insert(key, CallInfo { target, params });
+        self.p.rt.record_call(key, CallInfo { target, params });
     }
 
     fn err_also(&mut self, span: Span, rule: &'static str, also: Vec<&'static str>, msg: impl Into<String>) {
@@ -622,7 +622,7 @@ impl<'p> Checker<'p> {
         }
         if self.quiet == 0 && !matches!(e.kind, E::Paren(_) | E::Conditional { .. } | E::Coalesce { .. }) {
             let key = self.key(e);
-            self.p.rt.consumes.insert(key);
+            self.p.rt.record_consume(key);
         }
         match &e.kind {
             E::Paren(x) => self.consume(x, vt, dest, reason, also),
@@ -820,7 +820,7 @@ impl<'p> Checker<'p> {
     fn require(&mut self, from: &Ty, to: &Ty, span: Span, e: Option<&ast::Expr>) -> bool {
         if let (Some(e), 0) = (e, self.quiet) {
             let key = self.key(e);
-            self.p.rt.stores.insert(key, to.clone());
+            self.p.rt.record_store(key, to.clone());
         }
         if self.assignable(from, to) {
             return true;
@@ -1770,7 +1770,7 @@ impl<'p> Checker<'p> {
         self.place_quiet = saved;
         if self.quiet == 0 {
             let key = self.key(e);
-            self.p.rt.types.insert(key, t.clone());
+            self.p.rt.record_type(key, t.clone());
         }
         t
     }
@@ -1864,7 +1864,7 @@ impl<'p> Checker<'p> {
                 if *own && self.quiet == 0 {
                     let key = self.key(e);
                     let caps = std::mem::take(&mut self.last_captures);
-                    self.p.rt.captures.insert(key, caps);
+                    self.p.rt.record_captures(key, caps);
                 }
                 t
             }

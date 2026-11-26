@@ -28,7 +28,7 @@ pub(super) fn prepare(program: &Program) -> Vec<FileLiterals> {
             let value = match site.context {
                 LiteralContext::Pattern { negative } => pattern(&site.literal, negative),
                 context => {
-                    let primitive = program.rt.types.get(&key).and_then(prim_of);
+                    let primitive = program.rt.expression(key).ty().and_then(prim_of);
                     PreparedLiteral::Value(expression(
                         &site.literal, primitive, context == LiteralContext::NegatedNumber,
                     ))
