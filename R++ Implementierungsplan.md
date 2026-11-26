@@ -1,8 +1,8 @@
 # R++ Implementierungsplan
 
-Stand: 26.11.2026, Entwurf 0.14. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
+Stand: 26.11.2026, Entwurf 0.15. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
-Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M7 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 macht `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen am 26.11.2026); umgesetzt am selben Tag, offen ist nur der erste Lauf des neuen CI-Jobs (Abschnitt 6).
+Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M7 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 macht `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen am 26.11.2026); umgesetzt am selben Tag, offen ist nur der erste Lauf des neuen CI-Jobs (Abschnitt 6). M9 bringt Abhängigkeiten mit Versionen über ein lokales Verzeichnis (beschlossen am 26.11.2026).
 
 ## 1. Rolle der ersten Implementierung
 
@@ -84,6 +84,7 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M6 | Beginn des R++-Compilers in R++ | der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein (festgelegt am 23.11.2026) |
 | M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler` (festgelegt am 26.11.2026); erreicht am 26.11.2026 (0,40 s gegen 0,47 s) |
 | M8 | `rppcc` als eigenständiger Compiler: `build`, `run` und `test`, Releasemodus über den C-Codegenerator, Bootstrap ohne Rust (beschlossen am 26.11.2026) | `rppcc test ..` besteht alle Konformitätstests im Debug- und im Releasemodus (R-14.7); der Bootstrap aus dem eingecheckten C-Startpunkt erreicht ohne Rust den Fixpunkt, unter Windows (MSVC) und Linux (gcc) in der CI; alle Vergleiche mit `rppc` bleiben ohne Abweichung. Lokal erfüllt am 26.11.2026 (Windows mit MSVC, Linux mit gcc in WSL); der erste Lauf in der CI steht aus |
+| M9 | Abhängigkeiten mit Versionen nach Designentscheidungen 13b über ein lokales Verzeichnis im Dateisystem: `rpp.hash` (SHA-256), Minimal Version Selection, `rpp.lock`, `rppcc publish` (beschlossen am 26.11.2026) | neue Konformitätstests in Kapitel 11 decken die Regeln aus 13b ab und bestehen mit `rppc test` und `rppcc test`; `rpp.lock` ist reproduzierbar und erkennt jede Änderung an einer gesperrten Bibliothek; `vergleich.py` zeigt für die Auflösung keine Abweichung, der Fixpunkt hält |
 
 Der Releasemodus entsteht aus dem C-Codegenerator (entschieden am 24.11.2026); seit M8 prüft `rppcc test` die Konformität auch für ihn (R-14.7). Ein JIT für den Debugmodus ist zurückgestellt.
 
@@ -536,3 +537,16 @@ Stand (26.11.2026):
 - `rppcc run` und `build` unter Windows (MSVC und MinGW-gcc) und Linux ausprobiert: Argumente, Exit-Code und Programmfehler kommen an wie bei `rppc run`.
 
 Offen: Der CI-Job ist noch nie gelaufen; das geschieht mit dem nächsten Push. Bis dahin ist das Kriterium „in der CI“ nur lokal auf denselben Plattformen nachgewiesen. Nicht Teil von M8: macOS (der Code für `executablePath` ist vorhanden, aber nicht übersetzt), nebenläufige Prozesse und schnellerer Code für Benutzerprogramme im Releasemodus.
+
+**M9 beschlossen: Abhängigkeiten mit Versionen (26.11.2026).** Programme binden Bibliotheken bisher nur über `path` ein. Die Regeln für das zentrale Verzeichnis (Designentscheidungen, Abschnitt 13b) sind seit dem 21.11.2026 entschieden, aber nicht umgesetzt. M9 setzt sie ohne Netzwerkdienst um, mit einem Verzeichnis im Dateisystem, das sich in den Konformitätstests prüfen lässt:
+
+| Teil | Inhalt |
+|---|---|
+| `rpp.hash` | SHA-256 in R++ (Roadmap der Standardbibliothek, Phase B), gebraucht für die Prüfsummen in `rpp.lock`. |
+| Verzeichnis | Bibliotheken als Quelltext unter `besitzer.name/version/` in einem Ordner, gewählt über `registry` in `rpp.yaml` oder eine Umgebungsvariable. |
+| Auflösung | `dependencies` mit `name` und `version` nach Minimal Version Selection; Fehler bei verschiedenen Hauptversionen, unbekannter Bibliothek oder fehlender Version. |
+| `rpp.lock` | exakte Versionen und SHA-256-Prüfsummen, beim Bauen geprüft; eine veränderte Bibliothek ist ein Fehler; zurückgezogene Versionen bauen weiter. |
+| `rppcc publish` | vergleicht die exportierte Schnittstelle mit der Vorversion, setzt Semantic Versioning durch und legt die Bibliothek im lokalen Verzeichnis ab. |
+| beide Compiler | `rppc` und `rppcc` lösen gleich auf; `vergleich.py` erhält einen Teil für die Auflösung. |
+
+Zurückgestellt: das Verzeichnis als Netzwerkdienst mit öffentlichem Protokoll der Prüfsummen und vorgebauten Varianten, die C-Anbindung (Kandidat für M10, braucht zuerst eine Spezifikation mit Sicherheitsmodell), Threads mit `rpp.sync` und schnellerer Code für Benutzerprogramme im Releasemodus.
