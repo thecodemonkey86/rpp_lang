@@ -5,6 +5,7 @@
 // besitzt das Programm; die Syntaxbäume werden geliehen übergeben.
 package compiler.sema;
 
+using rpp.collections.Map;
 using compiler.syntax.Node;
 using compiler.project.Workspace;
 using compiler.project.Diag;
@@ -98,10 +99,44 @@ public:
     Flow flow;
     Loan[] loans = [];
     Place? pending = null;
+    // nur beim Durchlauf auf Verdacht (beginSpec): Anzahl der Meldungen und Stände der Journale
+    i64 diags = 0;
+    i64[] marks = [];
     constructor(bool hasLastCall, i32 lastFacts, own Flow flow) {
         this.hasLastCall = hasLastCall;
         this.lastFacts = lastFacts;
         this.flow = flow;
+    }
+}
+
+// Ergebnis der Probe eines Arguments mit dem Stand, bei dem sie lief (M7): Die vier Mengen des
+// Flussstands werden nie verändert, nur ersetzt (Flow); sind es noch dieselben Objekte und
+// sind dieselben lokalen Variablen sichtbar, liefert eine neue Probe denselben Typ.
+class ProbeMemo {
+public:
+    shared Ty ty;
+    bool dead;
+    shared IdSet nonnull;
+    shared IdMap lost;
+    shared IdSet unassigned;
+    shared IdMap moved;
+    i64 nlocals;
+    i64 topId;
+
+    constructor(shared Ty ty, Flow f, i64 nlocals, i64 topId) {
+        this.ty = ty;
+        this.dead = f.dead;
+        this.nonnull = f.nonnull;
+        this.lost = f.lost;
+        this.unassigned = f.unassigned;
+        this.moved = f.moved;
+        this.nlocals = nlocals;
+        this.topId = topId;
+    }
+
+    bool matches(Flow f, i64 n, i64 top) {
+        return nlocals == n && topId == top && dead == f.dead && same(nonnull, f.nonnull)
+            && same(lost, f.lost) && same(unassigned, f.unassigned) && same(moved, f.moved);
     }
 }
 
@@ -162,6 +197,23 @@ private:
     Target? lastTarget = null;
     MethodInfo? lastChosen = null;
     string[] lastCaptures = [];
+    // Proben der Argumente im aktuellen Rumpf, nach Knoten (probeArg)
+    Map<i64, ProbeMemo> probeMemo = new Map<i64, ProbeMemo>();
+    // ---- Durchlauf auf Verdacht (looped): > 0, solange einer läuft. Die Journale halten je
+    // geschriebener Angabe den Knoten und den alten Wert, damit sie sich zurücknehmen lässt.
+    i64 spec = 0;
+    i64[] jTypesId = [];
+    shared Ty?[] jTypesOld = [];
+    i64[] jStoresId = [];
+    shared Ty?[] jStoresOld = [];
+    i64[] jDeclsId = [];
+    shared Ty?[] jDeclsOld = [];
+    i64[] jConsumesId = [];
+    bool[] jConsumesOld = [];
+    i64[] jCallsId = [];
+    Target?[] jCallsOld = [];
+    i64[] jCapsId = [];
+    Captures?[] jCapsOld = [];
 
 public:
     RtInfo rt = new RtInfo(0);
@@ -297,6 +349,9 @@ private:
         placeQuiet = 0;
         pendingRecv = null;
         thisMut = false;
+        spec = 0;
+        clearJournals();
+        probeMemo.clear();
     }
 
     // ------------------------------------------------------------ Meldungen
@@ -351,6 +406,165 @@ private:
         shared Ty t = expr(e, null);
         endProbe(mut s);
         return t;
+    }
+
+    // ---- Angaben für die Ausführung schreiben (mit Journal, solange ein Durchlauf auf Verdacht läuft)
+
+    void setType(i64 id, shared Ty t) mut {
+        if (spec > 0) {
+            jTypesId.push(id);
+            jTypesOld.push(rt.types[id]);
+        }
+        rt.types[id] = t;
+    }
+
+    void setStore(i64 id, shared Ty t) mut {
+        if (spec > 0) {
+            jStoresId.push(id);
+            jStoresOld.push(rt.stores[id]);
+        }
+        rt.stores[id] = t;
+    }
+
+    void setDecl(i64 id, shared Ty t) mut {
+        if (spec > 0) {
+            jDeclsId.push(id);
+            jDeclsOld.push(rt.decls[id]);
+        }
+        rt.decls[id] = t;
+    }
+
+    void setConsume(i64 id) mut {
+        if (spec > 0) {
+            jConsumesId.push(id);
+            jConsumesOld.push(rt.consumes[id]);
+        }
+        rt.consumes[id] = true;
+    }
+
+    void setCall(i64 id, own Target t) mut {
+        if (spec > 0) {
+            jCallsId.push(id);
+            jCallsOld.push(take(mut rt.calls[id]));
+        }
+        rt.calls[id] = t;
+    }
+
+    void setCaptures(i64 id, own Captures c) mut {
+        if (spec > 0) {
+            jCapsId.push(id);
+            jCapsOld.push(take(mut rt.captures[id]));
+        }
+        rt.captures[id] = c;
+    }
+
+    void clearJournals() mut {
+        jTypesId = [];
+        jTypesOld = [];
+        jStoresId = [];
+        jStoresOld = [];
+        jDeclsId = [];
+        jDeclsOld = [];
+        jConsumesId = [];
+        jConsumesOld = [];
+        jCallsId = [];
+        jCallsOld = [];
+        jCapsId = [];
+        jCapsOld = [];
+    }
+
+    // Durchlauf auf Verdacht (M7): wie beginProbe, aber Meldungen und Angaben bleiben an, und
+    // der Empfänger bleibt stehen. Der Durchlauf verhält sich damit wie der endgültige; mit
+    // commitSpec gilt er, nach rollbackSpec ist der Zustand wie nach einer Probe.
+    ProbeState beginSpec() mut {
+        ProbeState s = new ProbeState(hasLastCall, lastFacts, flow.dup());
+        for (Loan l : loans) {
+            s.loans.push(l.dup());
+        }
+        Place? cur = take(mut pendingRecv);
+        if (cur != null) {
+            s.pending = cur.dup();
+        }
+        pendingRecv = cur;
+        s.diags = p.diags.length;
+        s.marks = [jTypesId.length, jStoresId.length, jDeclsId.length, jConsumesId.length, jCallsId.length, jCapsId.length];
+        spec++;
+        return s;
+    }
+
+    void commitSpec() mut {
+        spec--;
+        if (spec == 0) {
+            clearJournals();
+        }
+    }
+
+    void rollbackSpec(mut ProbeState s) mut {
+        hasLastCall = s.hasLastCall;
+        lastFacts = s.lastFacts;
+        flow = replace(mut s.flow, new Flow());
+        Loan[] none = [];
+        loans = replace(mut s.loans, none);
+        pendingRecv = take(mut s.pending);
+        p.truncateDiags(s.diags);
+        while (jTypesId.length > s.marks[0]) {
+            i64 id = jTypesId.pop();
+            rt.types[id] = jTypesOld.pop();
+        }
+        while (jStoresId.length > s.marks[1]) {
+            i64 id = jStoresId.pop();
+            rt.stores[id] = jStoresOld.pop();
+        }
+        while (jDeclsId.length > s.marks[2]) {
+            i64 id = jDeclsId.pop();
+            rt.decls[id] = jDeclsOld.pop();
+        }
+        while (jConsumesId.length > s.marks[3]) {
+            i64 id = jConsumesId.pop();
+            rt.consumes[id] = jConsumesOld.pop();
+        }
+        while (jCallsId.length > s.marks[4]) {
+            i64 id = jCallsId.pop();
+            rt.calls[id] = jCallsOld.pop();
+        }
+        while (jCapsId.length > s.marks[5]) {
+            i64 id = jCapsId.pop();
+            rt.captures[id] = jCapsOld.pop();
+        }
+        spec--;
+        if (spec == 0) {
+            clearJournals();
+        }
+    }
+
+    // Probe eines Arguments mit Gedächtnis (M7). Ein Argument wird für die Auflösung der
+    // Überladungen als Probe geprüft und danach wirklich; ist es selbst ein Aufruf, geschieht
+    // mit dessen Argumenten dasselbe, in der Probe und noch einmal in der wirklichen Prüfung.
+    // Die zweite Probe desselben Knotens beim selben Stand (ProbeMemo) entfällt.
+    shared Ty probeArg(Node x) mut {
+        if (x.id < 0) {
+            return probeExpr(x);
+        }
+        i64 n = locals.length;
+        i64 topId = -1;
+        if (n > 0) {
+            topId = locals[n - 1].id;
+        }
+        shared Ty? hit = memoHit(x.id, n, topId);
+        if (hit != null) {
+            return hit;
+        }
+        shared Ty t = probeExpr(x);
+        probeMemo.put(x.id, new ProbeMemo(t, flow, n, topId));
+        return t;
+    }
+
+    shared Ty? memoHit(i64 id, i64 n, i64 topId) {
+        ref ProbeMemo? m = probeMemo.get(id);
+        if (m != null && m.matches(flow, n, topId)) {
+            return m.ty;
+        }
+        return null;
     }
 
     string show(Ty t) {
@@ -566,11 +780,20 @@ private:
         return -1;
     }
 
+    // Die Nummern steigen in locals an (newLocal hängt an, popScope kürzt): Binärsuche
     i64 localById(i64 id) {
-        for (i64 i = 0; i < locals.length; i++) {
-            if (locals[i].id == id) {
-                return i;
+        i64 lo = 0;
+        i64 hi = locals.length;
+        while (lo < hi) {
+            i64 mid = (lo + hi) / 2;
+            if (locals[mid].id < id) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
             }
+        }
+        if (lo < locals.length && locals[lo].id == id) {
+            return lo;
         }
         return -1;
     }
@@ -587,7 +810,7 @@ private:
 
     i64 declare(Node name, shared Ty ty, LK kind, Mode mode, bool mutFlag) mut {
         if (quiet == 0 && name.id >= 0) {
-            rt.decls[name.id] = ty;
+            setDecl(name.id, ty);
         }
         if (findLocal(name.text) >= 0) {
             err(name.line, name.col, "R-8.17", name.text + " shadows a visible variable");
@@ -934,7 +1157,7 @@ private:
             return;
         }
         if (quiet == 0 && e.kind != "paren" && e.kind != "cond" && e.kind != "coalesce" && e.id >= 0) {
-            rt.consumes[e.id] = true;
+            setConsume(e.id);
         }
         if (e.kind == "paren") {
             consume(e.kids[0], vt, dest, reason, also);
@@ -1043,13 +1266,36 @@ private:
     void looped(Node s) mut {
         Flow entry = flow.dup();
         Flow head = entry.dup();
-        for (i32 i = 0; i < 6; i++) {
+        // Variablen ab dieser Nummer entstehen erst im Rumpf
+        i64 limit = nextId;
+        // M7: Der erste Durchlauf läuft auf Verdacht mit Meldungen und Angaben. Erreicht er den
+        // Fixpunkt (head ist dann noch der Eingangsstand), ist er genau der endgültige Durchlauf
+        // und bleibt stehen. Sonst wird er zurückgenommen wie eine Probe, und es geht weiter
+        // wie bisher: Proben bis zum Fixpunkt, dann der endgültige Durchlauf.
+        //
+        // Fixpunkt ist wie bisher sameFacts. Dazu kommt sameBelow: Stimmen die Stände für alle
+        // Variablen von vor der Schleife ganz überein (auch in den Begründungen), ergibt jeder
+        // weitere Durchlauf für diese Variablen wieder denselben Stand; die Einträge der
+        // Rumpfvariablen, die sameFacts bis zum sechsten Durchlauf verschieden hielten, wirken
+        // auf nichts. Der endgültige Durchlauf ist damit derselbe wie nach allen Proben.
+        ProbeState first = beginSpec();
+        flow = head.dup();
+        (Flow back0, Flow ex0) = loopPass(s);
+        Flow next0 = entry.join(back0, "R-6.9", "R-5.16");
+        if (next0.sameFacts(head) || next0.sameBelow(head, limit)) {
+            commitSpec();
+            flow = ex0;
+            return;
+        }
+        rollbackSpec(mut first);
+        head = next0;
+        for (i32 i = 1; i < 6; i++) {
             ProbeState st = beginProbe();
             flow = head.dup();
             (Flow back, Flow ex) = loopPass(s);
             endProbe(mut st);
             Flow next = entry.join(back, "R-6.9", "R-5.16");
-            if (next.sameFacts(head)) {
+            if (next.sameFacts(head) || next.sameBelow(head, limit)) {
                 break;
             }
             head = next;
@@ -1201,7 +1447,7 @@ private:
     // Begründung aus dem Ausdruck e)
     bool requireE(shared Ty from, shared Ty to, Node e) mut {
         if (quiet == 0 && e.id >= 0) {
-            rt.stores[e.id] = to;
+            setStore(e.id, to);
         }
         if (assignable(from, to)) {
             return true;
@@ -2113,7 +2359,7 @@ private:
                 access(new Place(id), true, e.line, e.col);
                 // Typ eines Grundwert-Ziels für den Codegenerator (native Zuweisung, M7)
                 if (quiet == 0 && e.id >= 0 && lty.kind == TK::Prim) {
-                    rt.types[e.id] = lty;
+                    setType(e.id, lty);
                 }
                 return lty;
             }
@@ -2383,7 +2629,7 @@ private:
         shared Ty t = exprInner(e, expected);
         placeQuiet = saved;
         if (quiet == 0 && e.id >= 0) {
-            rt.types[e.id] = t;
+            setType(e.id, t);
         }
         return t;
     }
@@ -2399,7 +2645,7 @@ private:
         } else if (t.kind == TargetKind::BuiltinMethod || t.kind == TargetKind::BuiltinStatic) {
             t.params = paramsOf(lastChosen);
         }
-        rt.calls[e.id] = t;
+        setCall(e.id, t);
     }
 
     static PInfo[] paramsOf(MethodInfo? m) {
@@ -2494,7 +2740,7 @@ private:
                 for (string c : lastCaptures) {
                     caps.names.push(c);
                 }
-                rt.captures[e.id] = caps;
+                setCaptures(e.id, caps);
             }
             return r;
         }
@@ -3821,7 +4067,7 @@ private:
                 }
             }
         }
-        return new ArgShape(0, probeExpr(x));
+        return new ArgShape(0, probeArg(x));
     }
 
     // Rang eines Arguments für einen Parametertyp (R-7.17); -1: passt nicht

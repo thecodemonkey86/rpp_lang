@@ -181,6 +181,6 @@ Die dabei nötigen Festlegungen V-1 bis V-11 und die Schreibweise `ref` für ben
 
 ## Nächste Schritte
 
-1. M7 fortsetzen: M6 ist abgeschlossen (der Compiler in R++ übersetzt sich selbst). M7 macht den übersetzten Code schneller, indem der C-Codegenerator ausgebaut wird (Implementierungsplan, Abschnitt 6); erster Schritt sind native Grundwerte. Offen ist ein Zielwert für M7.
+1. M7 fortsetzen: M6 ist abgeschlossen (der Compiler in R++ übersetzt sich selbst). M7 macht den übersetzten Code schneller, indem der C-Codegenerator ausgebaut wird (Implementierungsplan, Abschnitt 6); der vorgeschlagene Zielwert (übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler`) ist seit dem 26.11.2026 erreicht (0,40 s gegen 0,47 s). Offen: den Zielwert festlegen und entscheiden, ob die Änderungen am Prüfer (Schleifen und Proben) nach `rppc` übertragen werden.
 2. Ein Bibliotheksverzeichnis für die Konformitätstests festlegen, damit R-11.19 und R-11.20 prüfbar werden.
 3. Satz 5.1 maschinell beweisen (Coq, Lean oder Isabelle); das ausführbare Modell dient dabei als Referenz.

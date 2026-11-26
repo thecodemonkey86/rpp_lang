@@ -34,33 +34,45 @@ private:
     }
 
     i32 line() {
-        return toks[idx(0)].line;
+        return toks[pos].line;
     }
 
     i32 col() {
-        return toks[idx(0)].col;
+        return toks[pos].col;
     }
 
+    // pos liegt immer in toks (bump hält vor dem letzten Token an); die Abfragen an der
+    // aktuellen Stelle greifen deshalb direkt zu, ohne idx.
     bool isPAt(i64 offset, string p) {
-        i64 i = idx(offset);
+        i64 i = pos + offset;
+        if (i >= toks.length) {
+            i = toks.length - 1;
+        }
         return toks[i].kind == Kind::Punct && toks[i].text == p;
     }
 
     bool isP(string p) {
-        return isPAt(0, p);
+        return toks[pos].kind == Kind::Punct && toks[pos].text == p;
     }
 
     bool isKAt(i64 offset, string k) {
-        i64 i = idx(offset);
+        i64 i = pos + offset;
+        if (i >= toks.length) {
+            i = toks.length - 1;
+        }
         return toks[i].kind == Kind::Keyword && toks[i].text == k;
     }
 
     bool isK(string k) {
-        return isKAt(0, k);
+        return toks[pos].kind == Kind::Keyword && toks[pos].text == k;
     }
 
     bool isIdent(i64 offset) {
-        return toks[idx(offset)].kind == Kind::Ident;
+        i64 i = pos + offset;
+        if (i >= toks.length) {
+            i = toks.length - 1;
+        }
+        return toks[i].kind == Kind::Ident;
     }
 
     bool isPrim(i64 offset) {
@@ -69,7 +81,7 @@ private:
     }
 
     bool atEof() {
-        return toks[idx(0)].kind == Kind::Eof;
+        return toks[pos].kind == Kind::Eof;
     }
 
     void bump() mut {
@@ -79,23 +91,27 @@ private:
     }
 
     bool eatP(string p) mut {
-        if (isP(p)) {
-            bump();
+        if (toks[pos].kind == Kind::Punct && toks[pos].text == p) {
+            if (pos < toks.length - 1) {
+                pos++;
+            }
             return true;
         }
         return false;
     }
 
     bool eatK(string k) mut {
-        if (isK(k)) {
-            bump();
+        if (toks[pos].kind == Kind::Keyword && toks[pos].text == k) {
+            if (pos < toks.length - 1) {
+                pos++;
+            }
             return true;
         }
         return false;
     }
 
     string shown() {
-        ref Token t = toks[idx(0)];
+        ref Token t = toks[pos];
         switch (t.kind) {
             case Str: return "'\"" + t.text + "\"'";
             case Char: return "''" + t.text + "''";
@@ -106,15 +122,20 @@ private:
 
     // Fehlschlag festhalten und die Exception liefern, die der Aufrufer wirft.
     ParseFail failure(string expected) mut {
-        string found = "found " + shown();
-        if (toks[idx(0)].kind == Kind::Error) {
-            found = toks[idx(0)].text;
-        }
+        noteFailure(expected);
+        return new ParseFail();
+    }
+
+    // Hält einen Fehlschlag an der aktuellen Stelle fest (wie failure, ohne Exception)
+    void noteFailure(string expected) mut {
         if (farPos < pos) {
+            string found = "found " + shown();
+            if (toks[pos].kind == Kind::Error) {
+                found = toks[pos].text;
+            }
             farPos = pos;
             farMsg = "Expected " + expected + ", " + found;
         }
-        return new ParseFail();
     }
 
     void expectP(string p) mut {
@@ -144,7 +165,7 @@ private:
     }
 
     Node ident() mut {
-        i64 i = idx(0);
+        i64 i = pos;
         if (toks[i].kind == Kind::Ident) {
             Node n = new Node("id", toks[i].text, toks[i].line, toks[i].col);
             bump();
@@ -168,7 +189,7 @@ private:
     Node mainDecl() mut {
         Node m = new Node("main", "", line(), col());
         expectK("i32");
-        if (!isIdent(0) || toks[idx(0)].text != "main") {
+        if (!isIdent(0) || toks[pos].text != "main") {
             throw failure("'main'");
         }
         bump();
@@ -251,7 +272,7 @@ private:
         }
         if (eatP("=")) {
             bool neg = eatP("-");
-            i64 i = idx(0);
+            i64 i = pos;
             if (toks[i].kind != Kind::Int) {
                 throw failure("integer");
             }
@@ -305,7 +326,7 @@ private:
         i32 l = line();
         i32 c = col();
         if (isK("public") || isK("private") || isK("protected")) {
-            string word = toks[idx(0)].text;
+            string word = toks[pos].text;
             bump();
             expectP(":");
             return new Node("access", word, l, c);
@@ -479,7 +500,7 @@ private:
 
     Node baseType(bool afterAs) mut {
         if (isPrim(0)) {
-            Node p = node("prim", toks[idx(0)].text);
+            Node p = node("prim", toks[pos].text);
             bump();
             return p;
         }
@@ -566,7 +587,7 @@ private:
     }
 
     Node arraySize() mut {
-        i64 i = idx(0);
+        i64 i = pos;
         if (toks[i].kind == Kind::Int) {
             Node n = node("int", toks[i].text);
             bump();
@@ -783,10 +804,10 @@ private:
     }
 
     string assignOp() {
-        if (toks[idx(0)].kind != Kind::Punct) {
+        if (toks[pos].kind != Kind::Punct) {
             return "";
         }
-        string p = toks[idx(0)].text;
+        string p = toks[pos].text;
         if (p == "=" || p == "+=" || p == "-=" || p == "*=" || p == "/=" || p == "%=") {
             return p;
         }
@@ -1088,10 +1109,10 @@ private:
         if (isP(">") && isPAt(1, ">")) {
             return (">>", 2, 22);
         }
-        if (toks[idx(0)].kind != Kind::Punct) {
+        if (toks[pos].kind != Kind::Punct) {
             return ("", 0, 0);
         }
-        string p = toks[idx(0)].text;
+        string p = toks[pos].text;
         i32 prec = 0;
         if (p == "*" || p == "/" || p == "%") {
             prec = 26;
@@ -1149,7 +1170,7 @@ private:
         i32 c = col();
         string op = "";
         if (isP("!") || isP("~") || isP("-") || isP("++") || isP("--")) {
-            op = toks[idx(0)].text;
+            op = toks[pos].text;
         } else {
             return postfix();
         }
@@ -1236,7 +1257,7 @@ private:
     Node staticRef() mut {
         Node s = new Node("sref", "", line(), col());
         if (isPrim(0)) {
-            s.add(node("prim", toks[idx(0)].text));
+            s.add(node("prim", toks[pos].text));
             bump();
         } else {
             Node owner = node("typename", "");
@@ -1325,11 +1346,25 @@ private:
         }
         if (isIdent(0)) {
             i64 save = pos;
-            try {
-                Node s = new Node("static", "", l, c);
-                s.add(staticRef());
-                return s;
-            } catch (ParseFail e) {
+            // staticRef liest einen qualifizierten Namen und verlangt danach '::' (nach '<'
+            // erst Typargumente). Steht dort keins von beiden, scheitert der Versuch genau an
+            // dieser Stelle mit "Expected '::'"; das wird festgehalten, ohne den Versuch zu
+            // machen (M7: sonst eine Exception für fast jeden Namen in einem Ausdruck).
+            i64 after = 1;
+            while (isPAt(after, ".") && isIdent(after + 1)) {
+                after = after + 2;
+            }
+            if (isPAt(after, "::") || isPAt(after, "<")) {
+                try {
+                    Node s = new Node("static", "", l, c);
+                    s.add(staticRef());
+                    return s;
+                } catch (ParseFail e) {
+                    pos = save;
+                }
+            } else {
+                pos = save + after;
+                noteFailure("'::'");
                 pos = save;
             }
             Node id = ident();
@@ -1419,30 +1454,34 @@ public:
     }
 
     static (i32, i32) firstBad(Node n, i32 sl, i32 sc) {
-        i32 l = sl;
-        i32 c = sc;
+        i64 key = firstBadKey(n, cast<i64>(sl) * 4294967296 + cast<i64>(sc));
+        return (cast<i32>(key / 4294967296), cast<i32>(key % 4294967296));
+    }
+
+private:
+    // Wie firstBad, mit der Position als zeile * 2^32 + spalte (0: kein Verstoß); so entsteht
+    // nicht für jeden Knoten ein Tupel. start ist die Position der umgebenden Anweisung.
+    static i64 firstBadKey(Node n, i64 start) {
+        i64 at = start;
         if (n.kind == "exprstmt" || n.kind == "for") {
-            l = n.line;
-            c = n.col;
+            at = cast<i64>(n.line) * 4294967296 + cast<i64>(n.col);
         }
-        i32 bl = 0;
-        i32 bc = 0;
+        i64 bad = 0;
         if (n.kind == "eval") {
             ref Node e = n.kids[0];
             bool ok = e.kind == "call" || e.kind == "postinc" || e.kind == "postdec"
                 || (e.kind == "unary" && (e.text == "++" || e.text == "--"));
             if (!ok) {
-                bl = l;
-                bc = c;
+                bad = at;
             }
         }
         for (Node k : n.kids) {
-            (i32 kl, i32 kc) = firstBad(k, l, c);
-            if (kl > 0 && (bl == 0 || kl < bl || (kl == bl && kc < bc))) {
-                bl = kl;
-                bc = kc;
+            i64 kb = firstBadKey(k, at);
+            // Zeilen beginnen bei 1: kb > 0 heißt, es gibt einen Verstoß
+            if (kb >= 4294967296 && (bad < 4294967296 || kb < bad)) {
+                bad = kb;
             }
         }
-        return (bl, bc);
+        return bad;
     }
 }

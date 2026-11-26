@@ -64,6 +64,22 @@ public:
         return true;
     }
 
+    // Stimmen zwei sortierte Listen in allen Nummern unter limit überein?
+    static bool sameBelow(i64[] a, i64[] b, i64 limit) {
+        i64 i = 0;
+        while (true) {
+            bool endA = i >= a.length || a[i] >= limit;
+            bool endB = i >= b.length || b[i] >= limit;
+            if (endA || endB) {
+                return endA && endB;
+            }
+            if (a[i] != b[i]) {
+                return false;
+            }
+            i++;
+        }
+    }
+
     // Zusammenführen der sortierten Listen: mode 0 Schnitt, 1 Vereinigung, 2 a ohne b
     static IdSet merge(IdSet a, IdSet b, i32 mode) {
         IdSet c = new IdSet();
@@ -209,6 +225,19 @@ public:
         return c;
     }
 
+    // gleiche Einträge (Schlüssel und Wert) für alle Nummern unter limit?
+    bool sameBelow(IdMap o, i64 limit) {
+        if (!IdSet::sameBelow(keys, o.keys, limit)) {
+            return false;
+        }
+        for (i64 i = 0; i < keys.length && keys[i] < limit; i++) {
+            if (vals[i] != o.vals[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool sameKeys(IdMap o) {
         if (keys.length != o.keys.length) {
             return false;
@@ -295,6 +324,16 @@ public:
             r.unassigned = IdSet::unite(unassigned, o.unassigned);
         }
         return r;
+    }
+
+    // Gleicher Stand für alle Variablen mit einer Nummer unter limit, einschließlich der
+    // Begründungen in lost und moved (M7, looped): Die Variablen ab limit sind im Rumpf der
+    // Schleife deklariert und bekommen in jedem Durchlauf neue Nummern; am Schleifenkopf gibt
+    // es sie nicht, ihre Einträge wirken auf nichts.
+    bool sameBelow(Flow o, i64 limit) {
+        return dead == o.dead && IdSet::sameBelow(nonnull.items, o.nonnull.items, limit)
+            && IdSet::sameBelow(unassigned.items, o.unassigned.items, limit)
+            && moved.sameBelow(o.moved, limit) && lost.sameBelow(o.lost, limit);
     }
 
     // gleiche Fakten (für den Fixpunkt an Schleifenköpfen)

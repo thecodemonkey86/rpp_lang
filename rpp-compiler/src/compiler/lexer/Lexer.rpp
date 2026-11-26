@@ -3,23 +3,22 @@
 // ein Zeichen, das kein Token beginnt, wird ein Fehler-Token, danach endet die Zerlegung.
 package compiler.lexer;
 
-using rpp.collections.Set;
+using rpp.collections.Map;
+using rpp.text.StringBuilder;
 
 export class Lexer {
 private:
     char[] chars = [];
+    // Puffer für den Text eines Tokens (take)
+    StringBuilder sb = new StringBuilder();
     i64 pos = 0;
     i32 line = 1;
     i32 col = 0;
-    Set<string> keywords = new Set<string>();
-    // längste zuerst: der größte Treffer gewinnt; << und >> gibt es nicht als Token
-    string[] puncts = [
-        "?.", "??", "::", "..", "++", "--", "&&", "||", "==", "!=", "<=", ">=",
-        "+=", "-=", "*=", "/=", "%=", "=>",
-        "{", "}", "(", ")", "[", "]", ";", ",", ".", "?", ":", "=", "<", ">",
-        "+", "-", "*", "/", "%", "!", "~", "&", "|", "^"
-    ];
-
+    // Reservierte Wörter und Satzzeichen, jeweils auf denselben Text als Literal: Tokens dieser
+    // Arten tragen das Literal, sodass der Parser sie ohne Zeichenvergleich erkennt (die
+    // Laufzeit hält je Literaltext genau ein Objekt).
+    Map<string, string> keywords = new Map<string, string>();
+    Map<string, string> puncts = new Map<string, string>();
     // Zeichen an pos + offset; hinter dem Ende '\0' (dann ist inside(offset) falsch)
     char at(i64 offset) {
         i64 i = pos + offset;
@@ -45,12 +44,20 @@ private:
     }
 
     string take(i64 n) mut {
-        string s = "";
-        for (i64 i = 0; i < n; i++) {
-            s = s + chars[pos].toString();
-            advance();
+        sb.clear();
+        i64 end = pos + n;
+        while (pos < end) {
+            char c = chars[pos];
+            sb.appendChar(c);
+            pos++;
+            if (c == '\n') {
+                line++;
+                col = 0;
+            } else {
+                col++;
+            }
         }
-        return s;
+        return sb.toString();
     }
 
     static bool identStart(char c) {
@@ -58,7 +65,7 @@ private:
     }
 
     static bool identChar(char c) {
-        return identStart(c) || (c >= '0' && c <= '9');
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9');
     }
 
     static bool digit(char c, bool hex) {
@@ -70,13 +77,24 @@ private:
 
     // Leerraum und Kommentare überspringen; ein offener Blockkommentar ist ein Fehler.
     Token? skipTrivia() mut {
+        i64 n = chars.length;
         while (true) {
-            char c = at(0);
-            if (inside(0) && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) {
-                advance();
+            if (pos >= n) {
+                return null;
+            }
+            char c = chars[pos];
+            if (c == ' ' || c == '\t' || c == '\r') {
+                pos++;
+                col++;
+            } else if (c == '\n') {
+                pos++;
+                line++;
+                col = 0;
             } else if (c == '/' && at(1) == '/') {
-                while (inside(0) && at(0) != '\r' && at(0) != '\n') {
-                    advance();
+                // der Kommentar endet vor dem Zeilenende, also ohne Zeilenwechsel
+                while (pos < n && chars[pos] != '\r' && chars[pos] != '\n') {
+                    pos++;
+                    col++;
                 }
             } else if (c == '/' && at(1) == '*') {
                 i32 l = line;
@@ -195,20 +213,27 @@ private:
         return new Token(Kind::Char, inner, l, k);
     }
 
-    bool matches(string p) {
-        for (i64 i = 0; i < p.length; i++) {
-            if (!inside(i) || at(i) != p[i]) {
-                return false;
-            }
-        }
-        return true;
-    }
-
+    // Länge des Satzzeichens ab pos (längster Treffer); 0, wenn keins beginnt
     i64 punctLength() {
-        for (string p : puncts) {
-            if (matches(p)) {
-                return p.length;
-            }
+        char c = at(0);
+        char d = at(1);
+        if (c == '?') {
+            return d == '.' || d == '?' ? 2 : 1;
+        }
+        if (c == ':' || c == '.' || c == '&' || c == '|') {
+            return d == c ? 2 : 1;
+        }
+        if (c == '+' || c == '-') {
+            return d == c || d == '=' ? 2 : 1;
+        }
+        if (c == '=') {
+            return d == '=' || d == '>' ? 2 : 1;
+        }
+        if (c == '!' || c == '<' || c == '>' || c == '*' || c == '/' || c == '%') {
+            return d == '=' ? 2 : 1;
+        }
+        if (c == '{' || c == '}' || c == '(' || c == ')' || c == '[' || c == ']' || c == ';' || c == ',' || c == '~' || c == '^') {
+            return 1;
         }
         return 0;
     }
@@ -216,13 +241,16 @@ private:
     Token next(i32 l, i32 k) mut {
         char c = at(0);
         if (identStart(c)) {
-            i64 n = 1;
-            while (inside(n) && identChar(at(n))) {
-                n++;
+            i64 end = pos + 1;
+            i64 size = chars.length;
+            while (end < size && identChar(chars[end])) {
+                end++;
             }
-            string text = take(n);
-            if (keywords.contains(text)) {
-                return new Token(Kind::Keyword, text, l, k);
+            i64 len = end - pos;
+            string text = take(len);
+            string? word = keywords.get(text);
+            if (word != null) {
+                return new Token(Kind::Keyword, word, l, k);
             }
             return new Token(Kind::Ident, text, l, k);
         }
@@ -237,7 +265,8 @@ private:
         }
         i64 len = punctLength();
         if (len > 0) {
-            return new Token(Kind::Punct, take(len), l, k);
+            string p = take(len);
+            return new Token(Kind::Punct, puncts.get(p) ?? p, l, k);
         }
         advance();
         return new Token(Kind::Error, "unexpected character '" + c.toString() + "'", l, k);
@@ -259,7 +288,16 @@ public:
             "virtual", "void", "weak", "while"
         ];
         for (string w : words) {
-            keywords.add(w);
+            keywords.put(w, w);
+        }
+        string[] signs = [
+            "?.", "??", "::", "..", "++", "--", "&&", "||", "==", "!=", "<=", ">=",
+            "+=", "-=", "*=", "/=", "%=", "=>",
+            "{", "}", "(", ")", "[", "]", ";", ",", ".", "?", ":", "=", "<", ">",
+            "+", "-", "*", "/", "%", "!", "~", "&", "|", "^"
+        ];
+        for (string x : signs) {
+            puncts.put(x, x);
         }
     }
 

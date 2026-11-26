@@ -15,6 +15,10 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#if defined(_M_X64) || defined(__x86_64__)
+#include <emmintrin.h>
+#define RPP_SSE2 1
+#endif
 
 /* ---------------------------------------------------------------- Status */
 #define ST_OK 0
@@ -50,16 +54,20 @@ typedef struct rv {
         void* p;
     } v;
     int32_t x, y;
-    uint8_t tag;
-    uint8_t form;
+    union {
+        struct { uint8_t tag, form; };
+        uint64_t meta;      /* tag und form als ganzes Wort (M7, siehe rv_mk) */
+    };
 } rv;
 
 typedef struct RStr {
-    int64_t rc;      /* < 0: unvergänglich (Literal) */
+    int64_t rc;      /* < 0: unvergänglich; RT_INTERNED: Literal, je Text genau ein Objekt */
     int64_t len;     /* Bytes */
     int64_t chars;   /* Zeichen; < 0: noch nicht gezählt */
     char data[];     /* UTF-8, mit 0 abgeschlossen */
 } RStr;
+
+#define RT_INTERNED (-2)
 
 struct RClass;
 struct RTy;
@@ -164,44 +172,64 @@ typedef struct RTrace {
 extern RTrace rt_exc_trace;
 
 /* ---------------------------------------------------------------- Werte bauen */
-static inline rv rv_make(uint8_t tag) { rv r; r.v.i = 0; r.x = 0; r.y = 0; r.tag = tag; r.form = F_OWN; return r; }
+#if defined(_MSC_VER)
+#define RV_INLINE static __forceinline
+#else
+#define RV_INLINE static inline __attribute__((always_inline))
+#endif
+/* M7: Ein Wert wird in ganzen Wörtern geschrieben (16 + 8 Byte), so wie der C-Compiler ihn
+ * kopiert. Einzeln geschriebene Felder direkt vor einer Kopie verhindern das Store-Forwarding
+ * des Prozessors (rund 12 Takte je Kopie). */
+RV_INLINE rv rv_mk(int64_t v, int32_t x, uint8_t tag, uint8_t form) {
+    rv r;
+#ifdef RPP_SSE2
+    _mm_storeu_si128((__m128i*)&r, _mm_set_epi64x((int64_t)(uint32_t)x, v));
+#else
+    r.v.i = v; r.x = x; r.y = 0;
+#endif
+    r.meta = (uint64_t)tag | ((uint64_t)form << 8);
+    return r;
+}
+RV_INLINE rv rv_with_form(rv v, uint8_t form) {
+    v.meta = (uint64_t)v.tag | ((uint64_t)form << 8);
+    return v;
+}
+RV_INLINE rv rv_make(uint8_t tag) { return rv_mk(0, 0, tag, F_OWN); }
 static inline rv rv_void(void) { return rv_make(RT_VOID); }
 static inline rv rv_null(void) { return rv_make(RT_NULL); }
 static inline rv rv_moved(void) { return rv_make(RT_MOVED); }
 static inline rv rv_uninit(void) { return rv_make(RT_UNINIT); }
-static inline rv rv_bool(int b) { rv r = rv_make(RT_BOOL); r.v.i = b ? 1 : 0; return r; }
-static inline rv rv_char(uint32_t c) { rv r = rv_make(RT_CHAR); r.v.i = c; return r; }
-static inline rv rv_byte(uint8_t b) { rv r = rv_make(RT_BYTE); r.v.i = b; return r; }
+static inline rv rv_bool(int b) { return rv_mk(b ? 1 : 0, 0, RT_BOOL, F_OWN); }
+static inline rv rv_char(uint32_t c) { return rv_mk(c, 0, RT_CHAR, F_OWN); }
+static inline rv rv_byte(uint8_t b) { return rv_mk(b, 0, RT_BYTE, F_OWN); }
 static inline rv rv_f64(double f) { rv r = rv_make(RT_F64); r.v.f = f; return r; }
 static inline rv rv_f32(float f) { rv r = rv_make(RT_F32); r.v.i = 0; r.v.f32 = f; return r; }
-static inline rv rv_i64(int64_t i) { rv r = rv_make(RT_I64); r.v.i = i; return r; }
-static inline rv rv_i32(int32_t i) { rv r = rv_make(RT_I32); r.v.i = i; return r; }
-static inline rv rv_enum(int32_t def, int64_t idx) { rv r = rv_make(RT_ENUM); r.v.i = idx; r.x = def; return r; }
-static inline rv rv_obj(RObj* o, uint8_t form) { rv r = rv_make(RT_OBJ); r.v.p = o; r.form = form; return r; }
+static inline rv rv_i64(int64_t i) { return rv_mk(i, 0, RT_I64, F_OWN); }
+static inline rv rv_i32(int32_t i) { return rv_mk(i, 0, RT_I32, F_OWN); }
+static inline rv rv_enum(int32_t def, int64_t idx) { return rv_mk(idx, def, RT_ENUM, F_OWN); }
+static inline rv rv_obj(RObj* o, uint8_t form) { return rv_mk((int64_t)(intptr_t)o, 0, RT_OBJ, form); }
 rv rv_int_slow(int64_t v, uint8_t tag);
 rv rv_uint_slow(uint64_t v, uint8_t tag);
 /* make_int für Werte, die in i64 bzw. ui64 passen (Abschneiden auf den Typ) */
 static inline rv rv_int(int64_t v, uint8_t tag) {
-    rv r = rv_make(tag);
     switch (tag) {
-    case RT_I8: r.v.i = (int8_t)v; return r;
-    case RT_I16: r.v.i = (int16_t)v; return r;
-    case RT_I32: r.v.i = (int32_t)v; return r;
-    case RT_I64: r.v.i = v; return r;
+    case RT_I8: return rv_mk((int8_t)v, 0, tag, F_OWN);
+    case RT_I16: return rv_mk((int16_t)v, 0, tag, F_OWN);
+    case RT_I32: return rv_mk((int32_t)v, 0, tag, F_OWN);
+    case RT_I64: return rv_mk(v, 0, tag, F_OWN);
     default: return rv_int_slow(v, tag);
     }
 }
 static inline rv rv_uint(uint64_t v, uint8_t tag) {
-    rv r = rv_make(tag);
     switch (tag) {
-    case RT_I8: r.v.i = (int8_t)v; return r;
-    case RT_I16: r.v.i = (int16_t)v; return r;
-    case RT_I32: r.v.i = (int32_t)v; return r;
-    case RT_I64: r.v.i = (int64_t)v; return r;
-    case RT_U8: r.v.u = (uint8_t)v; return r;
-    case RT_U16: r.v.u = (uint16_t)v; return r;
-    case RT_U32: r.v.u = (uint32_t)v; return r;
-    case RT_U64: r.v.u = v; return r;
+    case RT_I8: return rv_mk((int8_t)v, 0, tag, F_OWN);
+    case RT_I16: return rv_mk((int16_t)v, 0, tag, F_OWN);
+    case RT_I32: return rv_mk((int32_t)v, 0, tag, F_OWN);
+    case RT_I64: return rv_mk((int64_t)v, 0, tag, F_OWN);
+    case RT_U8: return rv_mk((uint8_t)v, 0, tag, F_OWN);
+    case RT_U16: return rv_mk((uint16_t)v, 0, tag, F_OWN);
+    case RT_U32: return rv_mk((uint32_t)v, 0, tag, F_OWN);
+    case RT_U64: return rv_mk((int64_t)v, 0, tag, F_OWN);
     default: return rv_uint_slow(v, tag);
     }
 }
@@ -217,9 +245,7 @@ rv rt_lit_new(RStr** cache, const char* s, int64_t len);
 /* Literal: angelegt beim ersten Gebrauch, danach inline (M7) */
 static inline rv rt_lit(RStr** cache, const char* s, int64_t len) {
     if (*cache) {
-        rv r = rv_make(RT_STR);
-        r.v.p = *cache;
-        return r;
+        return rv_mk((int64_t)(intptr_t)*cache, 0, RT_STR, F_OWN);
     }
     return rt_lit_new(cache, s, len);
 }
@@ -241,10 +267,10 @@ rv rt_num_to(rv v, uint8_t tag);
 static inline rv rv_view(rv v) {
     if (v.tag >= RT_STR) {
         if (v.tag == RT_OBJ) {
-            if (v.form == F_OWN || v.form == F_SHARED) v.form = F_BORROW;
-            else if (v.form == F_WEAK) v.form = F_WEAKB;
+            if (v.form == F_OWN || v.form == F_SHARED) v = rv_with_form(v, F_BORROW);
+            else if (v.form == F_WEAK) v = rv_with_form(v, F_WEAKB);
         } else if (v.tag != RT_ENUM && v.tag != RT_SLICE) {
-            v.form = F_BORROW;
+            v = rv_with_form(v, F_BORROW);
         }
     }
     return v;
@@ -269,6 +295,10 @@ static inline int rt_drop(rv v) {
         RStr* s = (RStr*)v.v.p;
         if (s->rc > 1) { s->rc--; return ST_OK; }
         if (s->rc <= 0) return ST_OK;
+    } else if (v.tag == RT_OBJ) {
+        /* M7: Borrows geben nichts frei; shared nur zählen, solange andere Verweise bleiben */
+        if (v.form == F_BORROW || v.form == F_WEAKB) return ST_OK;
+        if (v.form == F_SHARED && ((RObj*)v.v.p)->rc > 1) { ((RObj*)v.v.p)->rc--; return ST_OK; }
     }
     return rt_drop_slow(v);
 }
@@ -293,16 +323,58 @@ static inline rv rt_promote(rv v) {
         if (v.form == F_BORROW) {
             RStr* s = (RStr*)v.v.p;
             if (s->rc >= 0) s->rc++;
-            v.form = F_OWN;
+            v = rv_with_form(v, F_OWN);
         }
         return v;
+    }
+    if (v.tag == RT_OBJ) {
+        if (v.form == F_BORROW) {
+            RObj* o = (RObj*)v.v.p;
+            if (o->rc > 0) { o->rc++; v = rv_with_form(v, F_SHARED); }
+            return v;
+        }
+        if (v.form != F_WEAKB) return v;
     }
     return rt_promote_slow(v);
 }
 rv rt_own_copy(rv v);
 int rt_plain(rv v);
-rv rt_transfer_var(rv* cell);                   /* Variable an einen Besitzer übergeben (transfer) */
-rv rt_to_shared(rv v);                          /* convert in einen shared-Typ */
+rv rt_transfer_var_slow(rv* cell);
+/* Variable an einen Besitzer übergeben (transfer); Objekte inline (M7) */
+static inline rv rt_transfer_var(rv* cell) {
+    rv cur = *cell;
+    if (cur.tag == RT_OBJ) {
+        RObj* o = (RObj*)cur.v.p;
+        if ((cur.form == F_SHARED || cur.form == F_BORROW) && o->rc > 0) {
+            o->rc++;
+            cur = rv_with_form(cur, F_SHARED);
+            return cur;
+        }
+        if (cur.form == F_OWN) {
+            *cell = rv_make(RT_MOVED);
+            return cur;
+        }
+    } else if (cur.tag < RT_STR) {
+        return cur;
+    } else if (cur.tag == RT_ENUM) {
+        /* Enum ohne Daten: einfache Kopie (wie share) */
+        if (rt_enums[cur.x]->plain) return cur;
+    } else if (cur.tag == RT_STR) {
+        /* wie share: der Text wird geteilt, die Variable behält ihren Verweis */
+        RStr* s = (RStr*)cur.v.p;
+        if (s->rc >= 0) s->rc++;
+        return rv_with_form(cur, F_OWN);
+    }
+    return rt_transfer_var_slow(cell);
+}
+/* convert in einen shared-Typ */
+static inline rv rt_to_shared(rv v) {
+    if (v.tag == RT_OBJ && v.form == F_OWN) {
+        ((RObj*)v.v.p)->rc++;
+        v = rv_with_form(v, F_SHARED);
+    }
+    return v;
+}
 int rt_to_weak(rv* v);                          /* convert in einen weak-Typ */
 int rt_convert_exact(rv* v, uint8_t tag);       /* Ergebnis einer Verbundzuweisung */
 int rt_scope_drop_slow(int st, rv* vars, int n);
@@ -311,7 +383,7 @@ int rt_combine(int st, int d);
 static inline int rt_scope_drop(int st, rv* vars, int n) {
     if (n == 1) {
         rv x = vars[0];
-        vars[0].tag = RT_MOVED;
+        vars[0].meta = RT_MOVED;
         if (x.tag < RT_STR || x.tag == RT_ENUM || x.tag == RT_SLICE) return st;
         int d = rt_drop_slow(x);
         return d ? rt_combine(st, d) : st;
@@ -333,7 +405,12 @@ int rt_is_subclass(const RClass* c, int32_t def);
 const RTy* rt_ty(int32_t kind, int32_t def, int32_t n, const RTy** args);
 const RTy* rt_tyv(int32_t def, int32_t n, ...);
 int rt_field_index(RObj* o, int idx);
-int rt_check_lock(RObj* o, int mutable, int line);
+int rt_check_lock_fail(RObj* o, int line);
+static inline int rt_check_lock(RObj* o, int mutable, int line) {
+    int b = o->lock;
+    if ((!mutable && b == -1) || (mutable && b != 0)) return rt_check_lock_fail(o, line);
+    return ST_OK;
+}
 int rt_acquire(RObj* o, int mutable, int line);
 void rt_unlock(RObj* o, int mutable);
 static inline RObj* rt_shared_root(rv v) { return (v.tag == RT_OBJ && v.form == F_SHARED) ? (RObj*)v.v.p : NULL; }
@@ -431,9 +508,7 @@ static inline int rt_arith(rv* out, int op, rv a, rv b) {
             int64_t lo = p == RT_I32 ? INT32_MIN : p == RT_I16 ? -32768 : -128;
             int64_t hi = p == RT_I32 ? INT32_MAX : p == RT_I16 ? 32767 : 127;
             if (r >= lo && r <= hi) {
-                rv v = rv_make(p);
-                v.v.i = r;
-                *out = v;
+                *out = rv_mk(r, 0, p, F_OWN);
                 return ST_OK;
             }
         } else if (op == OP_ADD ? !((y > 0 && x > INT64_MAX - y) || (y < 0 && x < INT64_MIN - y))
@@ -454,7 +529,9 @@ static inline int rt_equal(int* out, rv a, rv b) {
         /* M7: wie rt_equal_slow, inline */
         RStr* x = (RStr*)a.v.p;
         RStr* y = (RStr*)b.v.p;
-        *out = x == y || (x->len == y->len && memcmp(x->data, y->data, (size_t)x->len) == 0);
+        /* zwei verschiedene Literale haben verschiedenen Text (rt_lit_new) */
+        *out = x == y || (x->len == y->len && !(x->rc == RT_INTERNED && y->rc == RT_INTERNED)
+                          && memcmp(x->data, y->data, (size_t)x->len) == 0);
         return ST_OK;
     }
     if (a.tag >= RT_I8 && a.tag <= RT_I64 && b.tag >= RT_I8 && b.tag <= RT_I64) {
@@ -524,9 +601,7 @@ int rn_index_slow(int64_t* out, rv obj, int64_t i);
 int rn_len_slow(int64_t* out, rv obj, int bytes);
 
 RN_INLINE rv rn_box(int64_t v, uint8_t tag) {
-    rv r = rv_make(tag);
-    r.v.i = v;
-    return r;
+    return rv_mk(v, 0, tag, F_OWN);
 }
 RN_INLINE int rn_fits(int64_t r, uint8_t tag) {
     switch (tag) {

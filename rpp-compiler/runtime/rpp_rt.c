@@ -566,10 +566,7 @@ static RStr* str_alloc(int64_t len) {
 }
 
 static rv rv_str(RStr* s, uint8_t form) {
-    rv r = rv_make(RT_STR);
-    r.v.p = s;
-    r.form = form;
-    return r;
+    return rv_mk((int64_t)(intptr_t)s, 0, RT_STR, form);
 }
 
 rv rt_str_from(const char* p, int64_t len) {
@@ -580,13 +577,51 @@ rv rt_str_from(const char* p, int64_t len) {
 
 rv rt_str_c(const char* p) { return rt_str_from(p, (int64_t)strlen(p)); }
 
-rv rt_lit_new(RStr** cache, const char* p, int64_t len) {
-    if (!*cache) {
-        RStr* s = str_alloc(len);
-        memcpy(s->data, p, (size_t)len);
-        s->rc = -1;
-        *cache = s;
+/* M7: Literale sind programmweit eindeutig. Jede Stelle im erzeugten Code hat ihren eigenen
+ * Zwischenspeicher (cache); beim ersten Gebrauch sucht sie den Text in dieser Tabelle, sodass
+ * gleiche Texte dasselbe Objekt ergeben (rc == RT_INTERNED). Zwei verschiedene solche Objekte
+ * haben verschiedenen Text; rt_equal vergleicht sie deshalb ohne memcmp. */
+static RStr** lit_tab = NULL;
+static size_t lit_cap = 0, lit_n = 0;
+
+static uint64_t lit_hash(const char* p, int64_t len) {
+    uint64_t h = 1469598103934665603ULL;
+    for (int64_t i = 0; i < len; i++) h = (h ^ (unsigned char)p[i]) * 1099511628211ULL;
+    return h;
+}
+
+static RStr* lit_intern(const char* p, int64_t len) {
+    if ((lit_n + 1) * 2 > lit_cap) {
+        size_t cap = lit_cap ? lit_cap * 2 : 1024;
+        RStr** tab = (RStr**)calloc(cap, sizeof(RStr*));
+        if (!tab) mem_oom();
+        for (size_t i = 0; i < lit_cap; i++) {
+            RStr* s = lit_tab[i];
+            if (!s) continue;
+            size_t k = (size_t)lit_hash(s->data, s->len) & (cap - 1);
+            while (tab[k]) k = (k + 1) & (cap - 1);
+            tab[k] = s;
+        }
+        free(lit_tab);
+        lit_tab = tab;
+        lit_cap = cap;
     }
+    size_t k = (size_t)lit_hash(p, len) & (lit_cap - 1);
+    while (lit_tab[k]) {
+        RStr* s = lit_tab[k];
+        if (s->len == len && memcmp(s->data, p, (size_t)len) == 0) return s;
+        k = (k + 1) & (lit_cap - 1);
+    }
+    RStr* s = str_alloc(len);
+    memcpy(s->data, p, (size_t)len);
+    s->rc = RT_INTERNED;
+    lit_tab[k] = s;
+    lit_n++;
+    return s;
+}
+
+rv rt_lit_new(RStr** cache, const char* p, int64_t len) {
+    if (!*cache) *cache = lit_intern(p, len);
     return rv_str(*cache, F_OWN);
 }
 
@@ -797,9 +832,12 @@ rv rt_text(rv v) {
 
 static int destruct(RObj* o);
 
+/* Felder im selben Block wie das Objekt (M7, rt_obj_new) */
+static int slots_inline(RObj* o) { return o->slots == (rv*)(o + 1); }
+
 static void obj_free(RObj* o) {
     if (rt_nofree) return;
-    xfree(o->slots);
+    if (!slots_inline(o)) xfree(o->slots);
     o->slots = NULL;
     o->len = o->cap = 0;
     if (o->native) {
@@ -1029,7 +1067,7 @@ static rv share(rv v) {
     return v;
 }
 
-rv rt_transfer_var(rv* cell) {
+rv rt_transfer_var_slow(rv* cell) {
     rv cur = *cell;
     switch (cur.tag) {
     case RT_OBJ: {
@@ -1069,13 +1107,6 @@ rv rt_transfer_var(rv* cell) {
     }
 }
 
-rv rt_to_shared(rv v) {
-    if (v.tag == RT_OBJ && v.form == F_OWN) {
-        ((RObj*)v.v.p)->rc++;
-        v.form = F_SHARED;
-    }
-    return v;
-}
 
 int rt_to_weak(rv* v) {
     if (v->tag == RT_OBJ && (v->form == F_SHARED || v->form == F_BORROW)) {
@@ -1112,12 +1143,15 @@ int rt_convert_exact(rv* v, uint8_t p) {
 /* ================================================================ Objekte */
 
 RObj* rt_obj_new(const RClass* c, const RTy** targs, int32_t ntargs) {
-    RObj* o = (RObj*)xmalloc(sizeof(RObj));
+    RObj* o;
+    /* M7: Objekt und Felder in einem Block. Map, Set und Leser hängen Einträge an (rt_vec_push);
+     * vec_reserve zieht dann in einen eigenen Block um, obj_free und clear achten darauf. */
+    o = (RObj*)xmalloc(sizeof(RObj) + sizeof(rv) * (size_t)c->nfields);
     memset(o, 0, sizeof *o);
+    o->slots = (rv*)(o + 1);
     o->cls = c;
     o->alive = 1;
     o->len = o->cap = c->nfields;
-    o->slots = (rv*)xmalloc(sizeof(rv) * (size_t)(c->nfields ? c->nfields : 1));
     for (int i = 0; i < c->nfields; i++) o->slots[i] = rv_uninit();
     o->targs = targs;
     o->ntargs = ntargs;
@@ -1132,8 +1166,11 @@ RObj* rt_vec_new(int64_t cap) {
     RObj* o = (RObj*)xmalloc(sizeof(RObj));
     memset(o, 0, sizeof *o);
     o->alive = 1;
-    o->cap = cap < 4 ? 4 : cap;
-    o->slots = (rv*)xmalloc(sizeof(rv) * (size_t)o->cap);
+    /* M7: ein leerer Vektor (etwa aus []) bekommt Platz erst beim ersten Element */
+    if (cap > 0) {
+        o->cap = cap < 4 ? 4 : cap;
+        o->slots = (rv*)xmalloc(sizeof(rv) * (size_t)o->cap);
+    }
     return o;
 }
 
@@ -1141,7 +1178,13 @@ static void vec_reserve(RObj* v, int64_t n) {
     if (n <= v->cap) return;
     int64_t c = v->cap ? v->cap * 2 : 4;
     while (c < n) c *= 2;
-    v->slots = (rv*)xrealloc(v->slots, sizeof(rv) * (size_t)c);
+    if (slots_inline(v)) {
+        rv* s = (rv*)xmalloc(sizeof(rv) * (size_t)c);
+        memcpy(s, v->slots, sizeof(rv) * (size_t)v->len);
+        v->slots = s;
+    } else {
+        v->slots = (rv*)xrealloc(v->slots, sizeof(rv) * (size_t)c);
+    }
     v->cap = c;
 }
 
@@ -1208,14 +1251,10 @@ const RTy* rt_ty(int32_t kind, int32_t def, int32_t n, const RTy** args) {
     return &q->t;
 }
 
-int rt_check_lock(RObj* o, int mutable, int line) {
-    int b = o->lock;
-    if ((!mutable && b == -1) || (mutable && b != 0)) {
-        int st = rt_fatal("BorrowError", "The shared object is locked for %s", b == -1 ? "writing" : "reading");
-        if (line > 0) rt_fatal_at(st, line);
-        return st;
-    }
-    return ST_OK;
+int rt_check_lock_fail(RObj* o, int line) {
+    int st = rt_fatal("BorrowError", "The shared object is locked for %s", o->lock == -1 ? "writing" : "reading");
+    if (line > 0) rt_fatal_at(st, line);
+    return st;
 }
 
 int rt_acquire(RObj* o, int mutable, int line) {
@@ -1293,8 +1332,20 @@ static int destruct(RObj* o) {
         }
         xfree(elems);
     } else {
-        st = rt_run_dtors(o, o->cls);
-        if (!st) st = rt_drop_fields(o, o->len);
+        /* wie rt_run_dtors und rt_drop_fields, ohne Aufruf je Stufe und je Feld (M7) */
+        for (const RClass* c = o->cls; c && !st; c = c->base) {
+            if (c->dtor) st = run_dtor(o, c);
+        }
+        if (!st) {
+            for (int64_t k = o->len - 1; k >= 0; k--) {
+                if (k >= o->len) continue;
+                rv x = o->slots[k];
+                if (x.tag < RT_STR || x.tag == RT_ENUM || x.tag == RT_SLICE) continue;
+                o->slots[k].meta = RT_MOVED;
+                st = rt_drop(x);
+                if (st) break;
+            }
+        }
         if (!st && o->native) st = native_drop(o);
     }
     o->alive = 0;
@@ -2259,11 +2310,12 @@ static int vec_method(rv* out, RObj* o, int id, int n, rv* args) {
         o->slots = (rv*)xmalloc(sizeof(rv) * 4);
         o->len = 0;
         o->cap = 4;
+        int own_block = elems != (rv*)(o + 1);
         for (int64_t i = 0; i < m; i++) {
             int st = rt_drop(elems[i]);
-            if (st) { xfree(elems); return st; }
+            if (st) { if (own_block) xfree(elems); return st; }
         }
-        xfree(elems);
+        if (own_block) xfree(elems);
         return ST_OK;
     }
     if ((id == BM_first)) { *out = len ? rv_view(o->slots[0]) : rv_null(); return ST_OK; }
@@ -3232,11 +3284,13 @@ static int native_collection(rv* out, RObj* o, const char* name, rv* args, int a
         o->cap = 4;
         HIdx* h = hidx(o);
         h->nb = 0;
+        /* die Einträge einer noch leeren Map liegen im Block des Objekts (rt_obj_new) */
+        int own_block = items != (rv*)(o + 1);
         for (int64_t i = 0; i < k; i++) {
             int st = rt_drop(items[i]);
-            if (st) { xfree(items); return st; }
+            if (st) { if (own_block) xfree(items); return st; }
         }
-        xfree(items);
+        if (own_block) xfree(items);
         return ST_OK;
     }
     return rt_fatal("InternalError", "%s ist nicht eingebaut", name);
@@ -3255,6 +3309,20 @@ static int native_string_builder(rv* out, RObj* o, const char* m, rv* args) {
     if (!strcmp(m, "length")) { *out = rv_i64(s->chars); return ST_OK; }
     if (!strcmp(m, "toString")) { *out = rt_str_from(s->b.p, s->b.n); return ST_OK; }
     if (!strcmp(m, "clear")) { s->b.n = 0; s->b.p[0] = 0; s->chars = 0; return ST_OK; }
+    /* M7: ein Zeichen oder ein String ohne Zwischenpuffer (der Lexer hängt jedes Zeichen an) */
+    if (args[0].tag == RT_CHAR && !strcmp(m, "appendChar")) {
+        char one[4];
+        int n = utf8_enc((uint32_t)args[0].v.u, one);
+        buf_add(&s->b, one, n);
+        s->chars++;
+        return ST_OK;
+    }
+    if (args[0].tag == RT_STR && !strcmp(m, "append")) {
+        RStr* x = (RStr*)args[0].v.p;
+        buf_add(&s->b, x->data, x->len);
+        s->chars += rt_str_chars(x);
+        return ST_OK;
+    }
     Buf t = { 0 };
     buf_str(&t, "");
     text_of(&t, args[0]);
@@ -3736,6 +3804,23 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
     /* ---------------------------------------------------------------- Zeit, Mathematik, StringView */
     if (IS("rpp.env.ElapsedTimer.monotonicNanos")) { *out = rv_i64(mono_nanos()); return ST_OK; }
     if (IS("rpp.math.Math.sqrt")) { *out = rv_f64(sqrt(as_f64(args[0]))); return ST_OK; }
+    /* transzendente Funktionen (rpp.math, plattformabhängig): die der C-Bibliothek, wie rppc */
+    if (!strncmp(name, "rpp.math.Math.", 14)) {
+        const char* f = name + 14;
+        double x = as_f64(args[0]);
+        if (!strcmp(f, "pow")) { *out = rv_f64(pow(x, as_f64(args[1]))); return ST_OK; }
+        if (!strcmp(f, "exp")) { *out = rv_f64(exp(x)); return ST_OK; }
+        if (!strcmp(f, "log")) { *out = rv_f64(log(x)); return ST_OK; }
+        if (!strcmp(f, "sin")) { *out = rv_f64(sin(x)); return ST_OK; }
+        if (!strcmp(f, "cos")) { *out = rv_f64(cos(x)); return ST_OK; }
+        if (!strcmp(f, "tan")) { *out = rv_f64(tan(x)); return ST_OK; }
+        if (!strcmp(f, "log10")) { *out = rv_f64(log10(x)); return ST_OK; }
+        if (!strcmp(f, "hypot")) { *out = rv_f64(hypot(x, as_f64(args[1]))); return ST_OK; }
+        if (!strcmp(f, "atan2")) { *out = rv_f64(atan2(x, as_f64(args[1]))); return ST_OK; }
+        if (!strcmp(f, "sinh")) { *out = rv_f64(sinh(x)); return ST_OK; }
+        if (!strcmp(f, "cosh")) { *out = rv_f64(cosh(x)); return ST_OK; }
+        if (!strcmp(f, "tanh")) { *out = rv_f64(tanh(x)); return ST_OK; }
+    }
     if (IS("rpp.env.Env.get")) {
         const char* v = getenv(rt_s(args[0])->data);
         *out = v ? sv(v) : rv_null();

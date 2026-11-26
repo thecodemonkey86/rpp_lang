@@ -5,6 +5,7 @@
 package compiler.sema;
 
 using rpp.collections.Map;
+using rpp.collections.Set;
 using compiler.syntax.Node;
 using compiler.project.Workspace;
 using compiler.project.Project;
@@ -28,6 +29,8 @@ public:
 
 private:
     Map<string, i64> byFull = new Map<string, i64>();
+    // volle Namen, die mehr als ein Projekt deklariert (lookupOwn)
+    Set<string> sharedFull = new Set<string>();
     Pending[] pending = [];
 
 public:
@@ -414,6 +417,9 @@ private:
                     error(f, nameNode.line, nameNode.col, "R-11.4", "Type " + full + " is already declared");
                     continue;
                 }
+                if (other >= 0) {
+                    sharedFull.add(full);
+                }
                 byFull.put(full, defs.length);
                 defs.push(def);
             }
@@ -438,12 +444,9 @@ private:
 
     // Sucht einen einfachen Typnamen in einer Datei (R-11.8): eigenes Paket, using, rpp.core
     i64 lookupSimple(i64 file, string name, i32 line, i32 col) mut {
-        i64 project = fileInfos[file].project;
-        string pkg = fileInfos[file].pkg;
-        for (i64 i = 0; i < defs.length; i++) {
-            if (defs[i].project == project && defs[i].pkg == pkg && defs[i].name == name) {
-                return i;
-            }
+        i64 mine = lookupOwn(file, name);
+        if (mine >= 0) {
+            return mine;
         }
         string[] found = [];
         for (i64 k = 0; k < fileInfos[file].usingSimple.length; k++) {
@@ -465,8 +468,29 @@ private:
     }
 
     i64 lookupSimpleSilent(i64 file, string name) {
+        return lookupOwn(file, name);
+    }
+
+    // Typ dieses Namens im Paket und Projekt der Datei; -1, wenn es keinen gibt. Der volle
+    // Name steht in byFull; nur wenn ihn mehrere Projekte deklarieren (sharedFull), wird wie
+    // vorher der erste passende Typ gesucht (M7: sonst kein Durchlauf über alle Typen).
+    i64 lookupOwn(i64 file, string name) {
         i64 project = fileInfos[file].project;
         string pkg = fileInfos[file].pkg;
+        string full = name;
+        if (pkg.length != 0) {
+            full = pkg + "." + name;
+        }
+        i64 hit = lookupFull(full);
+        if (hit < 0) {
+            return -1;
+        }
+        if (!sharedFull.contains(full)) {
+            if (defs[hit].project == project) {
+                return hit;
+            }
+            return -1;
+        }
         for (i64 i = 0; i < defs.length; i++) {
             if (defs[i].project == project && defs[i].pkg == pkg && defs[i].name == name) {
                 return i;
