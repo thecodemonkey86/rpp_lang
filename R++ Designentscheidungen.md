@@ -379,7 +379,7 @@ Entschieden am 23.11.2026; Einzelheiten in „R++ Standardbibliothek“, Abschni
 - [E] V-13.39 (angenommen am 26.11.2026): `Vectors.any<T>(Slice<T> s, Func<T, bool> predicate)`, `Vectors.all<T>(…)` und `Vectors.none<T>(…)` als statische generische Methoden; Prädikate über den Slice, leere Slice: `any` → `false`, `all` → `true`, `none` → `true`.
 - [E] V-13.40 (angenommen am 26.11.2026): `rpp.text.Text` ergänzt die Text-Hilfen um `isBlank` (über `trim`), `substringBefore`/`substringAfter` (über `splitLimit` mit `limit = 2`) sowie `capitalize`, `toUpperCase` und `toLowerCase` (über `substring` und die Builtins `toUpper`/`toLower`); reiner R++-Quelltext, V-13.10, Muster `Fmt`.
 - [E] V-13.41 (angenommen am 26.11.2026): `rpp.math.Math` ergänzt um die Transzendenten `log10`, `hypot`, `atan2`, `sinh`, `cosh` und `tanh` (eingebaut, Dispatch in `stdlib.rs`, plattformabhängig, nicht bitgleich, V-13.11) sowie die Umrechnungen `toDegrees`/`toRadians` (reiner R++-Quelltext, Arithmetik über `Math::PI`).
-- [E] V-13.42 (angenommen am 26.11.2026): `rpp.iter.Iter` (reiner R++-Quelltext, V-13.10, Muster von `Vectors`) ergänzt `rpp.iter` um die Lazy-Operationen `map`, `filter`, `take`, `flatMap` und `chain` über `Slice<T>`; Porte: Rust `Iterator`, Kotlin Sequence, C++20 ranges.
+- [E] V-13.42 (angenommen am 26.11.2026): `rpp.iter.Iter` (reiner R++-Quelltext, V-13.10, Muster von `Vectors`) ergänzt `rpp.iter` um die Lazy-Operationen `map`, `filter`, `take`, `flatMap` und `chain` über `Slice<shared T>` mit Ergebnis `shared T[]` (Elemente geteilt statt verschoben, R-5.3); Porte: Rust `Iterator`, Kotlin Sequence, C++20 ranges.
 
 ## 25. Festlegungen aus Kapitel 1, 11, 12 und 14
 

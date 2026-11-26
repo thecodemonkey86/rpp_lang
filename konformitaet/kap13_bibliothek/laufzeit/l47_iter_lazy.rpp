@@ -14,7 +14,7 @@ i32 main(string[] args) {
     for (i32 x : Iter::take([1, 2, 3, 4, 5], 3)) { print(x.toString()); }
 
     // Lazy flatMap: jedes Element wird zu einer Wortliste.
-    for (string w : Iter::flatMap(["a", "b"], (string s) => { string[] r = []; r.push(s); r.push(s + "!"); return r; })) { print(w); }
+    for (string w : Iter::flatMap(["a", "b"], (string s) => { shared string[] r = []; r.push(s); r.push(s + "!"); return r; })) { print(w); }
 
     // Lazy chain: Quelle gefolgt von einer zweiten Quelle.
     for (i32 x : Iter::chain([1, 2], [3, 4])) { print(x.toString()); }

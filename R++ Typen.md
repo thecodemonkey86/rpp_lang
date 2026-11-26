@@ -176,7 +176,7 @@ Ein Wert vom Typ `C` darf überall stehen, wo `D` verlangt wird; das gilt mit de
 
 **R-4.30 (Typen).** `T[N]` ist ein festes Array mit `N` Elementen; `N` ist ein Ganzzahlliteral oder eine `static const`-Ganzzahlkonstante ≥ 0. `T[]` ist ein Vektor. `Slice<T>` ist eine geliehene Sicht auf einen Ausschnitt eines festen Arrays oder Vektors. Alle Elemente haben den Typ `T`. `T[N]` und `T[M]` sind nur bei `N = M` derselbe Typ.
 
-**R-4.31 (Umwandlungen, V-4.9).** `T[N]` und `T[]` werden automatisch als `Slice<T>` geliehen (lesend; mit `mut` veränderbar). Zwischen `T[N]` und `T[]` gibt es keine automatische Umwandlung. Arrays sind invariant: `Circle[]` ist kein `Shape[]`.
+**R-4.31 (Umwandlungen, V-4.9).** `T[N]` und `T[]` werden automatisch als `Slice<T>` geliehen (lesend; mit `mut` veränderbar). Zwischen `T[N]` und `T[]` gibt es keine automatische Umwandlung. Arrays sind invariant: `Circle[]` ist kein `Shape[]`. Die Besitzform der Elemente muss dabei übereinstimmen: `Box[]` ist kein `Slice<shared Box>` und `shared Box[N]` kein `Box[N]`, denn sonst entstünden geteilte Verweise auf Objekte, die mit ihrem Behälter freigegeben werden (Kapitel 5, V-9). Bei Elementtypen, die nicht verschoben werden (Grundwerte, `string`), bedeutet die Form nichts; `i64[]` ist auch ein `Slice<shared i64>`.
 
 **R-4.32 (Literale).** Ein Array-Literal `[a, b, c]` hat den Typ, den der Kontext verlangt; jedes Element wird in den Elementtyp umgewandelt. Bei festen Arrays muss die Anzahl stimmen. `[]` braucht einen Kontext.
 
@@ -238,7 +238,7 @@ Die Testprogramme liegen in `konformitaet/kap04_typen/`. Die Syntax prüft `rpp-
 | R-4.19, R-4.20 string | `a03_string.rpp` | `n09_string_zuweisung_an_index.rpp`, `n10_string_plus_zahl.rpp` |
 | R-4.23, R-4.24 as, Gleichheit | `a04_klassen.rpp` | `n11_as_kein_untertyp.rpp`, `n12_gleichheit_ohne_equatable.rpp` |
 | R-4.26 – R-4.28 Enums | `a05_enums.rpp` | `n13_enum_wert_doppelt.rpp`, `n14_enum_mit_daten_vergleichen.rpp` |
-| R-4.31 Arrays | `a06_arrays_tupel.rpp` | `n15_array_kovarianz.rpp` |
+| R-4.31 Arrays | `a06_arrays_tupel.rpp` | `n15_array_kovarianz.rpp`, `n28_slice_besitzform.rpp` |
 | R-4.35 Tupel | `a06_arrays_tupel.rpp` | `n16_tupel_vergleich.rpp` |
 | R-4.40 null | `a07_nullbar.rpp` | `n17_var_null.rpp` |
 | R-4.43 Invarianz | – | `n18_generics_kovarianz.rpp` |

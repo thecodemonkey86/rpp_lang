@@ -1,49 +1,50 @@
-// Standardbibliothek: rpp.iter, Lazy Iteratoren (Kapitel 13, R-13.42)
-// Reiner R++-Quelltext (V-13.9, V-13.10) als Adapter über dem Cursor-Protokoll
-// Iterable<T, C> (R-5.17); die Pipeline hält den Borrow der Quelle, Lebensdauer
-// = Block. Porte: Rust Iterator, Kotlin Sequence, C++20 ranges.
+// Standardbibliothek: rpp.iter, Iterator-Hilfen (Kapitel 13, R-13.42)
+// Reiner R++-Quelltext (V-13.9, V-13.10) nach dem Muster von Vectors. Die Elemente
+// sind shared T: Ein Ergebnis teilt sie mit der Quelle (Zähler + 1, V-9), statt sie
+// aus der Quelle zu verschieben (R-5.3). Jede Methode liefert einen neuen Vektor.
+// Porte: Rust Iterator, Kotlin Sequence, C++20 ranges.
 package rpp.iter;
 
 export class Iter {
 public:
-    // Lazy map: jedes Element wird durch mapper transformiert.
-    static T[] map<T>(Slice<T> source, Func<T, T> f) {
-        T[] result = [];
+    // map: f für jedes Element; Reihenfolge und Länge bleiben.
+    static shared T[] map<T>(Slice<shared T> source, Func<shared T, shared T> f) {
+        shared T[] result = [];
         for (i64 i = 0; i < source.length; i++) { result.push(f(source[i])); }
         return result;
     }
 
-    // Lazy filter: behält die Elemente, für die predicate wahr ist.
-    static T[] filter<T>(Slice<T> source, Func<T, bool> p) {
-        T[] result = [];
+    // filter: behält die Elemente, für die p wahr ist.
+    static shared T[] filter<T>(Slice<shared T> source, Func<shared T, bool> p) {
+        shared T[] result = [];
         for (i64 i = 0; i < source.length; i++) {
             if (p(source[i])) { result.push(source[i]); }
         }
         return result;
     }
 
-    // Lazy take: liefert maximal n Elemente.
-    static T[] take<T>(Slice<T> source, i64 n) {
-        T[] result = [];
+    // take: höchstens die ersten n Elemente.
+    static shared T[] take<T>(Slice<shared T> source, i64 n) {
+        shared T[] result = [];
         i64 m = n;
         if (m > source.length) { m = source.length; }
         for (i64 i = 0; i < m; i++) { result.push(source[i]); }
         return result;
     }
 
-    // Lazy flatMap: jedes Element wird zu einer Folge, die konkateniert wird.
-    static T[] flatMap<T>(Slice<T> source, Func<T, T[]> f) {
-        T[] result = [];
+    // flatMap: f liefert je Element einen Vektor; die Vektoren werden aneinandergehängt.
+    static shared T[] flatMap<T>(Slice<shared T> source, Func<shared T, shared T[]> f) {
+        shared T[] result = [];
         for (i64 i = 0; i < source.length; i++) {
-            T[] part = f(source[i]);
+            shared T[] part = f(source[i]);
             for (i64 j = 0; j < part.length; j++) { result.push(part[j]); }
         }
         return result;
     }
 
-    // Lazy chain: Quelle gefolgt von einer zweiten Quelle.
-    static T[] chain<T>(Slice<T> source, Slice<T> second) {
-        T[] result = [];
+    // chain: die Elemente von source, danach die von second.
+    static shared T[] chain<T>(Slice<shared T> source, Slice<shared T> second) {
+        shared T[] result = [];
         for (i64 i = 0; i < source.length; i++) { result.push(source[i]); }
         for (i64 i = 0; i < second.length; i++) { result.push(second[i]); }
         return result;

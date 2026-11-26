@@ -420,6 +420,19 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// Elementtypen bei der Ansicht als Slice und zwischen Arrays (R-4.31): gleicher Typ und
+    /// gleiche Besitzform. Die Form darf nur abweichen, wo sie nichts bedeutet (Werte, die
+    /// nicht verschoben werden). Sonst hielte ein `Slice<shared T>` über eigenen Elementen
+    /// geteilte Verweise auf Objekte, die mit ihrem Behälter freigegeben werden.
+    fn same_element(&self, a: &Ty, b: &Ty) -> bool {
+        let form = |t: &Ty| match t {
+            Ty::Formed(Form::Plain, _) => None,
+            Ty::Formed(f, _) => Some(*f),
+            _ => None,
+        };
+        a.unformed() == b.unformed() && (form(a) == form(b) || !self.movable(a.unformed()))
+    }
+
     fn is_shared(t: &Ty) -> bool {
         match t {
             Ty::Formed(Form::Shared, _) => true,
@@ -787,8 +800,8 @@ impl<'p> Checker<'p> {
             (Ty::Nullable(a), Ty::Nullable(b)) => self.assignable(a, b),
             (a, Ty::Nullable(b)) => self.assignable(a, b),
             (Ty::Prim(a), Ty::Prim(b)) => auto_converts(*a, *b),
-            (Ty::Vector(a) | Ty::Array(a, _) | Ty::Slice(a), Ty::Slice(b)) => a.unformed() == b.unformed(),
-            (Ty::Array(a, n), Ty::Array(b, m)) => a.unformed() == b.unformed() && (n.is_none() || m.is_none() || n == m),
+            (Ty::Vector(a) | Ty::Array(a, _) | Ty::Slice(a), Ty::Slice(b)) => self.same_element(a, b),
+            (Ty::Array(a, n), Ty::Array(b, m)) => self.same_element(a, b) && (n.is_none() || m.is_none() || n == m),
             (Ty::Tuple(a), Ty::Tuple(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x, y)| self.assignable(x, y)),
             (Ty::Named(..), Ty::Named(..)) => self.p.upcasts(f, t),
             (Ty::Param(_) | Ty::Prim(_), Ty::Named(..)) => self.p.satisfies(f, t),
@@ -2963,7 +2976,7 @@ impl<'p> Checker<'p> {
                     } else {
                         return None;
                     }
-                } else if matches!((&t, &pt), (Ty::Vector(a) | Ty::Array(a, _) | Ty::Slice(a), Ty::Slice(b)) if a.unformed() == b.unformed()) {
+                } else if matches!((&t, &pt), (Ty::Vector(a) | Ty::Array(a, _) | Ty::Slice(a), Ty::Slice(b)) if self.same_element(a, b)) {
                     0
                 } else if self.assignable(&t, &pt) {
                     2

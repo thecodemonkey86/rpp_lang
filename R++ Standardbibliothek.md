@@ -561,13 +561,15 @@ Die Transzendenten (`log10`, `hypot`, `atan2`, `sinh`, `cosh`, `tanh`) liegen al
 ```
 export class Iter {
 public:
-    static T[] map<T>(Slice<T> source, Func<T, T> f);
-    static T[] filter<T>(Slice<T> source, Func<T, bool> p);
-    static T[] take<T>(Slice<T> source, i64 n);
-    static T[] flatMap<T>(Slice<T> source, Func<T, T[]> f);
-    static T[] chain<T>(Slice<T> source, Slice<T> second);
+    static shared T[] map<T>(Slice<shared T> source, Func<shared T, shared T> f);
+    static shared T[] filter<T>(Slice<shared T> source, Func<shared T, bool> p);
+    static shared T[] take<T>(Slice<shared T> source, i64 n);
+    static shared T[] flatMap<T>(Slice<shared T> source, Func<shared T, shared T[]> f);
+    static shared T[] chain<T>(Slice<shared T> source, Slice<shared T> second);
 }
 ```
+
+Die Elemente sind `shared T`: Ein Ergebnis teilt sie mit der Quelle (Zähler + 1, V-9), statt sie aus ihr zu verschieben (R-5.3). Mit `Slice<T>` und `T[]` wäre jedes `push(source[i])` ein Move aus einem Element und abgelehnt. Jede Methode liefert einen neuen Vektor; die Auswertung ist nicht verzögert. Bei Grundwerten und `string` ändert `shared` nichts. Eine Lambda für `flatMap` liefert `shared T[]` (Vektoren unterscheiden die Form ihrer Elemente, R-4.31).
 
 | Methode | Verhalten |
 |---|---|

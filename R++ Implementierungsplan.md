@@ -427,6 +427,10 @@ Neue Tests: `a09_text` (erweitert um `isBlank`, `substringBefore`, `substringAft
 
 Neue Tests: `a12_iter`, `l47_iter_lazy` (map, filter, take, flatMap, chain). `rppc test ..`: alle Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler.
 
+Nachtrag (26.11.2026): Die erste Fassung (`T[] map<T>(Slice<T> …)`) verschob mit `result.push(source[i])` Elemente aus einem generischen Slice; beide Compiler melden das (fünfmal R-5.3). `rppc test` merkt es nicht, weil Rümpfe der Standardbibliothek nur geprüft werden, wenn das ganze Programm samt Bibliothek geprüft wird (`rppcc c`); die Selbstübersetzung brach deshalb ab. Jetzt sind die Elemente `shared T` (`Slice<shared T>`, `shared T[]`, R-13.42); `l47_iter_lazy` liefert in `flatMap` `shared string[]`. Danach erreicht die Selbstübersetzung wieder den Fixpunkt.
+
+Dabei fiel ein Loch in R-4.31 auf, in beiden Compilern: Bei der Ansicht als Slice und zwischen Arrays wurde nur der Elementtyp ohne Besitzform verglichen (`unformed`). Ein `Box[]` ging so als `Slice<shared Box>` durch; die daraus gelesenen geteilten Verweise überlebten den Vektor, und das Programm las danach ein freigegebenes Objekt, auch im Prüfmodus ohne Meldung. Jetzt muss die Form übereinstimmen, außer bei Elementtypen, die nicht verschoben werden (`same_element` in `body.rs`, `sameElement` in `Checker.rpp`; Umwandlung, Arrays und Rangfolge der Überladungen). Neuer Test `kap04_typen/abgelehnt/n28_slice_besitzform` (Gegenprobe: der alte Stand meldet nichts).
+
 **Merge des Bibliotheksausbaus und C-Laufzeit nachgezogen (23.11.2026).** Der Ausbau der Standardbibliothek (oben, Zweig `temp_merge`) ist mit M6 zusammengeführt; die neuen Teile verwenden `mut` statt `&`. V-13.9 war doppelt vergeben, die Regel zum Text von `IOException` heißt jetzt V-13.12. Die C-Laufzeit (`rpp_rt.c`) kennt jetzt alle neuen eingebauten Teile wie `stdlib.rs`:
 
 | Teil | Umsetzung in C |
