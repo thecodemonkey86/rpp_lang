@@ -1,8 +1,8 @@
 # R++ Implementierungsplan
 
-Stand: 23.11.2026, Entwurf 0.12. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
+Stand: 26.11.2026, Entwurf 0.13. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
-Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M6 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes, läuft über den Ausbau des C-Codegenerators; der vorgeschlagene Zielwert ist seit dem 26.11.2026 erreicht (Abschnitt 6).
+Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M7 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026.
 
 ## 1. Rolle der ersten Implementierung
 
@@ -82,7 +82,7 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M4 | Zwischenrepräsentation, Interpreter, Exceptions und Programmfehler | alle Laufzeittests mit `print` und `rpp.core` bestehen |
 | M5 | Standardbibliothek für den Compiler: `rpp.text`, `rpp.collections`, `rpp.io`, `rpp.env`, `rpp.fmt` | alle Konformitätstests bestehen im Debugmodus |
 | M6 | Beginn des R++-Compilers in R++ | der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein (festgelegt am 23.11.2026) |
-| M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | Vorschlag: übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler`. Erreicht am 26.11.2026 (0,40 s gegen 0,47 s); als Zielwert noch zu bestätigen |
+| M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler` (festgelegt am 26.11.2026); erreicht am 26.11.2026 (0,40 s gegen 0,47 s) |
 
 JIT und Releasemodus folgen nach M5. Bis dahin ist die Implementierung nur für den Debugmodus konform (R-14.7).
 
@@ -494,7 +494,7 @@ Profil (25.11.2026, `diagnose rpp-compiler`, 1272 Stichproben je 1 ms, mit Aufru
 
 Stand (nach `Flow.join` linear, 25.11.2026): Fixpunkt der Selbstübersetzung; `diagnose rpp-compiler` gibt dieselbe Ausgabe wie vorher; `vergleich_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 296 gleich, 0 verschieden; `vergleich.py --exe` 596/1206/1184/696/553/835 gleich, 0 verschieden.
 
-**Vorgeschlagener Zielwert erreicht (26.11.2026).** `diagnose rpp-compiler`: übersetzter `rppcc` 0,40 s, `rppc diagnose` (Rust, Release, Stand vom selben Tag) 0,47 s; jeweils der mittlere von sieben Läufen am selben Rechner, MSVC `/O2`. Die Phasen von `rppcc` (`--timings`): Laden 148 ms, Deklarationen 6 ms, Rümpfe 206 ms; `rppc` braucht für das Laden 54 ms. Der Vorschlag aus der Tabelle der Meilensteine ist damit erfüllt; ihn als Zielwert festzulegen, steht noch aus.
+**Vorgeschlagener Zielwert erreicht (26.11.2026).** `diagnose rpp-compiler`: übersetzter `rppcc` 0,40 s, `rppc diagnose` (Rust, Release, Stand vom selben Tag) 0,47 s; jeweils der mittlere von sieben Läufen am selben Rechner, MSVC `/O2`. Die Phasen von `rppcc` (`--timings`): Laden 148 ms, Deklarationen 6 ms, Rümpfe 206 ms; `rppc` braucht für das Laden 54 ms. Der Vorschlag aus der Tabelle der Meilensteine ist damit erfüllt.
 
 Woher der Gewinn an diesem Tag kommt (1,30 s auf 0,40 s): 0,28 s aus Laufzeit und Darstellung der Werte (Schritte „Objekte inline“ bis „Werte in ganzen Wörtern“), 0,15 s aus Lexer und Parser, 0,44 s aus dem Prüfer des Compilers (Schleifen und Proben), der Rest aus den kleinen Schritten. Die Arbeit am Prüfer ist Programmarbeit, die `rppc` nicht hat: `body.rs` prüft Schleifen und Argumente weiter mehrfach. Dieselben drei Änderungen (`looped` auf Verdacht, `probeArg`, `sameBelow`) ließen sich nach `body.rs` und `flow.rs` übertragen; `rppc` würde dann wieder schneller als `rppcc`, weil der erzeugte Code je Anweisung weiter teurer ist als der von Rust (Laden: 148 ms gegen 54 ms).
 
@@ -503,3 +503,5 @@ Stand (26.11.2026): Fixpunkt der Selbstübersetzung (der vom vorigen Stand erzeu
 Außerdem ergänzt: Die C-Laufzeit kennt jetzt die transzendenten Funktionen aus `rpp.math` (`pow`, `exp`, `log`, `log10`, `sin`, `cos`, `tan`, `sinh`, `cosh`, `tanh`, `hypot`, `atan2`). Sie fehlten seit der Erweiterung der Standardbibliothek; `l36_math_transzendenten` und `l46_math_transzendenten_ergaenzungen` endeten im übersetzten Programm mit „ist nicht eingebaut“.
 
 Verbleibende Zeit: Laden 37 %, Rumpfprüfung 51 %, der Rest Start, Ausgabe und das Aufräumen am Ende von `pruefe`. Von den Ausdrucksprüfungen laufen noch 11 000 stumm bei 40 000 wirklichen (vorher 131 000 bei 39 000). Nächste Kandidaten: Token-Arten als Zahl statt Text im Parser; die Versuche `localVarDecl` vor jeder Ausdrucksanweisung und `fieldDecl` vor jeder Methode (je eine Exception); Tupel als Rückgabewert ohne Speicheranforderung (`capturingFrames`, `callInner`, `literalInfo`: rund 130 000 Tupel je `diagnose`); `methodsOf` und `fieldOf` ohne Durchlauf über alle Member und Obertypen bei jedem Zugriff.
+
+**M7 abgeschlossen (26.11.2026).** Kriterium (festgelegt am 26.11.2026): Der übersetzte `rppcc` ist bei `diagnose rpp-compiler` mindestens so schnell wie `rppc` (Rust, Release, Stand vom selben Tag; mittlerer von sieben Läufen am selben Rechner) und gibt dieselbe Ausgabe; dabei bleiben der Fixpunkt der Selbstübersetzung und alle Vergleiche ohne Abweichung. Stand: 0,40 s gegen 0,47 s; Fixpunkt, `vergleich.py --exe` und `vergleich_c.py --fr 200` ohne Abweichung (siehe oben). Die oben genannten Kandidaten bleiben als weitere Optimierungen offen, sind aber nicht Teil von M7.
