@@ -1,0 +1,4 @@
+# Startpunkt des Bootstraps (M8): Byte fuer Byte wie erzeugt, keine Zeilenumwandlung
+rpp-compiler/bootstrap/rppcc.c -text linguist-generated=true
+*.sh text eol=lf
+*.cmd text eol=crlf

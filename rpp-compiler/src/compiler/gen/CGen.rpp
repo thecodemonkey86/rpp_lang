@@ -173,7 +173,7 @@ private:
             bool[] nat = [];
             DefKind dk = c.p.defs[d].kind;
             string full = c.p.defs[d].fullName();
-            bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env" || full == "rpp.io.SaveFile" || full == "rpp.io.TextReader" || full == "rpp.text.StringView" || full == "rpp.math.Math" || full == "rpp.env.ElapsedTimer";
+            bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env" || full == "rpp.io.SaveFile" || full == "rpp.io.TextReader" || full == "rpp.text.StringView" || full == "rpp.math.Math" || full == "rpp.env.ElapsedTimer" || full == "rpp.process.Process";
             if (dk != DefKind::Enum) {
                 i64 fileIdx = c.p.defs[d].file;
                 i64 declIdx = c.p.defs[d].decl;

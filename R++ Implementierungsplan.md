@@ -1,8 +1,8 @@
 # R++ Implementierungsplan
 
-Stand: 26.11.2026, Entwurf 0.13. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
+Stand: 26.11.2026, Entwurf 0.14. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
-Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M7 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 macht `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen am 26.11.2026).
+Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M7 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 macht `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen am 26.11.2026); umgesetzt am selben Tag, offen ist nur der erste Lauf des neuen CI-Jobs (Abschnitt 6).
 
 ## 1. Rolle der ersten Implementierung
 
@@ -83,9 +83,9 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M5 | Standardbibliothek für den Compiler: `rpp.text`, `rpp.collections`, `rpp.io`, `rpp.env`, `rpp.fmt` | alle Konformitätstests bestehen im Debugmodus |
 | M6 | Beginn des R++-Compilers in R++ | der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein (festgelegt am 23.11.2026) |
 | M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler` (festgelegt am 26.11.2026); erreicht am 26.11.2026 (0,40 s gegen 0,47 s) |
-| M8 | `rppcc` als eigenständiger Compiler: `build`, `run` und `test`, Releasemodus über den C-Codegenerator, Bootstrap ohne Rust (beschlossen am 26.11.2026) | `rppcc test ..` besteht alle Konformitätstests im Debug- und im Releasemodus (R-14.7); der Bootstrap aus dem eingecheckten C-Startpunkt erreicht ohne Rust den Fixpunkt, unter Windows (MSVC) und Linux (gcc) in der CI; alle Vergleiche mit `rppc` bleiben ohne Abweichung |
+| M8 | `rppcc` als eigenständiger Compiler: `build`, `run` und `test`, Releasemodus über den C-Codegenerator, Bootstrap ohne Rust (beschlossen am 26.11.2026) | `rppcc test ..` besteht alle Konformitätstests im Debug- und im Releasemodus (R-14.7); der Bootstrap aus dem eingecheckten C-Startpunkt erreicht ohne Rust den Fixpunkt, unter Windows (MSVC) und Linux (gcc) in der CI; alle Vergleiche mit `rppc` bleiben ohne Abweichung. Lokal erfüllt am 26.11.2026 (Windows mit MSVC, Linux mit gcc in WSL); der erste Lauf in der CI steht aus |
 
-Der Releasemodus entsteht mit M8 aus dem C-Codegenerator (entschieden am 24.11.2026); bis dahin ist die Implementierung nur für den Debugmodus konform (R-14.7). Ein JIT für den Debugmodus ist zurückgestellt.
+Der Releasemodus entsteht aus dem C-Codegenerator (entschieden am 24.11.2026); seit M8 prüft `rppcc test` die Konformität auch für ihn (R-14.7). Ein JIT für den Debugmodus ist zurückgestellt.
 
 ## 6. Stand
 
@@ -517,3 +517,22 @@ Verbleibende Zeit: Laden 37 %, Rumpfprüfung 51 %, der Rest Start, Ausgabe und d
 | CI | Bootstrap und `rppcc test` unter Windows (MSVC) und Linux (gcc). |
 
 `rppc` bleibt die Referenz (R-12.3); `vergleich.py --exe` und `vergleich_c.py` laufen weiter und müssen ohne Abweichung bleiben. Zurückgestellt: schnellerer Code für Benutzerprogramme im Releasemodus (etwa die Unterschiede, die R-12.5 erlaubt), ein JIT für den Debugmodus und die offenen Kandidaten aus M7.
+
+**M8 umgesetzt (26.11.2026).** Was dazukam:
+
+| Teil | Umsetzung |
+|---|---|
+| Standardbibliothek | `rpp.process` mit `Process::run` (Ein- und Ausgaben als Text, Exit-Code) und `Process::call` (erbt die Konsole), `Env::executablePath`, `Dir::removeAll` (R-13.43 bis R-13.45, Standardbibliothek Abschnitt 17). Eingebaut in `stdlib.rs` und `rpp_rt.c`; in C laufen die Ströme von `run` über temporäre Dateien, damit große Ausgaben ohne Lese-Thread nicht verklemmen. Neue Laufzeittests `l48_prozess` und `l49_verzeichnis_entfernen`. |
+| `build`, `run` | `rpp-compiler/src/compiler/driver/Toolchain.rpp`: Wurzel über `RPP_HOME` oder aufwärts vom Programmpfad, C-Compiler über `RPP_CC` (sonst `cl` bzw. `cc`), Schalter für MSVC und gcc/clang (auch MinGW). |
+| `test` | `ConformanceTest.rpp`, eine Übertragung von `conftest.rs`: dieselben Urteile; Laufzeittests nativ in beiden Modi, die Laufzeit einmal je Lauf übersetzt. Gegenprobe mit vier absichtlich falschen Tests (falsche Regel, fehlende Warnungsmarke, falsche Ausgabe, falscher Exit-Code): dieselben vier Fehlschläge mit denselben Begründungen wie `rppc test`. |
+| Bootstrap | `rpp-compiler/bootstrap/rppcc.c` (C-Code des Compilers im Releasemodus, 4,9 MB, ohne Zeilenumwandlung eingecheckt), `bootstrap.sh` und `bootstrap.cmd`: Stufe 0 aus dem Startpunkt, dann zwei Selbstübersetzungen; `--check-seed` verlangt zusätzlich, dass der Startpunkt aktuell ist. |
+| CI | neuer Job `self-hosted` in `ci.yml` (Ubuntu und Windows): Bootstrap mit `--check-seed`, danach `rppcc test`; er ruft weder `cargo` noch `rppc` auf. |
+
+Stand (26.11.2026):
+
+- `rppcc test`: 318 bestanden, 0 fehlgeschlagen, 0 offen, unter Windows mit MSVC (79 s) und unter Linux mit gcc 13.3 in WSL/Ubuntu 24.04 (2 min 10 s). `rppc test ..`: ebenfalls 318 bestanden.
+- Bootstrap: Fixpunkt unter Windows (`bootstrap.cmd`, 77 s) und Linux (`bootstrap.sh`, 1 min 48 s), jeweils mit `--check-seed`. Der Startpunkt ist auf beiden Systemen derselbe.
+- `vergleich.py --exe` 614/1242/1220/724/567/849 gleich (tokens, pre, ast, project, defs, diagnose), 0 verschieden; `vergleich_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 320 gleich, 0 verschieden.
+- `rppcc run` und `build` unter Windows (MSVC und MinGW-gcc) und Linux ausprobiert: Argumente, Exit-Code und Programmfehler kommen an wie bei `rppc run`.
+
+Offen: Der CI-Job ist noch nie gelaufen; das geschieht mit dem nächsten Push. Bis dahin ist das Kriterium „in der CI“ nur lokal auf denselben Plattformen nachgewiesen. Nicht Teil von M8: macOS (der Code für `executablePath` ist vorhanden, aber nicht übersetzt), nebenläufige Prozesse und schnellerer Code für Benutzerprogramme im Releasemodus.

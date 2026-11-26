@@ -38,3 +38,33 @@ jobs:
             & ./.github/scripts/enter-msvc.ps1
           }
           python .github/scripts/check.py native
+
+  self-hosted:
+    name: Self-hosted compiler without Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Bootstrap rppcc from the C seed and check the fixpoint
+        if: runner.os != 'Windows'
+        run: sh rpp-compiler/bootstrap/bootstrap.sh --check-seed
+      - name: Bootstrap rppcc from the C seed and check the fixpoint
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: rpp-compiler\bootstrap\bootstrap.cmd --check-seed
+      - name: Run the conformance tests natively in debug and release mode
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            & ./.github/scripts/enter-msvc.ps1
+            & ./rpp-compiler/build/rppcc.exe test
+          } else {
+            & ./rpp-compiler/build/rppcc test
+          }
+          exit $LASTEXITCODE

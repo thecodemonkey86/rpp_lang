@@ -49,6 +49,7 @@ public:
     static DirEntry[] entries(string path) { fail("eingebaut"); }
     static bool exists(string path) { fail("eingebaut"); }
     static void create(string path) { fail("eingebaut"); }
+    static void removeAll(string path) { fail("eingebaut"); }
 }
 
 export class Path {

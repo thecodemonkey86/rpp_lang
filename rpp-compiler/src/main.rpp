@@ -9,6 +9,12 @@
 //                                 alle Meldungen der Prüfung, auch der Rümpfe (wie `rppc diagnose`)
 //   rppcc c [--release] STD PFAD AUSGABE.c
 //                                 C-Code für runtime/rpp_rt.c erzeugen (Codegenerator, M6)
+//   rppcc build [--release] [-o AUSGABE] PFAD
+//                                 natives Programm bauen: C erzeugen und mit dem C-Compiler übersetzen (M8)
+//   rppcc run [--release] PFAD [-- ARGUMENTE]
+//                                 bauen und ausführen (M8)
+//   rppcc test [-v] [--check-only] [WURZEL]
+//                                 Konformitätstests wie `rppc test`, Laufzeittests nativ in beiden Modi (M8)
 //                                 Deklarationstabellen und Meldungen der Deklarationsphase (wie `rppc defs`)
 //                                 geladene Projekte, Dateien und Meldungen (wie `rppc project`)
 using rpp.io.File;
@@ -47,6 +53,10 @@ using compiler.sema.MethodInfo;
 using compiler.sema.CtorInfo;
 using compiler.sema.VariantInfo;
 using compiler.gen.CGen;
+using compiler.driver.Toolchain;
+using compiler.driver.ToolchainError;
+using compiler.driver.ConformanceTest;
+using rpp.process.Process;
 
 class Main {
 public:
@@ -422,6 +432,77 @@ public:
         }
         return 0;
     }
+
+    // ================================================================ build, run, test (M8)
+
+    // Name des Programms: Verzeichnisname eines Projekts, sonst Dateiname ohne .rpp
+    static string programStem(string input) {
+        string full = Path::absolute(input);
+        string name = Path::fileName(full);
+        if (!Dir::exists(full) && Path::extension(name) == "rpp") {
+            return name.substring(0, name.length - 4);
+        }
+        return name;
+    }
+
+    // Prüft, erzeugt C und übersetzt zu exe; Exit-Code 0 bei Erfolg
+    static i32 buildTo(Toolchain tc, string input, string exe, bool release) {
+        string work = tc.freshDir("rppcc-build");
+        try {
+            string cFile = Path::join(work, programStem(input) + ".c");
+            i32 code = Main::genC(tc.stdDir, input, cFile, release);
+            if (code != 0) {
+                return code;
+            }
+            tc.link(cFile, "", exe, work, release);
+        } finally {
+            Dir::removeAll(work);
+        }
+        return 0;
+    }
+
+    static i32 build(string input, string? output, bool release) {
+        try {
+            Toolchain tc = Toolchain::locate();
+            string exe = Path::absolute(output ?? tc.exeName(programStem(input)));
+            return buildTo(tc, input, exe, release);
+        } catch (ToolchainError e) {
+            Console::error(e.message);
+            return 1;
+        }
+    }
+
+    static i32 runProgram(string input, string[] programArgs, bool release) {
+        try {
+            Toolchain tc = Toolchain::locate();
+            string dir = tc.freshDir("rppcc-run");
+            try {
+                string exe = Path::join(dir, tc.exeName(programStem(input)));
+                i32 code = buildTo(tc, input, exe, release);
+                if (code != 0) {
+                    return code;
+                }
+                return Process::call(exe, programArgs, null);
+            } finally {
+                Dir::removeAll(dir);
+            }
+        } catch (ToolchainError e) {
+            Console::error(e.message);
+            return 1;
+        }
+    }
+
+    static i32 test(string? root, bool verbose, bool runtime) {
+        try {
+            Toolchain tc = Toolchain::locate();
+            string dir = root ?? tc.home;
+            ConformanceTest t = new ConformanceTest(tc, verbose, runtime);
+            return t.run(dir);
+        } catch (ToolchainError e) {
+            Console::error(e.message);
+            return 1;
+        }
+    }
 }
 
 i32 main(string[] args) {
@@ -433,6 +514,9 @@ i32 main(string[] args) {
         + "  rppcc defs [--release] STD PATH\n"
         + "  rppcc diagnose [--timings] STD PATH\n"
         + "  rppcc c [--release] STD PATH OUTPUT.c\n"
+        + "  rppcc build [--release] [-o OUTPUT] PATH\n"
+        + "  rppcc run [--release] PATH [-- ARGS...]\n"
+        + "  rppcc test [-v] [--check-only] [ROOT]\n"
         + "Use --help after tokens, project, or diagnose for command-specific help.";
     if (args.length == 1 && (args[0] == "--help" || args[0] == "-h")) {
         print(usage);
@@ -486,6 +570,62 @@ i32 main(string[] args) {
             return Main::pruefe(result.positional[0], result.positional[1], result.isSet("--timings"));
         }
         return Main::tokens(result.positional[0]);
+    }
+    if (command == "build" || command == "run") {
+        bool release = false;
+        string? input = null;
+        string? output = null;
+        string[] programArgs = [];
+        bool rest = false;
+        for (i64 i = 1; i < args.length; i++) {
+            string a = args[i];
+            if (rest) {
+                programArgs.push(a);
+            } else if (a == "--release") {
+                release = true;
+            } else if (command == "build" && (a == "-o" || a == "--output") && i + 1 < args.length) {
+                i++;
+                output = args[i];
+            } else if (a == "--") {
+                rest = true;
+            } else if (a == "-h" || a == "--help") {
+                print(usage);
+                return 0;
+            } else if (input == null && !a.startsWith("-")) {
+                input = a;
+            } else if (command == "run" && input != null) {
+                programArgs.push(a);
+            } else {
+                Console::error("unexpected argument " + a + "\n" + usage);
+                return 2;
+            }
+        }
+        if (input == null) {
+            Console::error("missing argument PATH\n" + usage);
+            return 2;
+        }
+        if (command == "build") {
+            return Main::build(input, output, release);
+        }
+        return Main::runProgram(input, programArgs, release);
+    }
+    if (command == "test") {
+        bool verbose = false;
+        bool runtime = true;
+        string? root = null;
+        for (string a : args[1..]) {
+            if (a == "-v") {
+                verbose = true;
+            } else if (a == "--check-only") {
+                runtime = false;
+            } else if (root == null && !a.startsWith("-")) {
+                root = a;
+            } else {
+                Console::error("unexpected argument " + a + "\n" + usage);
+                return 2;
+            }
+        }
+        return Main::test(root, verbose, runtime);
     }
     if (args.length == 3 && args[0] == "pre") {
         return Main::pre(args[1], args[2]);

@@ -1,0 +1,21 @@
+package rpp.process;
+
+// Ergebnis eines beendeten Prozesses (R-13.43)
+export class ProcessResult {
+public:
+    i32 exitCode;
+    string output;
+    string errorOutput;
+    constructor(i32 exitCode, string output, string errorOutput) {
+        this.exitCode = exitCode;
+        this.output = output;
+        this.errorOutput = errorOutput;
+    }
+}
+
+// Synchrone Subprozesse (R-13.43)
+export class Process {
+public:
+    static own ProcessResult run(string program, string[] args, string input, string? workDir) { fail("eingebaut"); }
+    static i32 call(string program, string[] args, string? workDir) { fail("eingebaut"); }
+}

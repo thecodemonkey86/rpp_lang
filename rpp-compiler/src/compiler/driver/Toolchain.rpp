@@ -1,0 +1,170 @@
+// Werkzeugkette für `rppcc build`, `run` und `test` (Meilenstein M8): findet die Standardbibliothek
+// und die C-Laufzeit, ruft den C-Compiler auf und legt Arbeitsverzeichnisse an.
+//
+// Wurzel (home): das Verzeichnis mit `rppc/std` und `rpp-compiler/runtime`. Gesucht wird in
+// RPP_HOME, sonst aufwärts vom Verzeichnis des laufenden rppcc.
+// C-Compiler: RPP_CC, sonst `cl` unter Windows und `cc` sonst. Heißt das Programm `cl`, gelten
+// die Schalter von MSVC, sonst die von gcc und clang.
+package compiler.driver;
+
+using rpp.io.File;
+using rpp.io.Dir;
+using rpp.io.Path;
+using rpp.env.Env;
+using rpp.env.Os;
+using rpp.process.Process;
+using rpp.process.ProcessResult;
+
+// Fehler der Werkzeugkette; die Meldung ist für die Fehlerausgabe gedacht
+export class ToolchainError : Exception {
+public:
+    constructor(string message) : base(message) { }
+}
+
+export class Toolchain {
+public:
+    string home;
+    string stdDir;
+    string runtimeDir;
+    string cc;
+    bool msvc;
+    bool windows;
+
+    constructor(string home) {
+        this.home = home;
+        stdDir = Path::join(home, "rppc/std");
+        runtimeDir = Path::join(home, "rpp-compiler/runtime");
+        windows = Env::os() == Os::Windows;
+        string? chosen = Env::get("RPP_CC");
+        if (chosen != null && chosen.length > 0) {
+            cc = chosen;
+        } else if (windows) {
+            cc = "cl";
+        } else {
+            cc = "cc";
+        }
+        string name = Path::fileName(cc).toLower();
+        msvc = name == "cl" || name == "cl.exe";
+    }
+
+    static bool isHome(string dir) {
+        return Dir::exists(Path::join(dir, "rppc/std/rpp")) && File::exists(Path::join(dir, "rpp-compiler/runtime/rpp_rt.c"));
+    }
+
+    // Wurzel suchen; wirft ToolchainError, wenn es keine gibt
+    static own Toolchain locate() {
+        string? env = Env::get("RPP_HOME");
+        if (env != null && env.length > 0) {
+            string dir = Path::absolute(env);
+            if (!isHome(dir)) {
+                throw new ToolchainError("RPP_HOME=" + env + " does not contain rppc/std and rpp-compiler/runtime");
+            }
+            return new Toolchain(dir);
+        }
+        string dir = Path::parent(Env::executablePath());
+        while (dir.length > 0) {
+            if (isHome(dir)) {
+                return new Toolchain(dir);
+            }
+            string up = Path::parent(dir);
+            if (up == dir) {
+                break;
+            }
+            dir = up;
+        }
+        throw new ToolchainError("Cannot find rppc/std and rpp-compiler/runtime above " + Env::executablePath() + "; set RPP_HOME");
+    }
+
+    // Dateiname eines Programms auf dieser Plattform
+    string exeName(string stem) {
+        return windows ? stem + ".exe" : stem;
+    }
+
+    // frisches, leeres Verzeichnis unter dem temporären Verzeichnis des Systems
+    string freshDir(string prefix) {
+        string? tempBase = windows ? Env::get("TEMP") ?? Env::get("TMP") : Env::get("TMPDIR");
+        string root = tempBase != null && tempBase.length > 0 ? tempBase : (windows ? "." : "/tmp");
+        for (i64 i = 0; ; i++) {
+            string dir = Path::join(Path::absolute(root), prefix + "-" + i.toString());
+            if (!Dir::exists(dir) && !File::exists(dir)) {
+                Dir::create(dir);
+                return dir;
+            }
+        }
+    }
+
+    // Pfad in der Schreibweise des C-Compilers
+    string native(string path) {
+        return msvc ? path.replace("/", "\\") : path;
+    }
+
+    // Übersetzt die Laufzeit einmal in eine Objektdatei in dir und liefert deren Pfad
+    string compileRuntime(string dir, bool optimize) {
+        string source = native(Path::join(runtimeDir, "rpp_rt.c"));
+        string[] args = [];
+        string obj = "";
+        if (msvc) {
+            obj = Path::join(dir, "rpp_rt.obj");
+            args = ["/nologo", "/c", "/std:c17", "/utf-8", optimize ? "/O2" : "/O1", "/I", native(runtimeDir), source, "/Fo" + native(obj)];
+        } else {
+            obj = Path::join(dir, "rpp_rt.o");
+            args = gccFlags(optimize);
+            args.push("-c");
+            args.push(source);
+            args.push("-o");
+            args.push(obj);
+        }
+        invoke(args, dir);
+        return obj;
+    }
+
+    // Übersetzt eine erzeugte C-Datei zu einem Programm. runtimeObj ist eine Objektdatei aus
+    // compileRuntime oder "" (dann wird die Laufzeit mitübersetzt).
+    void link(string cFile, string runtimeObj, string exe, string dir, bool optimize) {
+        string runtime = runtimeObj.length > 0 ? runtimeObj : Path::join(runtimeDir, "rpp_rt.c");
+        string[] args = [];
+        if (msvc) {
+            args = ["/nologo", "/std:c17", "/utf-8", optimize ? "/O2" : "/O1", "/I", native(runtimeDir), native(cFile), native(runtime),
+                    "/Fe" + native(exe), "/Fo" + native(dir) + "\\", "/link", "/STACK:16777216"];
+        } else {
+            args = gccFlags(optimize);
+            args.push(cFile);
+            args.push(runtime);
+            args.push("-o");
+            args.push(exe);
+            args.push("-lm");
+            if (windows) {
+                args.push("-lwinmm");
+                args.push("-lshell32");
+                args.push("-Wl,--stack,16777216");
+            }
+        }
+        invoke(args, dir);
+    }
+
+private:
+    string[] gccFlags(bool optimize) {
+        string[] args = ["-std=c17", optimize ? "-O2" : "-O1", "-I", runtimeDir];
+        if (!windows) {
+            args.push("-D_POSIX_C_SOURCE=200809L");
+            args.push("-pthread");
+        }
+        return args;
+    }
+
+    void invoke(string[] args, string dir) {
+        ProcessResult r = startCompiler(args, dir);
+        if (r.exitCode != 0) {
+            throw new ToolchainError("C compiler failed (" + cc + ", exit code " + r.exitCode.toString() + "):\n" + (r.output + r.errorOutput).trim());
+        }
+    }
+
+    own ProcessResult startCompiler(string[] args, string dir) {
+        try {
+            return Process::run(cc, args, "", dir);
+        } catch (IOException e) {
+            string hint = msvc ? "; run from a developer command prompt (vcvars64.bat) or set RPP_CC" : "; install a C compiler or set RPP_CC";
+            throw new ToolchainError("Cannot start the C compiler " + cc + hint + " (" + e.message + ")");
+        }
+    }
+}

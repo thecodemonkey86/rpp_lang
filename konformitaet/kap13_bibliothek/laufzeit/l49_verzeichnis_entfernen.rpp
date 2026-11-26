@@ -1,0 +1,28 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.45
+// Erwartet: Ausgabe "true\nfalse\ntrue\nIOException\nIOException"; Exit-Code 0
+using rpp.io.Dir;
+using rpp.io.File;
+
+i32 main(string[] args) {
+    Dir::create("baum/a/b");
+    File::writeText("baum/a/b/c.txt", "c");
+    File::writeText("baum/d.txt", "d");
+    print(Dir::exists("baum/a/b").toString());
+    Dir::removeAll("baum");
+    print(Dir::exists("baum").toString());
+    print((File::exists("baum/d.txt") == false).toString());
+    // fehlendes Verzeichnis und gewöhnliche Datei
+    try {
+        Dir::removeAll("baum");
+    } catch (IOException x) {
+        print("IOException");
+    }
+    File::writeText("datei.txt", "x");
+    try {
+        Dir::removeAll("datei.txt");
+    } catch (IOException x) {
+        print("IOException");
+    }
+    return 0;
+}

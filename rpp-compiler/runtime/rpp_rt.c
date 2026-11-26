@@ -29,6 +29,10 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/wait.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 /* ================================================================ Zustand */
@@ -2859,6 +2863,327 @@ static void normalize_path(const char* in, Buf* out) {
     xfree(prefix.p);
 }
 
+/* ---------------------------------------------------------------- Prozesse und Programmpfad (R-13.43 bis R-13.45) */
+
+/* Text aus Bytes; ungültiges UTF-8 wird je Byte durch U+FFFD ersetzt (R-13.43) */
+static void utf8_lossy(Buf* b, const unsigned char* s, int64_t n) {
+    int64_t i = 0;
+    buf_str(b, "");
+    while (i < n) {
+        int64_t j = i;
+        while (j < n && s[j] < 0x80) j++;
+        if (j > i) { buf_add(b, (const char*)s + i, j - i); i = j; continue; }
+        int k = (s[i] & 0xe0) == 0xc0 ? 2 : (s[i] & 0xf0) == 0xe0 ? 3 : (s[i] & 0xf8) == 0xf0 ? 4 : 0;
+        if (k && i + k <= n && utf8_valid(s + i, k)) { buf_add(b, (const char*)s + i, k); i += k; }
+        else { buf_str(b, "\xef\xbf\xbd"); i++; }
+    }
+}
+
+#ifdef _WIN32
+/* Argument nach den Regeln der C-Laufzeit von Windows (CommandLineToArgvW) */
+static void win_quote(Buf* b, const char* a) {
+    if (*a && !strpbrk(a, " \t\n\v\"")) { buf_str(b, a); return; }
+    buf_str(b, "\"");
+    for (const char* p = a;; p++) {
+        int64_t bs = 0;
+        while (*p == '\\') { p++; bs++; }
+        if (!*p) { for (int64_t i = 0; i < bs * 2; i++) buf_str(b, "\\"); break; }
+        if (*p == '"') { for (int64_t i = 0; i < bs * 2 + 1; i++) buf_str(b, "\\"); buf_str(b, "\""); }
+        else { for (int64_t i = 0; i < bs; i++) buf_str(b, "\\"); buf_add(b, p, 1); }
+    }
+    buf_str(b, "\"");
+}
+
+static HANDLE win_temp(void) {
+    wchar_t dir[MAX_PATH + 1], name[MAX_PATH + 1];
+    if (!GetTempPathW(MAX_PATH + 1, dir) || !GetTempFileNameW(dir, L"rpp", 0, name)) return INVALID_HANDLE_VALUE;
+    SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
+    return CreateFileW(name, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &sa,
+                       CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+}
+
+static void win_read_all(HANDLE h, Buf* raw) {
+    SetFilePointer(h, 0, NULL, FILE_BEGIN);
+    char tmp[65536];
+    DWORD got;
+    while (ReadFile(h, tmp, sizeof tmp, &got, NULL) && got > 0) buf_add(raw, tmp, got);
+}
+#else
+static int posix_temp(void) {
+    const char* d = getenv("TMPDIR");
+    char name[4096];
+    snprintf(name, sizeof name, "%s/rppXXXXXX", d && *d ? d : "/tmp");
+    int fd = mkstemp(name);
+    if (fd >= 0) unlink(name);
+    return fd;
+}
+
+static void posix_read_all(int fd, Buf* raw) {
+    lseek(fd, 0, SEEK_SET);
+    char tmp[65536];
+    ssize_t got;
+    while ((got = read(fd, tmp, sizeof tmp)) > 0) buf_add(raw, tmp, got);
+}
+#endif
+
+/* Prozess starten und warten (R-13.43). Mit inherit erbt er die Standardströme (Process::call);
+   sonst gehen sie über temporäre Dateien, damit große Ein- und Ausgaben ohne Lese-Thread nicht
+   verklemmen (Process::run). 0 bei Erfolg, sonst steht der Text des Fehlers in err. */
+static int process_run(const char* program, const char** argv, int64_t argc, const char* input, int64_t input_len,
+                       const char* work, int inherit, int* code, Buf* out, Buf* errout, Buf* err) {
+    fflush(stdout);
+    fflush(stderr);
+#ifdef _WIN32
+    Buf cmd = { 0 };
+    win_quote(&cmd, program);
+    for (int64_t i = 0; i < argc; i++) { buf_str(&cmd, " "); win_quote(&cmd, argv[i]); }
+    HANDLE h[3] = { INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE };
+    int ready = 1;
+    if (inherit) {
+        static const DWORD ids[3] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };
+        for (int i = 0; i < 3; i++) {
+            HANDLE s = GetStdHandle(ids[i]);
+            if (s && s != INVALID_HANDLE_VALUE)
+                DuplicateHandle(GetCurrentProcess(), s, GetCurrentProcess(), &h[i], 0, TRUE, DUPLICATE_SAME_ACCESS);
+        }
+    } else {
+        for (int i = 0; i < 3; i++) {
+            h[i] = win_temp();
+            if (h[i] == INVALID_HANDLE_VALUE) ready = 0;
+        }
+    }
+    if (!ready) {
+        buf_fmt(err, "%s: no temporary file (os error %lu)", program, (unsigned long)GetLastError());
+        for (int i = 0; i < 3; i++)
+            if (h[i] != INVALID_HANDLE_VALUE) CloseHandle(h[i]);
+        xfree(cmd.p);
+        return -1;
+    }
+    if (!inherit) {
+        DWORD put;
+        int64_t pos = 0;
+        while (pos < input_len && WriteFile(h[0], input + pos, (DWORD)(input_len - pos > (1 << 30) ? (1 << 30) : input_len - pos), &put, NULL) && put > 0) pos += put;
+        SetFilePointer(h[0], 0, NULL, FILE_BEGIN);
+    }
+    STARTUPINFOW si;
+    memset(&si, 0, sizeof si);
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = h[0];
+    si.hStdOutput = h[1];
+    si.hStdError = h[2];
+    PROCESS_INFORMATION pi;
+    wchar_t* wcmd = u8w(cmd.p);
+    wchar_t* wwork = work ? u8w(work) : NULL;
+    BOOL ok = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, 0, NULL, wwork, &si, &pi);
+    DWORD last = GetLastError();
+    xfree(wcmd);
+    if (wwork) xfree(wwork);
+    xfree(cmd.p);
+    if (!ok) {
+        wchar_t* msg = NULL;
+        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                       NULL, last, 0, (LPWSTR)&msg, 0, NULL);
+        char* u = msg ? w2u8(msg) : NULL;
+        if (msg) LocalFree(msg);
+        if (u) {
+            size_t k = strlen(u);
+            while (k > 0 && (u[k - 1] == '\n' || u[k - 1] == '\r' || u[k - 1] == ' ' || u[k - 1] == '.')) u[--k] = 0;
+        }
+        buf_fmt(err, "%s: %s (os error %lu)", program, u ? u : "cannot start", (unsigned long)last);
+        if (u) xfree(u);
+        for (int i = 0; i < 3; i++)
+            if (h[i] != INVALID_HANDLE_VALUE) CloseHandle(h[i]);
+        return -1;
+    }
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD ec = 0;
+    GetExitCodeProcess(pi.hProcess, &ec);
+    CloseHandle(pi.hProcess);
+    *code = (int)ec;
+    if (!inherit) {
+        Buf raw = { 0 };
+        win_read_all(h[1], &raw);
+        utf8_lossy(out, (const unsigned char*)(raw.p ? raw.p : ""), raw.n);
+        raw.n = 0;
+        win_read_all(h[2], &raw);
+        utf8_lossy(errout, (const unsigned char*)(raw.p ? raw.p : ""), raw.n);
+        xfree(raw.p);
+    }
+    for (int i = 0; i < 3; i++)
+        if (h[i] != INVALID_HANDLE_VALUE) CloseHandle(h[i]);
+    return 0;
+#else
+    int fd[3] = { -1, -1, -1 };
+    int report[2] = { -1, -1 };
+    int ready = pipe(report) == 0;
+    if (!inherit)
+        for (int i = 0; i < 3; i++) {
+            fd[i] = posix_temp();
+            if (fd[i] < 0) ready = 0;
+        }
+    if (!ready) {
+        buf_fmt(err, "%s: %s", program, sys_err());
+        for (int i = 0; i < 3; i++)
+            if (fd[i] >= 0) close(fd[i]);
+        if (report[0] >= 0) { close(report[0]); close(report[1]); }
+        return -1;
+    }
+    if (!inherit) {
+        int64_t pos = 0;
+        while (pos < input_len) {
+            ssize_t put = write(fd[0], input + pos, (size_t)(input_len - pos));
+            if (put <= 0) break;
+            pos += put;
+        }
+        lseek(fd[0], 0, SEEK_SET);
+    }
+    fcntl(report[0], F_SETFD, FD_CLOEXEC);
+    fcntl(report[1], F_SETFD, FD_CLOEXEC);
+    char** av = (char**)xmalloc(sizeof(char*) * (size_t)(argc + 2));
+    av[0] = (char*)program;
+    for (int64_t i = 0; i < argc; i++) av[i + 1] = (char*)argv[i];
+    av[argc + 1] = NULL;
+    pid_t pid = fork();
+    if (pid == 0) {
+        int e = 0;
+        if (work && chdir(work) != 0) e = errno;
+        if (!e && !inherit && (dup2(fd[0], 0) < 0 || dup2(fd[1], 1) < 0 || dup2(fd[2], 2) < 0)) e = errno;
+        if (!e) {
+            execvp(program, av);
+            e = errno;
+        }
+        ssize_t w = write(report[1], &e, sizeof e);
+        (void)w;
+        _exit(127);
+    }
+    xfree((void*)av);
+    close(report[1]);
+    int failed = 0;
+    if (pid < 0) {
+        buf_fmt(err, "%s: %s", program, sys_err());
+        failed = 1;
+    } else {
+        int child_errno = 0;
+        ssize_t got = read(report[0], &child_errno, sizeof child_errno);
+        int status = 0;
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+        if (got == (ssize_t)sizeof child_errno) {
+            errno = child_errno;
+            buf_fmt(err, "%s: %s", program, sys_err());
+            failed = 1;
+        } else {
+            *code = WIFEXITED(status) ? WEXITSTATUS(status) : WIFSIGNALED(status) ? 128 + WTERMSIG(status) : -1;
+        }
+    }
+    close(report[0]);
+    if (!failed && !inherit) {
+        Buf raw = { 0 };
+        posix_read_all(fd[1], &raw);
+        utf8_lossy(out, (const unsigned char*)(raw.p ? raw.p : ""), raw.n);
+        raw.n = 0;
+        posix_read_all(fd[2], &raw);
+        utf8_lossy(errout, (const unsigned char*)(raw.p ? raw.p : ""), raw.n);
+        xfree(raw.p);
+    }
+    for (int i = 0; i < 3; i++)
+        if (fd[i] >= 0) close(fd[i]);
+    return failed ? -1 : 0;
+#endif
+}
+
+/* Verzeichnis samt Inhalt entfernen; Verweise werden entfernt, nicht verfolgt (R-13.45) */
+static int remove_tree(const char* path) {
+#ifdef _WIN32
+    Buf pat = { 0 };
+    buf_str(&pat, path);
+    buf_str(&pat, "/*");
+    wchar_t* wpat = u8w(pat.p);
+    xfree(pat.p);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wpat, &fd);
+    xfree(wpat);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
+            char* nm = w2u8(fd.cFileName);
+            Buf full = { 0 };
+            buf_str(&full, path);
+            buf_str(&full, "/");
+            buf_str(&full, nm);
+            xfree(nm);
+            wchar_t* wfull = u8w(full.p);
+            int r = 0;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) r = RemoveDirectoryW(wfull) ? 0 : -1;
+                else r = remove_tree(full.p);
+            } else {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(wfull, fd.dwFileAttributes & ~FILE_ATTRIBUTE_READONLY);
+                r = DeleteFileW(wfull) ? 0 : -1;
+            }
+            xfree(wfull);
+            xfree(full.p);
+            if (r) {
+                FindClose(h);
+                errno = EACCES;
+                return -1;
+            }
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    wchar_t* wp = u8w(path);
+    int r = RemoveDirectoryW(wp) ? 0 : -1;
+    xfree(wp);
+    if (r) errno = EACCES;
+    return r;
+#else
+    DIR* d = opendir(path);
+    if (!d) return -1;
+    struct dirent* e;
+    while ((e = readdir(d)) != NULL) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        Buf full = { 0 };
+        buf_str(&full, path);
+        buf_str(&full, "/");
+        buf_str(&full, e->d_name);
+        struct stat st;
+        int r = lstat(full.p, &st);
+        if (r == 0) r = S_ISDIR(st.st_mode) ? remove_tree(full.p) : unlink(full.p);
+        xfree(full.p);
+        if (r) {
+            closedir(d);
+            return -1;
+        }
+    }
+    closedir(d);
+    return rmdir(path);
+#endif
+}
+
+/* absoluter Pfad des laufenden Programms mit / (R-13.44) */
+static void executable_path(Buf* out) {
+#ifdef _WIN32
+    static wchar_t w[32768];
+    DWORD n = GetModuleFileNameW(NULL, w, 32768);
+    if (n == 0 || n >= 32768) { buf_str(out, ""); return; }
+    char* u = w2u8(w);
+    normalize_path(u, out);
+    xfree(u);
+#elif defined(__APPLE__)
+    char raw[4096], real[4096];
+    uint32_t size = sizeof raw;
+    if (_NSGetExecutablePath(raw, &size) != 0) { buf_str(out, ""); return; }
+    normalize_path(realpath(raw, real) ? real : raw, out);
+#else
+    char raw[4096];
+    ssize_t n = readlink("/proc/self/exe", raw, sizeof raw - 1);
+    if (n < 0) { buf_str(out, ""); return; }
+    raw[n] = 0;
+    normalize_path(raw, out);
+#endif
+}
+
 
 
 /* ---------------------------------------------------------------- Ausbau der Bibliothek (wie stdlib.rs) */
@@ -3820,6 +4145,78 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         if (!strcmp(f, "sinh")) { *out = rv_f64(sinh(x)); return ST_OK; }
         if (!strcmp(f, "cosh")) { *out = rv_f64(cosh(x)); return ST_OK; }
         if (!strcmp(f, "tanh")) { *out = rv_f64(tanh(x)); return ST_OK; }
+    }
+    if (IS("rpp.env.Env.executablePath")) {
+        Buf b = { 0 };
+        executable_path(&b);
+        *out = buf_take(&b);
+        return ST_OK;
+    }
+    if (IS("rpp.io.Dir.removeAll")) {
+        RStr* p = rt_s(args[0]);
+#ifdef _WIN32
+        int plain_dir;
+        {
+            wchar_t* wp = u8w(p->data);
+            DWORD a = GetFileAttributesW(wp);
+            xfree(wp);
+            plain_dir = a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) && !(a & FILE_ATTRIBUTE_REPARSE_POINT);
+        }
+#else
+        struct stat lst;
+        int plain_dir = lstat(p->data, &lst) == 0 && S_ISDIR(lst.st_mode);
+#endif
+        if (!plain_dir) {
+            Buf m = { 0 };
+            buf_fmt(&m, "%s: is not a directory", p->data);
+            int st = io_error(m.p, p->data);
+            xfree(m.p);
+            return st;
+        }
+        if (remove_tree(p->data) != 0) return path_io_error(p->data);
+        return ST_OK;
+    }
+    if (IS("rpp.process.Process.run") || IS("rpp.process.Process.call")) {
+        int inherit = IS("rpp.process.Process.call");
+        RStr* prog = rt_s(args[0]);
+        RObj* list = args[1].tag == RT_OBJ ? (RObj*)args[1].v.p : NULL;
+        int64_t argc = list ? list->len : 0;
+        const char** argv = (const char**)xmalloc(sizeof(char*) * (size_t)(argc + 1));
+        for (int64_t i = 0; i < argc; i++) argv[i] = rt_s(list->slots[i])->data;
+        RStr* input = inherit ? NULL : rt_s(args[2]);
+        rv wv = args[inherit ? 2 : 3];
+        const char* work = wv.tag == RT_NULL ? NULL : rt_s(wv)->data;
+        /* ein Programmpfad mit Trenner gilt relativ zum Arbeitsverzeichnis des Aufrufers */
+        Buf exe = { 0 };
+        if (strchr(prog->data, '/') || strchr(prog->data, '\\')) normalize_path(prog->data, &exe);
+        else buf_str(&exe, prog->data);
+        Buf o1 = { 0 }, o2 = { 0 }, err = { 0 };
+        int code = 0, r;
+        if (work && !is_dir(work)) {
+            buf_fmt(&err, "%s: working directory %s does not exist", prog->data, work);
+            r = -1;
+        } else {
+            r = process_run(exe.p, argv, argc, input ? input->data : "", input ? input->len : 0, work, inherit, &code, &o1, &o2, &err);
+        }
+        xfree((void*)argv);
+        xfree(exe.p);
+        if (r != 0) {
+            xfree(o1.p);
+            xfree(o2.p);
+            int st = io_error(err.p, prog->data);
+            xfree(err.p);
+            return st;
+        }
+        xfree(err.p);
+        if (inherit) {
+            *out = rv_i32(code);
+            return ST_OK;
+        }
+        rv a[3];
+        a[0] = rv_i32(code);
+        a[1] = buf_take(&o1);
+        a[2] = buf_take(&o2);
+        return rt_std_new(out, "rpp.process.ProcessResult", 3, a);
     }
     if (IS("rpp.env.Env.get")) {
         const char* v = getenv(rt_s(args[0])->data);

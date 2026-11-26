@@ -66,29 +66,31 @@ A reusable library uses `type: library` and omits `main`. Its package names star
 
 ## Build a native executable
 
-Run the R++ compiler through `rppc` to generate C. The arguments to `c` are the standard library directory, a source file or project directory, and the output file.
+`rppcc` builds native executables through C. You do not need Rust for this: the repository contains the compiler's own generated C code as a seed in [`rpp-compiler/bootstrap/rppcc.c`](rpp-compiler/bootstrap/). The bootstrap script compiles the seed with a C17 toolchain, lets the result compile `rppcc` from source twice, and checks that both generations produce the same C code.
+
+**GCC or Clang on Linux**
 
 ```sh
-cargo run --manifest-path rppc/Cargo.toml -- run rpp-compiler -- c --release rppc/std hello hello.c
+sh rpp-compiler/bootstrap/bootstrap.sh
 ```
 
-Compile the generated file and the bundled C runtime with a C17 toolchain.
+**MSVC on Windows.** The script finds Visual Studio's C++ build tools if `cl` is not already on `PATH`.
 
-**GCC on Linux**
+```bat
+rpp-compiler\bootstrap\bootstrap.cmd
+```
+
+Both scripts write `rpp-compiler/build/rppcc` (`rppcc.exe` on Windows). The binary finds the standard library and the C runtime in the checkout above it, so keep it there or set `RPP_HOME` to the repository root. Then build or run a program:
 
 ```sh
-gcc -std=c17 -D_POSIX_C_SOURCE=200809L -O2 -pthread -I rpp-compiler/runtime hello.c rpp-compiler/runtime/rpp_rt.c -lm -o hello-app
+rpp-compiler/build/rppcc run hello -- Ada
+rpp-compiler/build/rppcc build --release -o hello-app hello
 ./hello-app Ada
 ```
 
-**MSVC on Windows**, from a Visual Studio Developer Command Prompt
+`rppcc` calls `cc` on Linux and `cl` on Windows. On Windows, run it from a Developer Command Prompt so that `cl` is on `PATH`. Set `RPP_CC` to choose another C compiler, such as `gcc` or `clang`. `--release` selects R++ release semantics and optimizes the C code; without it, the program has R++ debug semantics. Use `rppc run --release` to try release semantics in the interpreter.
 
-```bat
-cl /nologo /std:c17 /O2 /I rpp-compiler\runtime hello.c rpp-compiler\runtime\rpp_rt.c /Fe:hello.exe /link /STACK:16777216
-hello.exe Ada
-```
-
-The `--release` flag after `c` selects R++ release semantics. Omit it to generate C with R++ debug semantics. For interpreter runs, use `rppc run --release` to exercise release semantics. An already built `rppcc` binary accepts the same `c --release rppc/std hello hello.c` arguments directly. [Compiler and bootstrap details](rpp-compiler/README.md)
+To generate the C file yourself, use `rppcc c [--release] rppc/std hello hello.c` and compile it with the runtime in `rpp-compiler/runtime/rpp_rt.c`. [Compiler, runtime, and bootstrap details](rpp-compiler/README.md)
 
 ## Tool commands
 
@@ -104,6 +106,15 @@ The forms below use `rppc` as shorthand for `cargo run --manifest-path rppc/Carg
 | `rppc project [--release] STD PATH` / `rppc defs [--release] STD PATH` | Inspect project loading or declaration tables. |
 | `rppc diagnose STD PATH` | Print diagnostics in the format used for comparison with `rppcc`. |
 
+The self-hosting compiler `rppcc` (built by the bootstrap script) accepts the inspection commands above with the same arguments and adds these:
+
+| Command | Purpose |
+| --- | --- |
+| `rppcc build [--release] [-o OUTPUT] PATH` | Check a program, generate C, and compile it to a native executable. |
+| `rppcc run [--release] PATH [-- ARGS…]` | Build into a temporary directory and run the executable with the console attached. |
+| `rppcc test [-v] [--check-only] [ROOT]` | Run the conformance suite like `rppc test`; runtime cases are built natively and run in debug and release mode. `--check-only` skips them. |
+| `rppcc c [--release] STD PATH OUTPUT.c` | Generate C without compiling it. |
+
 Use `rppc --help` or `rppcc --help` to list the commands. With `rppcc diagnose --timings STD PATH`, the compiler also reports how long project loading and each checking phase took. Existing scripts can still use the legacy German spellings.
 
 `PATH` is a `.rpp` file or a directory containing `rpp.yaml`. `STD` is `rppc/std` when running from the repository root. Compiler diagnostics are in English and generally include a source location and a specification rule such as `R-6.2`. [Reference CLI details](rppc/README.md)
@@ -118,9 +129,15 @@ cargo run --manifest-path rppc/Cargo.toml -- syntaxtest .
 cargo run --manifest-path rppc/Cargo.toml -- test .
 ```
 
-The conformance suite checks accepted and rejected programs, expected warnings, and runtime results. Runtime cases exercise the interpreter in both language modes and with ownership invariant checks enabled.
+The conformance suite checks accepted and rejected programs, expected warnings, and runtime results. Runtime cases exercise the interpreter in both language modes and with ownership invariant checks enabled. `rpp-compiler/build/rppcc test` runs the same suite with native executables.
 
-The [CI workflow](.github/workflows/ci.yml) runs on Linux and Windows for pull requests and pushes to `master`. It also checks the English command-line output and compares native executables built with GCC or MSVC against the interpreter. After a debug build, use `python .github/scripts/check.py cli` and `python .github/scripts/check.py native` to run those checks locally. Run the native check from a Developer Command Prompt on Windows.
+After changing the compiler or the standard library, refresh the bootstrap seed so that it matches the source again:
+
+```sh
+rpp-compiler/build/rppcc c --release rppc/std rpp-compiler rpp-compiler/bootstrap/rppcc.c
+```
+
+The [CI workflow](.github/workflows/ci.yml) runs on Linux and Windows for pull requests and pushes to `master`. It also checks the English command-line output and compares native executables built with GCC or MSVC against the interpreter. A separate job uses no Rust: it bootstraps `rppcc` from the C seed, checks the fixpoint and that the seed is current, and runs `rppcc test`. After a debug build, use `python .github/scripts/check.py cli` and `python .github/scripts/check.py native` to run those checks locally. Run the native check from a Developer Command Prompt on Windows.
 
 The separate [Compiler bootstrap workflow](.github/workflows/bootstrap.yml) is run manually from the Actions tab. It builds two native `rppcc` generations and verifies that the second and third C output files are byte-for-byte identical. To run it locally, first build `rppc` with `cargo build --locked --release --manifest-path rppc/Cargo.toml`, then run `python .github/scripts/check.py bootstrap` with the same C compiler prerequisites.
 

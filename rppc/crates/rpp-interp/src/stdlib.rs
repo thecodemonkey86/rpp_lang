@@ -28,6 +28,7 @@ const NATIVE_CLASSES: &[(&str, &str)] = &[
     ("rpp.math", "Math"),
     ("rpp.env", "Env"),
     ("rpp.env", "ElapsedTimer"),
+    ("rpp.process", "Process"),
 ];
 
 fn str_value(s: impl AsRef<str>) -> Value {
@@ -135,6 +136,99 @@ impl Interp {
         let o = Rc::new(Obj { class: Some(d), slots: RefCell::new(slots), rc: Cell::new(0), alive: Cell::new(true), dying: Cell::new(false), lock: Cell::new(0), targs: RefCell::new(Vec::new()), index: Default::default() });
         self.register(&o);
         o
+    }
+
+    /// Programm und Argumente für `Process::run` und `Process::call` (R-13.43).
+    fn process_command(&mut self, args: &[Value], work_index: usize) -> R<Result<std::process::Command, Value>> {
+        let program = args.first().map(to_text).unwrap_or_default();
+        let list: Vec<String> = match args.get(1) {
+            Some(Value::Obj(v, _)) => v.slots.borrow().iter().map(to_text).collect(),
+            Some(Value::Slice(v, a, b)) => v.slots.borrow()[*a..*b].iter().map(to_text).collect(),
+            _ => Vec::new(),
+        };
+        // Ein Programmpfad mit Trenner gilt relativ zum Arbeitsverzeichnis des Aufrufers.
+        let exe = if program.contains('/') || program.contains('\\') {
+            rpp_sema::project::normalize(std::path::Path::new(&program))
+        } else {
+            std::path::PathBuf::from(&program)
+        };
+        let mut command = std::process::Command::new(&exe);
+        command.args(&list);
+        if let Some(dir) = args.get(work_index).and_then(|v| v.as_str().map(str::to_string)) {
+            if !std::path::Path::new(&dir).is_dir() {
+                return self.io_error(format!("{program}: working directory {dir} does not exist"), &program).map(Err);
+            }
+            command.current_dir(dir);
+        }
+        Ok(Ok(command))
+    }
+
+    fn exit_code(status: std::process::ExitStatus) -> i32 {
+        match status.code() {
+            Some(code) => code,
+            None => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    128 + status.signal().unwrap_or(0)
+                }
+                #[cfg(not(unix))]
+                {
+                    -1
+                }
+            }
+        }
+    }
+
+    /// `Process::call(program, args, workDir)` (R-13.43): erbt die Standardströme, liefert den Exit-Code.
+    fn process_call(&mut self, args: &[Value]) -> R<Value> {
+        let program = args.first().map(to_text).unwrap_or_default();
+        let mut command = match self.process_command(args, 2)? {
+            Ok(command) => command,
+            Err(v) => return Ok(v),
+        };
+        match command.status() {
+            Ok(status) => Ok(Value::I32(Self::exit_code(status))),
+            Err(e) => self.io_error(format!("{program}: {e}"), &program),
+        }
+    }
+
+    /// `Process::run(program, args, input, workDir)` (R-13.43): Standardein- und -ausgaben
+    /// über Pipes, die Eingabe schreibt ein eigener Thread (keine Verklemmung bei großen Ausgaben).
+    fn process_run(&mut self, args: &[Value]) -> R<Value> {
+        use std::io::Write;
+        use std::process::Stdio;
+        let program = args.first().map(to_text).unwrap_or_default();
+        let input = args.get(2).map(to_text).unwrap_or_default();
+        let mut command = match self.process_command(args, 3)? {
+            Ok(command) => command,
+            Err(v) => return Ok(v),
+        };
+        command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(e) => return self.io_error(format!("{program}: {e}"), &program),
+        };
+        let writer = child.stdin.take().map(|mut stdin| {
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(input.as_bytes());
+            })
+        });
+        let output = child.wait_with_output();
+        if let Some(writer) = writer {
+            let _ = writer.join();
+        }
+        let output = match output {
+            Ok(output) => output,
+            Err(e) => return self.io_error(format!("{program}: {e}"), &program),
+        };
+        let Some(d) = self.p.std_def("rpp.process.ProcessResult") else { return Err(self.internal("ProcessResult fehlt")) };
+        let fields = vec![
+            Value::I32(Self::exit_code(output.status)),
+            str_value(String::from_utf8_lossy(&output.stdout)),
+            str_value(String::from_utf8_lossy(&output.stderr)),
+        ];
+        Ok(Value::Obj(self.raw_object(d, fields), Form::Own))
     }
 
     fn sb_text(o: &ORef) -> String {
@@ -427,6 +521,19 @@ impl Interp {
                 Ok(rpp_sema::project::relative_to(&text(args, 0), &text(args, 1)).map(str_value).unwrap_or(Value::Null))
             }
             "rpp.io.Dir.exists" => Ok(Value::Bool(std::path::Path::new(&text(args, 0)).is_dir())),
+            // R-13.45
+            "rpp.io.Dir.removeAll" => {
+                let path = text(args, 0);
+                let p = std::path::Path::new(&path);
+                let is_dir = std::fs::symlink_metadata(p).map(|m| m.is_dir()).unwrap_or(false);
+                if !is_dir {
+                    return self.io_error(format!("{path}: is not a directory"), &path);
+                }
+                match std::fs::remove_dir_all(p) {
+                    Ok(()) => Ok(Value::Void),
+                    Err(e) => self.io_error(format!("{path}: {e}"), &path),
+                }
+            }
             "rpp.io.Dir.create" => {
                 let path = text(args, 0);
                 match std::fs::create_dir_all(&path) {
@@ -465,6 +572,14 @@ impl Interp {
             }
             // ---------------------------------------------------------------- rpp.env
             "rpp.env.Env.get" => Ok(std::env::var(text(args, 0)).map(str_value).unwrap_or(Value::Null)),
+            // R-13.44
+            "rpp.env.Env.executablePath" => {
+                let exe = std::env::current_exe().map(|p| rpp_sema::project::normalize(&p)).unwrap_or_default();
+                Ok(str_value(rpp_sema::project::slash_path(&exe)))
+            }
+            // ---------------------------------------------------------------- rpp.process (R-13.43)
+            "rpp.process.Process.run" => self.process_run(args),
+            "rpp.process.Process.call" => self.process_call(args),
             "rpp.env.ElapsedTimer.monotonicNanos" => {
                 static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
                 let elapsed = ORIGIN.get_or_init(std::time::Instant::now).elapsed();

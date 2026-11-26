@@ -1,8 +1,8 @@
 # R++ Standardbibliothek (Kapitel 13)
 
-Stand: 25.11.2026, Entwurf 0.8. Dieses Dokument füllt Kapitel 13 des „R++ Spezifikationsgerüsts“ mit einem **ersten Schnitt**: genau dem, was ein Compiler für R++ braucht, der in R++ geschrieben ist und sich selbst übersetzt (Abschnitte 2 bis 7). Abschnitt 9 beschreibt den weiteren Ausbau. Die Abschnitte 10 bis 16 legen `rpp.random`, die Vektor-Algorithmen, `rpp.math`, die Text- und Datei-Hilfen, `Deque`, `getOrPut` und `rpp.json` fest.
+Stand: 26.11.2026, Entwurf 0.9. Dieses Dokument füllt Kapitel 13 des „R++ Spezifikationsgerüsts“ mit einem **ersten Schnitt**: genau dem, was ein Compiler für R++ braucht, der in R++ geschrieben ist und sich selbst übersetzt (Abschnitte 2 bis 7). Abschnitt 9 beschreibt den weiteren Ausbau. Die Abschnitte 10 bis 17 legen `rpp.random`, die Vektor-Algorithmen, `rpp.math`, die Text- und Datei-Hilfen, `Deque`, `getOrPut`, `rpp.json` und synchrone Prozesse (`rpp.process`) fest.
 
-Normativ sind in diesem Entwurf die Grundsätze (Abschnitt 1), die Teile, auf die sich andere Kapitel stützen (`Exception`, `Equatable`, `Comparable`, `Hashable`, `Iterable`), und die Ausbau-Pakete in den Abschnitten 10 bis 16. Die übrigen Schnittstellen sind ein Arbeitsstand: Die Bibliotheken unter `rpp` bleiben bis zum Abschluss der Selbstübersetzung auf Version 0.x und dürfen sich ändern.
+Normativ sind in diesem Entwurf die Grundsätze (Abschnitt 1), die Teile, auf die sich andere Kapitel stützen (`Exception`, `Equatable`, `Comparable`, `Hashable`, `Iterable`), und die Ausbau-Pakete in den Abschnitten 10 bis 17. Die übrigen Schnittstellen sind ein Arbeitsstand: Die Bibliotheken unter `rpp` bleiben bis zum Abschluss der Selbstübersetzung auf Version 0.x und dürfen sich ändern.
 
 Grundsätze, die beim Schreiben zusätzlich festgelegt werden mussten, stehen in Abschnitt 0; sie sind am 21.11.2026 alle angenommen worden.
 
@@ -25,7 +25,7 @@ Grundsätze, die beim Schreiben zusätzlich festgelegt werden mussten, stehen in
 
 ## 1. Grundsätze
 
-**R-13.1 (Aufbau).** Die Standardbibliothek besteht aus den Bibliotheken in Abschnitt 2 bis 7 und den Ausbau-Bibliotheken in Abschnitt 10 bis 16. Sie stehen unter dem reservierten Besitzer `rpp` (Designentscheidungen, Abschnitt 13b); niemand sonst kann unter `rpp` veröffentlichen.
+**R-13.1 (Aufbau).** Die Standardbibliothek besteht aus den Bibliotheken in Abschnitt 2 bis 7 und den Ausbau-Bibliotheken in Abschnitt 10 bis 17. Sie stehen unter dem reservierten Besitzer `rpp` (Designentscheidungen, Abschnitt 13b); niemand sonst kann unter `rpp` veröffentlichen.
 
 **R-13.2 (Version).** Bis ein in R++ geschriebener Compiler sich selbst übersetzt, tragen die Bibliotheken unter `rpp` Versionen 0.x. Ihre Schnittstellen dürfen sich in dieser Zeit ohne neue Hauptversion ändern.
 
@@ -300,7 +300,7 @@ public:
 
 ## 9. Ausbau über den ersten Schnitt hinaus (Arbeitsstand)
 
-Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. Darüber hinaus wächst die Bibliothek in Paketen unter `rpp` (V-13.9). Dieser Abschnitt beschreibt den Arbeitsstand. Die normativen Festlegungen zum Ausbau stehen in den Abschnitten 10 bis 16.
+Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. Darüber hinaus wächst die Bibliothek in Paketen unter `rpp` (V-13.9). Dieser Abschnitt beschreibt den Arbeitsstand. Die normativen Festlegungen zum Ausbau stehen in den Abschnitten 10 bis 17.
 
 **Übersetzungsregeln beim Portieren aus anderen Sprachen.** Nicht die API wird kopiert, sondern das Konzept an R++ angepasst:
 
@@ -330,7 +330,8 @@ Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. 
 | B | `rpp.encoding` | Base64, Hex, UTF-16 | Go, Rust |
 | B | `rpp.hash` | SHA-256 (wird für die Prüfsummen in `rpp.lock` gebraucht, Designentscheidungen 13b) | Rust `sha2` |
 | C | `rpp.sync` | Channels; Werte wandern per `own` durch den Channel | Go, Rust |
-| C | `rpp.process`, `rpp.net` | Subprozesse; HTTP-Client (für das zentrale Verzeichnis) | Go `os/exec`, Rust `reqwest` |
+| A | `rpp.process` | synchrones `Process::run` mit Ein- und Ausgabe als Text (Abschnitt 17, **festgelegt**, gebraucht für `rppcc build` und `rppcc test`, M8) | Go `os/exec`, Rust `std::process` |
+| C | `rpp.process` (Ausbau), `rpp.net` | nebenläufige Subprozesse mit Strömen; HTTP-Client (für das zentrale Verzeichnis) | Go `os/exec`, Rust `reqwest` |
 
 Bewusst nicht portiert werden `Optional`/`Result`-Typen, Reflection, Expression Trees und `exit` (V-13.3). Transzendente Funktionen in `rpp.math` sind plattformübergreifend nicht bitgleich; das Determinismusversprechen (V-13.2) gilt für sie nur innerhalb einer Plattform.
 
@@ -703,3 +704,41 @@ Ein Syntaxfehler wirft `JsonParseException`. `line` und `column` beginnen bei 1 
 Es sind bis zu 128 gleichzeitig geöffnete Arrays und Objekte zulässig. Ein Container an der Wurzel zählt als einer. Skalare erhöhen die Schachtelungstiefe nicht. Beim 129. öffnenden Container wirft `parse` eine `JsonParseException` an dessen öffnender Klammer.
 
 **R-13.36 (Schreiben).** `Json::stringify` gibt kompaktes JSON aus. Arrays folgen der Elementreihenfolge, Objekte der Einfügereihenfolge. Zahlen werden in ihrer gespeicherten Schreibweise ausgegeben. Strings und Schlüssel werden in Anführungszeichen gesetzt. Anführungszeichen und Rückstriche werden maskiert. Steuerzeichen von U+0000 bis U+001F erscheinen als `\u00xx` mit kleingeschriebenen Hexziffern. Die übrigen Unicode-Skalarwerte erscheinen direkt. Wird die in R-13.35 festgelegte Schachtelungstiefe überschritten, wirft `stringify` eine `ArgumentException`.
+
+## 17. rpp.process: Prozesse (Ausbau)
+
+Ein Compiler, der C erzeugt und einen C-Compiler aufruft, muss andere Programme starten und seine eigenen Dateien finden können (Implementierungsplan, M8). Dieser Abschnitt legt dafür eine **synchrone** Form fest: Der Aufrufer wartet, bis der Prozess endet. `run` sammelt die Ausgaben, `call` reicht die Konsole durch. Nebenläufige Prozesse mit Strömen folgen erst mit der Thread-Bibliothek (Abschnitt 9, Phase C). Die Methoden sind eingebaut (`fail("eingebaut")`, wie `File` und `Dir`); als R++-Klassen behandeln beide Compiler die Signaturen gleich (V-13.10).
+
+**R-13.43 (Prozesse).** `rpp.process` enthält:
+
+```
+export class ProcessResult {
+public:
+    i32 exitCode;
+    string output;
+    string errorOutput;
+    constructor(i32 exitCode, string output, string errorOutput);
+}
+
+export class Process {
+public:
+    static own ProcessResult run(string program, string[] args, string input, string? workDir);
+    static i32 call(string program, string[] args, string? workDir);
+}
+```
+
+`run` startet `program` mit den Argumenten `args`, gibt ihm `input` als UTF-8 auf der Standardeingabe, wartet auf sein Ende und liefert Exit-Code, Standardausgabe (`output`) und Fehlerausgabe (`errorOutput`). Dabei gilt:
+
+| Punkt | Festlegung |
+|---|---|
+| Programm | Ein Name ohne Pfadtrenner wird im Suchpfad des Systems gesucht (`PATH`; unter Windows darf `.exe` fehlen). Ein Pfad mit Trenner gilt relativ zum Arbeitsverzeichnis des Aufrufers, nicht zu `workDir`. |
+| Argumente | Sie erreichen das Programm unverändert als einzelne Argumente; es ist keine Shell beteiligt. Unter Windows werden sie nach den Regeln der C-Laufzeit von Windows in die Kommandozeile geschrieben. |
+| Arbeitsverzeichnis | `workDir`, bei `null` das des Aufrufers. Die Umgebungsvariablen werden geerbt. |
+| Exit-Code | der Exit-Code des Prozesses; endet er durch ein Signal (POSIX), `128` plus die Nummer des Signals |
+| Ausgaben | Standard- und Fehlerausgabe werden vollständig gesammelt, auch wenn sie groß sind; der Aufruf verklemmt nicht. Bytes, die kein gültiges UTF-8 sind, werden durch U+FFFD ersetzt; wie viele Ersatzzeichen entstehen, ist nicht festgelegt. |
+| `call` | wie `run`, aber der Prozess erbt Standardeingabe, -ausgabe und Fehlerausgabe des Aufrufers; zurück kommt nur der Exit-Code. Was der Aufrufer vorher ausgegeben hat, steht vor der Ausgabe des Prozesses. |
+| Fehler | Lässt sich der Prozess nicht starten (Programm nicht gefunden, `workDir` fehlt), wirft `run` eine `IOException` mit `program` als Pfad (V-13.12). Ein Exit-Code ungleich 0 ist kein Fehler von `run`. |
+
+**R-13.44 (Programmpfad).** `rpp.env.Env` erhält `static string executablePath()`: den absoluten Pfad des laufenden Programms mit `/` als Trenner (R-13.20). Im Debugmodus mit Interpreter ist das der Interpreter, im Releasemodus das übersetzte Programm.
+
+**R-13.45 (Verzeichnis entfernen).** `rpp.io.Dir` erhält `static void removeAll(string path)`: Es entfernt das Verzeichnis `path` mit seinem ganzen Inhalt. Symbolische Links und Verzeichnisverweise im Baum werden selbst entfernt, ihr Ziel bleibt unberührt. Ist `path` kein Verzeichnis (fehlt, ist eine Datei oder ein Verweis) oder lässt sich etwas nicht entfernen, wirft `removeAll` eine `IOException` mit dem Pfad.

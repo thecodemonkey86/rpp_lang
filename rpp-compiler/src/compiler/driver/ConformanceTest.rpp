@@ -1,0 +1,561 @@
+// `rppcc test`: Konformitätstestlauf (Kapitel 14, R-14.3 bis R-14.8) wie `rppc test`
+// (rppc/crates/rppc/src/conftest.rs), Meilenstein M8. Übersetzen oder ablehnen prüft der
+// Compiler im selben Prozess; Laufzeittests werden in beiden Modi zu C erzeugt, mit dem
+// C-Compiler übersetzt und in einem frischen, leeren Arbeitsverzeichnis ausgeführt (V-14.3).
+//
+// Ein abgelehnter Test ist bestanden, wenn alle Fehler in der markierten Zeile liegen und
+// einer davon die erste Regel aus dem Testkopf nennt, als Hauptregel oder als Begründung
+// (bei Syntaxfehlern zählt nur die Zeile). Ein akzeptierter Test ist bestanden, wenn es keine
+// Fehler gibt und Warnungen genau in den mit `WARNUNG` markierten Zeilen.
+package compiler.driver;
+
+using rpp.io.File;
+using rpp.io.Dir;
+using rpp.io.DirEntry;
+using rpp.io.FileType;
+using rpp.io.Path;
+using rpp.fmt.Fmt;
+using rpp.text.Text;
+using rpp.process.Process;
+using rpp.process.ProcessResult;
+using compiler.project.Workspace;
+using compiler.project.Diag;
+using compiler.sema.Program;
+using compiler.sema.Checker;
+using compiler.gen.CGen;
+
+class Unit {
+public:
+    string path;
+    string chapter;
+    string kind;
+    string header;
+    string[] files = [];
+    constructor(string path, string chapter, string kind, string header) {
+        this.path = path;
+        this.chapter = chapter;
+        this.kind = kind;
+        this.header = header;
+    }
+}
+
+// Ergebnis eines Tests: 0 bestanden, 1 fehlgeschlagen, 2 offen
+class Outcome {
+public:
+    i32 kind;
+    string why;
+    constructor(i32 kind, string why) {
+        this.kind = kind;
+        this.why = why;
+    }
+}
+
+// Erwartung eines Laufzeittests für einen Modus (R-14.5)
+class Expect {
+public:
+    bool given = false;
+    string? stdout = null;
+    i32? exit = null;
+    string[] stderrContains = [];
+}
+
+class Marker {
+public:
+    string file;
+    i32 line;
+    constructor(string file, i32 line) {
+        this.file = file;
+        this.line = line;
+    }
+}
+
+export class ConformanceTest {
+private:
+    Toolchain tc;
+    bool verbose;
+    bool runtime;
+    string work = "";
+    string runtimeObj = "";
+
+public:
+    constructor(own Toolchain tc, bool verbose, bool runtime) {
+        this.tc = tc;
+        this.verbose = verbose;
+        this.runtime = runtime;
+    }
+
+    // Führt alle Tests unter ROOT/konformitaet aus; Exit-Code 0, wenn keiner fehlschlägt
+    i32 run(string root) mut {
+        string conformance = Path::absolute(Path::join(root, "konformitaet"));
+        if (!Dir::exists(conformance)) {
+            print("No conformance tests in " + conformance);
+            return 2;
+        }
+        string[] chapters = [];
+        i64[] passed = [];
+        i64[] failed = [];
+        i64[] pending = [];
+        i64 failures = 0;
+        try {
+            for (Unit u : units(conformance)) {
+                Outcome o = judge(u);
+                if (o.kind == 0 && u.kind == "laufzeit" && runtime) {
+                    o = runRuntime(u);
+                }
+                string label = displayName(u.path, conformance);
+                i64 at = chapters.length;
+                for (i64 i = 0; i < chapters.length; i++) {
+                    if (chapters[i] == u.chapter) {
+                        at = i;
+                    }
+                }
+                if (at == chapters.length) {
+                    chapters.push(u.chapter);
+                    passed.push(0);
+                    failed.push(0);
+                    pending.push(0);
+                }
+                if (o.kind == 0) {
+                    passed[at] = passed[at] + 1;
+                    if (verbose) {
+                        print("  ok     " + label);
+                    }
+                } else if (o.kind == 1) {
+                    failed[at] = failed[at] + 1;
+                    failures++;
+                    print("  FAIL  " + label + "\n         " + o.why);
+                } else {
+                    pending[at] = pending[at] + 1;
+                    if (verbose) {
+                        print("  pending " + label + " (" + o.why + ")");
+                    }
+                }
+            }
+        } finally {
+            if (work.length > 0 && Dir::exists(work)) {
+                Dir::removeAll(work);
+            }
+        }
+        print("");
+        print("Chapter                   passed          failed     pending");
+        i64[] total = [0, 0, 0];
+        for (i64 i = 0; i < chapters.length; i++) {
+            print(row(chapters[i], passed[i], failed[i], pending[i]));
+            total[0] = total[0] + passed[i];
+            total[1] = total[1] + failed[i];
+            total[2] = total[2] + pending[i];
+        }
+        print(row("total", total[0], total[1], total[2]));
+        return failures == 0 ? 0 : 1;
+    }
+
+private:
+    static string row(string name, i64 a, i64 b, i64 c) {
+        return "  " + Fmt::padRight(name, 20) + " " + Fmt::padLeft(a.toString(), 9) + "  " + Fmt::padLeft(b.toString(), 14) + "  " + Fmt::padLeft(c.toString(), 10);
+    }
+
+    static string displayName(string path, string baseDir) {
+        Path? rel = new Path(path).relativeTo(new Path(baseDir));
+        if (rel != null) {
+            return rel.toString();
+        }
+        return path;
+    }
+
+    // ================================================================ Tests finden
+
+    static void walk(string dir, mut string[] out) {
+        for (DirEntry e : Dir::entries(dir)) {
+            if (e.kind == FileType::Directory) {
+                walk(e.path, mut out);
+            } else {
+                out.push(e.path);
+            }
+        }
+    }
+
+    static string parentName(string p) {
+        return Path::fileName(Path::parent(p));
+    }
+
+    static bool isTestKind(string k) {
+        return k == "akzeptiert" || k == "abgelehnt" || k == "laufzeit";
+    }
+
+    static bool inside(string p, string dir) {
+        return p.startsWith(dir + "/");
+    }
+
+    // Vergleich von Pfaden wie Path in Rust: Komponente für Komponente
+    static bool pathBefore(string a, string b) {
+        string[] pa = a.split("/");
+        string[] pb = b.split("/");
+        for (i64 i = 0; i < pa.length && i < pb.length; i++) {
+            if (pa[i] != pb[i]) {
+                return pa[i] < pb[i];
+            }
+        }
+        return pa.length < pb.length;
+    }
+
+    static Unit[] units(string root) {
+        string[] all = [];
+        walk(root, mut all);
+        string[] projects = [];
+        for (string p : all) {
+            if (Path::fileName(p) == "rpp.yaml") {
+                string d = Path::parent(p);
+                if (isTestKind(parentName(d))) {
+                    projects.push(d);
+                }
+            }
+        }
+        Unit[] out = [];
+        for (string p : all) {
+            if (Path::extension(p) != "rpp") {
+                continue;
+            }
+            bool inProject = false;
+            for (string d : projects) {
+                if (inside(p, d)) {
+                    inProject = true;
+                }
+            }
+            if (!inProject) {
+                Unit u = new Unit(p, chapterOf(p, root), parentName(p), p);
+                u.files.push(p);
+                out.push(u);
+            }
+        }
+        for (string d : projects) {
+            Unit u = new Unit(d, chapterOf(d, root), parentName(d), Path::join(d, "rpp.yaml"));
+            for (string p : all) {
+                if (inside(p, d)) {
+                    u.files.push(p);
+                }
+            }
+            out.push(u);
+        }
+        // stabil nach Pfad sortieren (Einfügen)
+        Unit[] sorted = [];
+        while (out.length > 0) {
+            i64 best = 0;
+            for (i64 i = 1; i < out.length; i++) {
+                if (pathBefore(out[i].path, out[best].path)) {
+                    best = i;
+                }
+            }
+            sorted.push(out.remove(best));
+        }
+        return sorted;
+    }
+
+    static string chapterOf(string p, string root) {
+        string rel = displayName(p, root);
+        return rel.split("/")[0];
+    }
+
+    // ================================================================ Übersetzen oder ablehnen
+
+    static string[] fileLines(string path) {
+        File f = File::open(path);
+        return Text::lines(f.readAllText());
+    }
+
+    static Marker[] markers(Slice<string> files, string word) {
+        Marker[] out = [];
+        for (string f : files) {
+            string[] lines = fileLines(f);
+            for (i64 i = 0; i < lines.length; i++) {
+                string t = lines[i].trim();
+                if (t.endsWith("// " + word) || t.endsWith("# " + word)) {
+                    out.push(new Marker(Path::absolute(f), cast<i32>(i + 1)));
+                }
+            }
+        }
+        return out;
+    }
+
+    static bool marked(Slice<Marker> marks, Diag d) {
+        string file = Path::absolute(d.file);
+        for (Marker m : marks) {
+            if (m.file == file && m.line == d.line) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // erste Regel aus der Kopfzeile `Regel:` (R-14.4), "" wenn keine
+    static string headerRule(string header) {
+        string[] lines = fileLines(header);
+        for (i64 i = 0; i < lines.length && i < 6; i++) {
+            string l = lines[i];
+            string rest = "";
+            if (l.startsWith("// Regel: ")) {
+                rest = l.substring(10, l.length);
+            } else if (l.startsWith("# Regel: ")) {
+                rest = l.substring(9, l.length);
+            } else {
+                continue;
+            }
+            string first = rest.split(",")[0].trim();
+            if (!first.startsWith("R-")) {
+                return "";
+            }
+            return first.split(" ")[0];
+        }
+        return "";
+    }
+
+    static string show(Diag d) {
+        string rules = d.rule;
+        for (string a : d.also) {
+            rules = rules + ", " + a;
+        }
+        return d.file + ":" + d.line.toString() + ":" + d.col.toString() + ": " + (d.warning ? "Warning" : "Error") + " [" + rules + "] " + d.message;
+    }
+
+    static bool names(Diag d, string rule) {
+        if (d.rule == rule) {
+            return true;
+        }
+        for (string a : d.also) {
+            if (a == rule) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    own Outcome judge(Unit u) {
+        Workspace ws = Workspace::load(u.path, tc.stdDir, false);
+        Program p = Program::build(ws);
+        Checker c = new Checker(p);
+        c.run(ws);
+        string errors = "";
+        i64 errorCount = 0;
+        for (Diag d : c.p.diags) {
+            if (!d.warning) {
+                errors = errors + (errorCount > 0 ? "\n         " : "") + show(d);
+                errorCount++;
+            }
+        }
+        if (u.kind == "akzeptiert" || u.kind == "laufzeit") {
+            if (errorCount > 0) {
+                return new Outcome(1, errors);
+            }
+            // R-14.7: genau die markierten Warnungen und keine weiteren
+            Marker[] marks = markers(u.files[0..], "WARNUNG");
+            string unexpected = "";
+            for (Diag d : c.p.diags) {
+                if (d.warning && !marked(marks[0..], d)) {
+                    unexpected = unexpected + (unexpected.length > 0 ? "\n         " : "") + show(d);
+                }
+            }
+            if (unexpected.length > 0) {
+                return new Outcome(1, "Unexpected warning:\n         " + unexpected);
+            }
+            for (Marker m : marks) {
+                bool found = false;
+                for (Diag d : c.p.diags) {
+                    if (d.warning && Path::absolute(d.file) == m.file && d.line == m.line) {
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    return new Outcome(1, "Expected warning missing at " + m.file + ":" + m.line.toString());
+                }
+            }
+            return new Outcome(0, "");
+        }
+        Marker[] marks = markers(u.files[0..], "FEHLER");
+        string rule = headerRule(u.header);
+        if (errorCount == 0) {
+            return new Outcome(1, "No error reported");
+        }
+        bool syntax = false;
+        bool ruleOk = rule.length == 0;
+        for (Diag d : c.p.diags) {
+            if (d.warning) {
+                continue;
+            }
+            if (!marked(marks[0..], d)) {
+                return new Outcome(1, "Error outside the marked line:\n         " + errors);
+            }
+            if (d.rule == "Syntax") {
+                syntax = true;
+            }
+            if (rule.length > 0 && names(d, rule)) {
+                ruleOk = true;
+            }
+        }
+        if (syntax || ruleOk) {
+            return new Outcome(0, "");
+        }
+        return new Outcome(1, "Expected " + rule + ", got:\n         " + errors);
+    }
+
+    // ================================================================ Laufzeittests
+
+    static string unquote(string text) {
+        string s = text.trim();
+        if (s.length >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+            s = s.substring(1, s.length - 1);
+        }
+        string out = "";
+        i64 i = 0;
+        while (i < s.length) {
+            char c = s[i];
+            if (c == '\\') {
+                i++;
+                if (i < s.length) {
+                    char e = s[i];
+                    if (e == 'n') {
+                        out = out + "\n";
+                    } else if (e == 't') {
+                        out = out + "\t";
+                    } else {
+                        out = out + e.toString();
+                    }
+                }
+            } else {
+                out = out + c.toString();
+            }
+            i++;
+        }
+        return out;
+    }
+
+    static own Expect parseExpect(string spec) {
+        Expect e = new Expect();
+        e.given = true;
+        for (string raw : spec.split(";")) {
+            string part = raw.trim();
+            if (part.startsWith("Ausgabe ")) {
+                e.stdout = unquote(part.substring(8, part.length));
+            } else if (part.startsWith("Exit-Code ")) {
+                e.exit = i32::tryParse(part.substring(10, part.length).trim());
+            } else if (part.startsWith("Fehlerausgabe enthält ")) {
+                e.stderrContains.push(unquote(part.substring(22, part.length)));
+            }
+        }
+        return e;
+    }
+
+    // Kopfzeile ohne führende // und #
+    static string headerText(string line) {
+        string l = line;
+        while (l.startsWith("//")) {
+            l = l.substring(2, l.length);
+        }
+        while (l.startsWith("#")) {
+            l = l.substring(1, l.length);
+        }
+        return l.trim();
+    }
+
+    own Outcome runRuntime(Unit u) mut {
+        Expect[] exp = [new Expect(), new Expect()];
+        string[] args = [];
+        string input = "";
+        string[] lines = fileLines(u.header);
+        for (i64 i = 0; i < lines.length && i < 12; i++) {
+            string l = headerText(lines[i]);
+            if (l.startsWith("Erwartet (debug):")) {
+                exp[0] = parseExpect(l.substring(17, l.length));
+            } else if (l.startsWith("Erwartet (release):")) {
+                exp[1] = parseExpect(l.substring(19, l.length));
+            } else if (l.startsWith("Erwartet:")) {
+                exp[0] = parseExpect(l.substring(9, l.length));
+                exp[1] = parseExpect(l.substring(9, l.length));
+            } else if (l.startsWith("Argumente:")) {
+                for (string a : l.substring(10, l.length).split(" ")) {
+                    if (a.trim().length > 0) {
+                        args.push(a.trim());
+                    }
+                }
+            } else if (l.startsWith("Eingabe:")) {
+                input = unquote(l.substring(8, l.length));
+            }
+        }
+        for (i64 mode = 0; mode < 2; mode++) {
+            ref Expect e = exp[mode];
+            if (!e.given) {
+                continue;
+            }
+            string name = mode == 0 ? "debug" : "release";
+            string exe = "";
+            try {
+                string? built = build(u.path, mode == 1);
+                if (built == null) {
+                    return new Outcome(1, name + ": compilation failed: " + lastError);
+                }
+                exe = built;
+            } catch (ToolchainError x) {
+                return new Outcome(1, name + ": " + x.message);
+            }
+            // V-14.3: jeder Lauf in einem frischen, leeren Arbeitsverzeichnis, das danach gelöscht wird
+            string dir = Path::join(work, "run-" + name);
+            Dir::create(dir);
+            ProcessResult o = Process::run(exe, args, input, dir);
+            Dir::removeAll(dir);
+            string problems = "";
+            string? want = e.stdout;
+            if (want != null) {
+                string got = o.output.endsWith("\n") ? o.output.substring(0, o.output.length - 1) : o.output;
+                if (got != want) {
+                    problems = problems + "; expected stdout " + quote(want) + ", got " + quote(got);
+                }
+            }
+            i32? x = e.exit;
+            if (x != null && o.exitCode != x) {
+                problems = problems + "; expected exit code " + x.toString() + ", got " + o.exitCode.toString();
+            }
+            for (string c : e.stderrContains) {
+                if (!o.errorOutput.contains(c)) {
+                    problems = problems + "; stderr does not contain " + quote(c);
+                }
+            }
+            if (problems.length > 0 && o.errorOutput.contains("FailError: eingebaut")) {
+                return new Outcome(2, name + ": requires standard library built-ins that are not available yet");
+            }
+            if (problems.length > 0) {
+                string first = Text::lines(o.errorOutput).length > 0 ? Text::lines(o.errorOutput)[0] : "";
+                return new Outcome(1, name + ": " + problems.substring(2, problems.length) + "; stderr: " + quote(first));
+            }
+        }
+        return new Outcome(0, "");
+    }
+
+    static string quote(string s) {
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\t", "\\t") + "\"";
+    }
+
+    string lastError = "";
+
+    // Erzeugt C für den Test und übersetzt es; null bei Fehlern der Prüfung (lastError)
+    string? build(string path, bool release) mut {
+        if (work.length == 0) {
+            work = tc.freshDir("rppcc-test");
+            runtimeObj = tc.compileRuntime(work, false);
+        }
+        Workspace ws = Workspace::load(path, tc.stdDir, release);
+        Program p = Program::build(ws);
+        Checker c = new Checker(p);
+        c.withStd = true;
+        c.run(ws);
+        for (Diag d : c.p.diags) {
+            if (!d.warning) {
+                lastError = show(d);
+                return null;
+            }
+        }
+        CGen g = new CGen(c, release);
+        string cFile = Path::join(work, "test.c");
+        File::writeText(cFile, g.generate(ws));
+        string exe = Path::join(work, tc.exeName("test"));
+        tc.link(cFile, runtimeObj, exe, work, false);
+        return exe;
+    }
+}

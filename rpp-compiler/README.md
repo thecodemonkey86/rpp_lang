@@ -100,3 +100,36 @@ Native Grundwerte (M7): Reine Ausdrücke über `i8`–`i64`, `char` und `bool` o
 Umgebungsvariablen der Laufzeit: `RPP_NOFREE=1` gibt keinen Speicher frei (zum Eingrenzen von Fehlern bei der Freigabe); `RPP_PROFILE=DATEI` schreibt jede Millisekunde den Befehlszähler und bis zu sieben Aufrufer als Adressen relativ zum Modul, eine Stichprobe je Zeile (Windows; auflösen mit der Map-Datei des Linkers, `/MAP`); `RPP_MAINTHREAD=1` läuft ohne eigenen Thread mit großem Stack.
 
 Geschwindigkeit (26.11.2026, übersetzter `rppcc.exe`, MSVC `/O2`): `diagnose rpp-compiler` 0,40 s, Selbstübersetzung 0,62 s (25.11.2026: 1,4 s und 1,7 s; 22.11.2026: 9,2 s und 10,4 s); `rppc diagnose` (Release) 0,47 s. Die einzelnen Schritte stehen im Implementierungsplan, Abschnitt 6.
+
+## Bauen, Ausführen und Testen (M8)
+
+`rppcc` baut native Programme selbst; Rust wird dafür nicht gebraucht:
+
+```
+rppcc build [--release] [-o AUSGABE] PFAD     # prüfen, C erzeugen, mit dem C-Compiler übersetzen
+rppcc run [--release] PFAD [-- ARGUMENTE]     # in ein temporäres Verzeichnis bauen und ausführen
+rppcc test [-v] [--check-only] [WURZEL]       # Konformitätstests wie `rppc test`
+```
+
+Die Teile stehen in `src/compiler/driver/`: `Toolchain.rpp` sucht die Wurzel (das Verzeichnis mit `rppc/std` und `rpp-compiler/runtime`: `RPP_HOME`, sonst aufwärts vom Verzeichnis des laufenden `rppcc`) und ruft den C-Compiler auf (`RPP_CC`, sonst `cl` unter Windows und `cc` sonst; für `cl` gelten die Schalter von MSVC, sonst die von gcc und clang). `build` ohne `-o` legt das Programm im aktuellen Verzeichnis ab, benannt nach der Datei bzw. dem Projektverzeichnis. `--release` wählt die R++-Semantik des Releasemodus und übersetzt das C mit `/O2` bzw. `-O2`, sonst mit `/O1` bzw. `-O1`. `run` startet das Programm mit `Process::call`; es erbt die Konsole, und sein Exit-Code wird der von `rppcc`.
+
+`ConformanceTest.rpp` folgt `rppc/crates/rppc/src/conftest.rs`: Annehmen oder Ablehnen prüft der Compiler im selben Prozess (Debugmodus), mit denselben Regeln für Fehlerzeilen, erwartete Regel und Warnungen. Laufzeittests werden in beiden Modi erzeugt, mit der einmal übersetzten Laufzeit gebunden und in einem frischen, leeren Arbeitsverzeichnis ausgeführt (V-14.3); verglichen werden Ausgabe, Exit-Code und Fehlerausgabe. Die Ausgabe hat dieselbe Form wie die von `rppc test`. Ein ganzer Lauf dauert unter Windows (MSVC) gut 80 s, unter Linux (gcc, WSL) gut 2 Minuten.
+
+Dafür kam die Standardbibliothek um `rpp.process` (`Process::run`, `Process::call`), `Env::executablePath` und `Dir::removeAll` hinzu (R-13.43 bis R-13.45).
+
+## Bootstrap ohne Rust
+
+`bootstrap/rppcc.c` ist der C-Code des Compilers selbst, erzeugt mit `rppcc c --release rppc/std rpp-compiler bootstrap/rppcc.c` (Startpunkt, ohne Zeilenumwandlung eingecheckt). Die Skripte bauen daraus den Compiler:
+
+```
+sh rpp-compiler/bootstrap/bootstrap.sh [--check-seed]       # gcc oder clang ($CC, sonst cc)
+rpp-compiler\bootstrap\bootstrap.cmd [--check-seed]          # MSVC, notfalls über vswhere gefunden
+```
+
+Stufe 0 ist der übersetzte Startpunkt. Er übersetzt den Compiler aus dem Quelltext (gen1, Stufe 1), Stufe 1 tut es noch einmal (gen2). Fixpunkt heißt: gen1 und gen2 sind Byte für Byte gleich. Mit `--check-seed` muss außerdem gen1 gleich dem Startpunkt sein; das prüft die CI. Nach Änderungen am Compiler oder an der Standardbibliothek den Startpunkt deshalb neu erzeugen:
+
+```
+rpp-compiler/build/rppcc c --release rppc/std rpp-compiler rpp-compiler/bootstrap/rppcc.c
+```
+
+Das Ergebnis ist `rpp-compiler/build/rppcc` (`rppcc.exe`); das Verzeichnis `build/` ist nicht eingecheckt. Der Startpunkt ist auf allen Plattformen derselbe: Unter Windows (MSVC) und Linux (gcc) erzeugt der Compiler aus demselben Quelltext denselben C-Code.
