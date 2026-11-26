@@ -2,7 +2,7 @@
 
 Stand: 26.11.2026, Entwurf 0.13. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
-Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M7 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026.
+Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M7 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 macht `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen am 26.11.2026).
 
 ## 1. Rolle der ersten Implementierung
 
@@ -83,8 +83,9 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M5 | Standardbibliothek für den Compiler: `rpp.text`, `rpp.collections`, `rpp.io`, `rpp.env`, `rpp.fmt` | alle Konformitätstests bestehen im Debugmodus |
 | M6 | Beginn des R++-Compilers in R++ | der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein (festgelegt am 23.11.2026) |
 | M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler` (festgelegt am 26.11.2026); erreicht am 26.11.2026 (0,40 s gegen 0,47 s) |
+| M8 | `rppcc` als eigenständiger Compiler: `build`, `run` und `test`, Releasemodus über den C-Codegenerator, Bootstrap ohne Rust (beschlossen am 26.11.2026) | `rppcc test ..` besteht alle Konformitätstests im Debug- und im Releasemodus (R-14.7); der Bootstrap aus dem eingecheckten C-Startpunkt erreicht ohne Rust den Fixpunkt, unter Windows (MSVC) und Linux (gcc) in der CI; alle Vergleiche mit `rppc` bleiben ohne Abweichung |
 
-JIT und Releasemodus folgen nach M5. Bis dahin ist die Implementierung nur für den Debugmodus konform (R-14.7).
+Der Releasemodus entsteht mit M8 aus dem C-Codegenerator (entschieden am 24.11.2026); bis dahin ist die Implementierung nur für den Debugmodus konform (R-14.7). Ein JIT für den Debugmodus ist zurückgestellt.
 
 ## 6. Stand
 
@@ -505,3 +506,14 @@ Außerdem ergänzt: Die C-Laufzeit kennt jetzt die transzendenten Funktionen aus
 Verbleibende Zeit: Laden 37 %, Rumpfprüfung 51 %, der Rest Start, Ausgabe und das Aufräumen am Ende von `pruefe`. Von den Ausdrucksprüfungen laufen noch 11 000 stumm bei 40 000 wirklichen (vorher 131 000 bei 39 000). Nächste Kandidaten: Token-Arten als Zahl statt Text im Parser; die Versuche `localVarDecl` vor jeder Ausdrucksanweisung und `fieldDecl` vor jeder Methode (je eine Exception); Tupel als Rückgabewert ohne Speicheranforderung (`capturingFrames`, `callInner`, `literalInfo`: rund 130 000 Tupel je `diagnose`); `methodsOf` und `fieldOf` ohne Durchlauf über alle Member und Obertypen bei jedem Zugriff.
 
 **M7 abgeschlossen (26.11.2026).** Kriterium (festgelegt am 26.11.2026): Der übersetzte `rppcc` ist bei `diagnose rpp-compiler` mindestens so schnell wie `rppc` (Rust, Release, Stand vom selben Tag; mittlerer von sieben Läufen am selben Rechner) und gibt dieselbe Ausgabe; dabei bleiben der Fixpunkt der Selbstübersetzung und alle Vergleiche ohne Abweichung. Stand: 0,40 s gegen 0,47 s; Fixpunkt, `vergleich.py --exe` und `vergleich_c.py --fr 200` ohne Abweichung (siehe oben). Die oben genannten Kandidaten bleiben als weitere Optimierungen offen, sind aber nicht Teil von M7.
+
+**M8 beschlossen: `rppcc` als eigenständiger Compiler (26.11.2026).** Nach M7 ist der übersetzte `rppcc` schneller als `rppc`, hängt aber noch an Rust: Programme übersetzt und startet nur `vergleich_c.py`, die Konformitätstests prüft `rppc test`, und der erste `rppcc` entsteht aus `rppc`. Für den Releasemodus ist nach R-14.7 bisher keine Implementierung konform. M8 schließt diese Lücken:
+
+| Teil | Inhalt |
+|---|---|
+| `build` und `run` | `rppcc build [--release] PATH` erzeugt C und übersetzt es mit `runtime/rpp_rt.c` (MSVC bzw. gcc) zu einem nativen Programm; `rppcc run [--release] PATH -- ARGS` baut und führt aus. |
+| `test` | `rppcc test PATH` führt die Konformitätstests aus wie `rppc test` (R-14.8): annehmen oder ablehnen mit Regel und Zeile, Warnungen genau in den markierten Zeilen, Laufzeittests über `build` in beiden Modi mit Ausgabe, Exit-Code und Fehlerausgabe. |
+| Bootstrap | Der von `rppcc` erzeugte C-Code des Compilers liegt als Startpunkt im Repository, dazu ein Bauskript für Windows und Linux; daraus entsteht `rppcc`, der sich dann selbst übersetzt. |
+| CI | Bootstrap und `rppcc test` unter Windows (MSVC) und Linux (gcc). |
+
+`rppc` bleibt die Referenz (R-12.3); `vergleich.py --exe` und `vergleich_c.py` laufen weiter und müssen ohne Abweichung bleiben. Zurückgestellt: schnellerer Code für Benutzerprogramme im Releasemodus (etwa die Unterschiede, die R-12.5 erlaubt), ein JIT für den Debugmodus und die offenen Kandidaten aus M7.
