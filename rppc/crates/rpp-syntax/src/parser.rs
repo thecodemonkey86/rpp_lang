@@ -35,6 +35,7 @@ pub(crate) struct Parser {
     pos: usize,
     furthest: Option<(usize, String)>,
     next_id: u32,
+    literals: Vec<LiteralSite>,
 }
 
 /// Zusammenhang, in dem ein Typ steht.
@@ -48,7 +49,7 @@ enum TypeCtx {
 
 impl Parser {
     pub(crate) fn new(toks: Vec<Token>) -> Parser {
-        Parser { toks, pos: 0, furthest: None, next_id: 0 }
+        Parser { toks, pos: 0, furthest: None, next_id: 0, literals: Vec::new() }
     }
 
     fn expr_id(&mut self) -> u32 {
@@ -138,13 +139,15 @@ impl Parser {
         }
     }
 
-    /// Probiert `f`; bei einem Fehlschlag wird die Position zurückgesetzt.
+    /// Probiert `f`; bei einem Fehlschlag werden Position und Literalstellen zurückgesetzt.
     fn attempt<V>(&mut self, f: impl FnOnce(&mut Self) -> PResult<V>) -> Option<V> {
         let save = self.pos;
+        let literals = self.literals.len();
         match f(self) {
             Ok(v) => Some(v),
             Err(Fail) => {
                 self.pos = save;
+                self.literals.truncate(literals);
                 None
             }
         }
@@ -202,7 +205,7 @@ impl Parser {
                 decls.push(self.type_decl()?);
             }
         }
-        Ok(CompilationUnit { package, usings, decls })
+        Ok(CompilationUnit { package, usings, decls, literals: std::mem::take(&mut self.literals) })
     }
 
     fn main_decl(&mut self) -> PResult<MainDecl> {
@@ -877,7 +880,9 @@ impl Parser {
                 self.bump();
             }
             self.bump();
-            return Ok(Pattern::Literal { negative, lit });
+            let id = self.expr_id();
+            self.literals.push(LiteralSite { id, literal: lit.clone(), context: LiteralContext::Pattern { negative } });
+            return Ok(Pattern::Literal { id, negative, lit });
         }
         if negative {
             self.bump();
@@ -1038,7 +1043,11 @@ impl Parser {
         };
         self.bump();
         let expr = Box::new(self.unary()?);
-        Ok(Expr { kind: ExprKind::Unary { op, expr }, span, id: self.expr_id() })
+        let id = self.expr_id();
+        if let (UnaryOp::Neg, ExprKind::Literal(lit @ (Literal::Int(_) | Literal::Float(_)))) = (op, &expr.kind) {
+            self.literals.push(LiteralSite { id, literal: lit.clone(), context: LiteralContext::NegatedNumber });
+        }
+        Ok(Expr { kind: ExprKind::Unary { op, expr }, span, id })
     }
 
     fn postfix(&mut self) -> PResult<Expr> {
@@ -1125,7 +1134,9 @@ impl Parser {
         let span = self.span();
         if let Some(lit) = self.literal_at(0) {
             self.bump();
-            return Ok(Expr { kind: ExprKind::Literal(lit), span, id: self.expr_id() });
+            let id = self.expr_id();
+            self.literals.push(LiteralSite { id, literal: lit.clone(), context: LiteralContext::Expression });
+            return Ok(Expr { kind: ExprKind::Literal(lit), span, id });
         }
         let kind = match self.kind(0).clone() {
             T::Keyword(K::This) => {

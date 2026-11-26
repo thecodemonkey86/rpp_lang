@@ -155,12 +155,23 @@ public:
     // Vereinigung in einem Durchlauf über beide sortierten Listen; bei gleichem Schlüssel gilt
     // der Wert aus b. Ist single nicht leer, bekommt ein Eintrag, der nur in einer der beiden
     // steht und den Wert "R-5.3" hat, stattdessen single (Moves, die nur auf einem Weg geschahen).
-    static IdMap unite(IdMap a, IdMap b, string single) {
+    static shared IdMap unite(shared IdMap a, shared IdMap b, string single) {
+        // Die Eingaben sind geteilte Flussmengen. Einseitige Moves können
+        // auch dann einen neuen Regelcode brauchen, wenn eine Seite leer ist.
+        if (same(a, b)) {
+            return b;
+        }
+        i64 na = a.keys.length;
+        i64 nb = b.keys.length;
+        if (na == 0 && (nb == 0 || single == "")) {
+            return b;
+        }
+        if (nb == 0 && single == "") {
+            return a;
+        }
         IdMap c = new IdMap();
         i64 i = 0;
         i64 j = 0;
-        i64 na = a.keys.length;
-        i64 nb = b.keys.length;
         while (i < na || j < nb) {
             if (j >= nb || (i < na && a.keys[i] < b.keys[j])) {
                 c.keys.push(a.keys[i]);
@@ -253,25 +264,41 @@ public:
             return dup();
         }
         Flow r = new Flow();
-        r.nonnull = IdSet::inter(nonnull, o.nonnull);
         // lost: o.lost, darüber lost, darüber nullRule für jede Verengung, die nur auf einem
-        // Weg galt (wie flow.rs: Kopie plus put je Eintrag, hier in je einem Durchlauf)
-        IdSet oneSided = IdSet::unite(IdSet::minus(nonnull, o.nonnull), IdSet::minus(o.nonnull, nonnull));
-        IdMap both = IdMap::unite(o.lost, lost, "");
-        if (oneSided.items.length == 0) {
-            r.lost = both;
+        // Weg galt. Geteilte oder leere Mengen für den Schnitt wiederverwenden.
+        shared IdSet? oneSided = null;
+        if (same(nonnull, o.nonnull)) {
+            r.nonnull = nonnull;
+        } else if (nonnull.items.length == 0) {
+            r.nonnull = nonnull;
+            oneSided = o.nonnull;
+        } else if (o.nonnull.items.length == 0) {
+            r.nonnull = o.nonnull;
+            oneSided = nonnull;
         } else {
-            r.lost = IdMap::unite(both, IdMap::uniform(oneSided, nullRule), "");
+            r.nonnull = IdSet::inter(nonnull, o.nonnull);
+            oneSided = IdSet::unite(IdSet::minus(nonnull, o.nonnull), IdSet::minus(o.nonnull, nonnull));
+        }
+        r.lost = IdMap::unite(o.lost, lost, "");
+        if (oneSided != null && oneSided.items.length != 0) {
+            shared IdMap reasons = IdMap::uniform(oneSided, nullRule);
+            r.lost = IdMap::unite(r.lost, reasons, "");
         }
         // moved: o.moved, darüber moved; ein Move nach R-5.3, der nur auf einem Weg geschah,
         // bekommt moveRule
         r.moved = IdMap::unite(o.moved, moved, moveRule);
-        r.unassigned = IdSet::unite(unassigned, o.unassigned);
+        if (same(unassigned, o.unassigned) || o.unassigned.items.length == 0) {
+            r.unassigned = unassigned;
+        } else if (unassigned.items.length == 0) {
+            r.unassigned = o.unassigned;
+        } else {
+            r.unassigned = IdSet::unite(unassigned, o.unassigned);
+        }
         return r;
     }
 
     // gleiche Fakten (für den Fixpunkt an Schleifenköpfen)
-    bool same(Flow o) {
+    bool sameFacts(Flow o) {
         return dead == o.dead && nonnull.same(o.nonnull) && unassigned.same(o.unassigned) && moved.sameKeys(o.moved);
     }
 

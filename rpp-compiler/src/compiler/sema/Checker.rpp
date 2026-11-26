@@ -1034,7 +1034,7 @@ private:
             (Flow back, Flow ex) = loopPass(s);
             endProbe(mut st);
             Flow next = entry.join(back, "R-6.9", "R-5.16");
-            if (next.same(head)) {
+            if (next.sameFacts(head)) {
                 break;
             }
             head = next;

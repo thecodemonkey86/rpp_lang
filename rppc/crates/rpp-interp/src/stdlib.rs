@@ -13,21 +13,21 @@ use std::cmp::Ordering;
 use std::io::{BufRead, BufReader};
 
 /// Klassen und Methoden, die eingebaut sind.
-const NATIVE_CLASSES: &[&str] = &[
-    "rpp.io.Console",
-    "rpp.io.File",
-    "rpp.io.TextReader",
-    "rpp.io.SaveFile",
-    "rpp.io.Dir",
-    "rpp.io.Path",
-    "rpp.text.StringBuilder",
-    "rpp.text.StringView",
-    "rpp.collections.Map",
-    "rpp.collections.Set",
-    "rpp.fmt.Fmt",
-    "rpp.math.Math",
-    "rpp.env.Env",
-    "rpp.env.ElapsedTimer",
+const NATIVE_CLASSES: &[(&str, &str)] = &[
+    ("rpp.io", "Console"),
+    ("rpp.io", "File"),
+    ("rpp.io", "TextReader"),
+    ("rpp.io", "SaveFile"),
+    ("rpp.io", "Dir"),
+    ("rpp.io", "Path"),
+    ("rpp.text", "StringBuilder"),
+    ("rpp.text", "StringView"),
+    ("rpp.collections", "Map"),
+    ("rpp.collections", "Set"),
+    ("rpp.fmt", "Fmt"),
+    ("rpp.math", "Math"),
+    ("rpp.env", "Env"),
+    ("rpp.env", "ElapsedTimer"),
 ];
 
 fn str_value(s: impl AsRef<str>) -> Value {
@@ -104,23 +104,19 @@ impl Interp {
     }
 
     /// Voller Name einer eingebauten Methode, sonst `None`.
-    pub(crate) fn native_name(&self, m: &MethodInfo) -> Option<String> {
+    pub(crate) fn native_name(&self, m: &MethodInfo, method: &ast::MethodDecl) -> Option<String> {
         if m.owner == usize::MAX {
             return None;
         }
         let def = &self.p.defs[m.owner];
-        let class = format!("{}.{}", def.package, def.name);
-        if !NATIVE_CLASSES.contains(&class.as_str()) {
+        if !NATIVE_CLASSES.contains(&(def.package.as_str(), def.name.as_str())) {
             return None;
         }
         // Konstruktoren und Methoden mit echtem Rumpf (etwa Entry) laufen normal.
-        let body_is_native = match self.member_at(m.ast) {
-            Some(ast::ClassMember::Method(md)) => md.body.as_ref().is_some_and(|b| {
-                matches!(b.stmts.first().map(|s| &s.kind), Some(S::Expr(ast::ExprStmt::Expr(e))) if matches!(&e.kind, E::Call { callee, .. } if matches!(&callee.kind, E::Name(n) if n.name == "fail")))
-            }),
-            _ => false,
-        };
-        body_is_native.then(|| format!("{class}.{}", m.name))
+        let body_is_native = method.body.as_ref().is_some_and(|b| {
+            matches!(b.stmts.first().map(|s| &s.kind), Some(S::Expr(ast::ExprStmt::Expr(e))) if matches!(&e.kind, E::Call { callee, .. } if matches!(&callee.kind, E::Name(n) if n.name == "fail")))
+        });
+        body_is_native.then(|| format!("{}.{}.{}", def.package, def.name, m.name))
     }
 
     fn std_throw(&mut self, class: &str, args: Vec<Value>) -> R<Value> {

@@ -487,7 +487,7 @@ impl D {
                     self.open("patterns", "", None);
                     for p in &c.patterns {
                         match p {
-                            Pattern::Literal { negative, lit } => {
+                            Pattern::Literal { negative, lit, .. } => {
                                 self.open("plit", if *negative { "-" } else { "" }, None);
                                 self.literal(lit, None);
                                 self.close();

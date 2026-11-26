@@ -1,0 +1,24 @@
+// Konformitätstest Kapitel 4 – Laufzeit.
+// Regel: R-4.16, R-4.17, R-8.24
+// Erwartet: Ausgabe "true\ntrue\ngrenze\ntext\nzeichen"; Exit-Code 0
+i32 main(string[] args) {
+    f32 rounded = 16_777_217.0;
+    print((cast<f64>(rounded) == 16_777_216.0).toString());
+    f64 negativeZero = -0.0;
+    print((1.0 / negativeZero < 0.0).toString());
+
+    i8 low = -128;
+    switch (low) {
+        case -128: print("grenze");
+        default: print("falsch");
+    }
+    switch ("A\t") {
+        case "\u0041\t": print("text");
+        default: print("falsch");
+    }
+    switch ('\t') {
+        case '\t': print("zeichen");
+        default: print("falsch");
+    }
+    return 0;
+}

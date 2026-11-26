@@ -30,6 +30,8 @@ pub struct CompilationUnit {
     pub package: Option<QualifiedName>,
     pub usings: Vec<Using>,
     pub decls: Vec<TopDecl>,
+    /// Literalstellen für die Vorbereitung der Ausführung nach der Typprüfung.
+    pub literals: Vec<LiteralSite>,
 }
 
 /// `using a.b.C;` oder `using X = a.b.C;`
@@ -315,7 +317,7 @@ pub enum ForInit {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
-    Literal { negative: bool, lit: Literal },
+    Literal { id: u32, negative: bool, lit: Literal },
     /// Konstante oder Enum-Variante, optional mit Bindungen: `Circle(r)`, `Shape::Circle(r)`
     Name { name: PatternName, bindings: Option<Vec<Ident>> },
 }
@@ -406,6 +408,21 @@ pub enum Literal {
     Char(String),
     Bool(bool),
     Null,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiteralSite {
+    /// Eindeutig je Datei, aus demselben Nummernraum wie `Expr::id`.
+    pub id: u32,
+    pub literal: Literal,
+    pub context: LiteralContext,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiteralContext {
+    Expression,
+    NegatedNumber,
+    Pattern { negative: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -15,13 +15,15 @@
 //!   einem Programmfehler.
 
 mod console;
+mod literals;
 mod stdlib;
 mod save_file;
 pub mod value;
 
 use console::Console;
+use literals::{FileLiterals, PreparedLiteral};
 use rpp_sema::defs::{AstRef, MethodInfo, PInfo, Program, Ret};
-use rpp_sema::rt::Target;
+use rpp_sema::rt::{Key, Target};
 use rpp_sema::ty::{self, DefId, Form as TForm, Mode, Ty};
 use rpp_syntax::ast::{self, BinaryOp as B, ExprKind as E, Primitive as P, StmtKind as S, UnaryOp as U};
 use std::cell::{Cell, RefCell};
@@ -31,6 +33,10 @@ use value::{Cellv, Closure, Form, ORef, Obj, Value};
 
 /// Garantiert sind 10 000 verschachtelte Aufrufe (R-12.10).
 const MAX_DEPTH: usize = 12_000;
+const MAX_SPARE_SCOPES: usize = 64;
+const MAX_SPARE_BINDINGS: usize = 512;
+const MAX_SPARE_SCOPE_CAPACITY: usize = 64;
+const MAX_SPARE_NAME_CAPACITY: usize = 128;
 
 pub struct Options {
     pub release: bool,
@@ -96,14 +102,21 @@ pub enum Flow {
 }
 
 type R<T> = Result<T, Flow>;
+type Binding = (String, Cellv);
+type Scope = Vec<Binding>;
+
+enum FrameLabel {
+    Bare(&'static str),
+    Member(DefId, &'static str),
+}
 
 struct Frame {
-    scopes: Vec<Vec<(String, Cellv)>>,
+    scope_start: usize,
     env: Vec<(String, Cellv)>,
     this: Option<Value>,
     class: Option<DefId>,
     file: usize,
-    label: String,
+    label: FrameLabel,
     /// Sperren bis zum Ende eines Blocks (Tiefe, Objekt, schreibend)
     locks: Vec<(usize, ORef, bool)>,
     /// Typargumente der generischen Methode (Typ-Parameter, Typ), R-7.26
@@ -115,6 +128,12 @@ struct Layout {
     /// Klassen von der Wurzel bis zur Klasse selbst, mit ihren Feldern
     levels: Vec<(DefId, std::ops::Range<usize>)>,
     len: usize,
+}
+
+#[derive(Clone, Copy)]
+struct CachedField {
+    class: DefId,
+    index: Option<usize>,
 }
 
 enum Slot {
@@ -133,11 +152,20 @@ struct Interp {
     save_files: HashMap<*const Obj, save_file::SaveFile>,
     text_readers: HashMap<*const Obj, std::io::BufReader<std::fs::File>>,
     p: &'static Program,
+    literals: Vec<FileLiterals>,
     release: bool,
     console: Console,
     frames: Vec<Frame>,
+    scopes: Vec<Scope>,
+    spare_scopes: Vec<Scope>,
+    spare_bindings: Vec<Binding>,
     temps: Vec<Vec<Value>>,
     layouts: HashMap<DefId, Rc<Layout>>,
+    /// Der erste Empfängertyp einer Zugriffsstelle ist direkt über die Ausdrucks-ID erreichbar.
+    fields_by_site: Vec<Vec<Option<CachedField>>>,
+    other_field_indices: HashMap<(Key, DefId), Option<usize>>,
+    // Eine Aufrufstelle bestimmt Signatur und Typargumente, die Empfängerklasse den Rumpf.
+    virtual_methods: HashMap<(Key, DefId), Option<Rc<MethodInfo>>>,
     statics: HashMap<(DefId, String), Value>,
     /// Anzahl der Programmfehler; ab dem zweiten (beim Aufräumen) endet das Programm sofort (R-9.14)
     fatals: Cell<usize>,
@@ -275,7 +303,15 @@ fn to_text(v: &Value) -> String {
 
 impl Interp {
     fn new(p: &'static Program, release: bool, console: Console) -> Interp {
-        Interp { p, release, console, frames: Vec::new(), temps: Vec::new(), layouts: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0), binding: Cell::new(false), locked_args: Vec::new(), check: false, pending_targs: Vec::new(), heap: Vec::new(), shared_used: false, save_files: HashMap::new(), text_readers: HashMap::new() }
+        Interp {
+            p, literals: literals::prepare(p), release, console, frames: Vec::new(), scopes: Vec::new(), spare_scopes: Vec::new(),
+            spare_bindings: Vec::new(), temps: Vec::new(), layouts: HashMap::new(),
+            fields_by_site: vec![Vec::new(); p.ws.files.len()], other_field_indices: HashMap::new(),
+            virtual_methods: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0),
+            binding: Cell::new(false), locked_args: Vec::new(), check: false,
+            pending_targs: Vec::new(), heap: Vec::new(), shared_used: false,
+            save_files: HashMap::new(), text_readers: HashMap::new(),
+        }
     }
 
     // ------------------------------------------------------------ Hilfen
@@ -288,12 +324,15 @@ impl Interp {
         self.frames.last().map(|f| f.file).unwrap_or(0)
     }
 
-    fn key(&self, e: &ast::Expr) -> (usize, u32) {
+    fn key(&self, e: &ast::Expr) -> Key {
         (self.file(), e.id)
     }
 
     fn trace(&self) -> Vec<String> {
-        self.frames.iter().rev().map(|f| f.label.clone()).collect()
+        self.frames.iter().rev().map(|f| match f.label {
+            FrameLabel::Bare(name) | FrameLabel::Member(usize::MAX, name) => name.to_string(),
+            FrameLabel::Member(owner, name) => format!("{}.{}", self.p.defs[owner].name, name),
+        }).collect()
     }
 
     fn fatal(&self, name: &'static str, msg: impl Into<String>) -> Flow {
@@ -318,13 +357,6 @@ impl Interp {
 
     fn internal(&self, msg: impl Into<String>) -> Flow {
         self.fatal("InternalError", msg)
-    }
-
-    fn label(&self, owner: DefId, name: &str) -> String {
-        if owner == usize::MAX {
-            return name.to_string();
-        }
-        format!("{}.{}", self.p.defs[owner].name, name)
     }
 
     fn members(&self, d: DefId) -> &'static [ast::ClassMember] {
@@ -379,7 +411,7 @@ impl Interp {
 
     fn lookup(&self, name: &str) -> Option<Cellv> {
         let f = self.frames.last()?;
-        for s in f.scopes.iter().rev() {
+        for s in self.scopes[f.scope_start..].iter().rev() {
             if let Some((_, c)) = s.iter().rev().find(|(n, _)| n == name) {
                 return Some(c.clone());
             }
@@ -388,29 +420,48 @@ impl Interp {
     }
 
     fn declare(&mut self, name: &str, v: Value) {
-        let c = Rc::new(RefCell::new(v));
-        self.frame().scopes.last_mut().unwrap().push((name.to_string(), c));
+        let binding = if let Some((mut stored_name, cell)) = self.spare_bindings.pop() {
+            stored_name.clear();
+            stored_name.push_str(name);
+            cell.replace(v);
+            (stored_name, cell)
+        } else {
+            (name.to_string(), Rc::new(RefCell::new(v)))
+        };
+        self.scopes.last_mut().unwrap().push(binding);
     }
 
     fn push_scope(&mut self) {
-        self.frame().scopes.push(Vec::new());
+        self.scopes.push(self.spare_scopes.pop().unwrap_or_default());
     }
 
     /// Verlässt einen Gültigkeitsbereich: Variablen in umgekehrter Reihenfolge freigeben (V-7).
     fn pop_scope(&mut self) -> R<()> {
-        let depth = self.frame().scopes.len();
+        let depth = self.scopes.len();
         let mut held = std::mem::take(&mut self.frame().locks);
         for (_, o, m) in held.iter().filter(|(d, _, _)| *d >= depth) {
             Self::release(o, *m);
         }
         held.retain(|(d, _, _)| *d < depth);
         self.frame().locks = held;
-        let vars = self.frame().scopes.pop().unwrap_or_default();
+        // Der Block ist während der Destruktoraufrufe bereits verlassen.
+        let mut vars = self.scopes.pop().unwrap();
         let mut result = Ok(());
-        for (_, c) in vars.into_iter().rev() {
+        while let Some((name, c)) = vars.pop() {
             let v = c.replace(Value::Moved);
+            // Erfasste Zellen können in einem Lambda weiterleben.
+            if Rc::strong_count(&c) == 1 && name.capacity() <= MAX_SPARE_NAME_CAPACITY
+                && self.spare_bindings.len() < MAX_SPARE_BINDINGS
+            {
+                self.spare_bindings.push((name, c));
+            }
             let d = self.drop_value(v);
             result = Self::combine(result, d);
+        }
+        if (1..=MAX_SPARE_SCOPE_CAPACITY).contains(&vars.capacity())
+            && self.spare_scopes.len() < MAX_SPARE_SCOPES
+        {
+            self.spare_scopes.push(vars);
         }
         result
     }
@@ -481,7 +532,7 @@ impl Interp {
     fn lock_scope(&mut self, e: &ast::Expr, mutable: bool) -> R<()> {
         if let Some(o) = self.shared_root(e) {
             self.acquire(&o, mutable).map_err(|f| self.at(f, e))?;
-            let depth = self.frame().scopes.len();
+            let depth = self.scopes.len();
             self.frame().locks.push((depth, o, mutable));
         }
         Ok(())
@@ -575,9 +626,9 @@ impl Interp {
             _ => None,
         });
         let Some(body) = body else { return Ok(()) };
-        let label = self.label(c, "destructor");
+        let label = FrameLabel::Member(c, "destructor");
         let file = self.p.defs[c].file;
-        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label, locks: Vec::new(), mtargs: Vec::new() })?;
+        self.enter(Frame { scope_start: self.scopes.len(), env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label, locks: Vec::new(), mtargs: Vec::new() })?;
         let r = self.block(body);
         let r = self.leave(r);
         match r {
@@ -595,6 +646,7 @@ impl Interp {
         if self.frames.len() >= MAX_DEPTH {
             return Err(self.fatal("StackOverflowError", format!("More than {MAX_DEPTH} nested calls")));
         }
+        self.push_scope();
         self.frames.push(f);
         Ok(())
     }
@@ -602,7 +654,8 @@ impl Interp {
     /// Rahmen verlassen: Parameter freigeben; `return` wird zum Ergebnis.
     fn leave(&mut self, r: R<()>) -> R<Value> {
         let mut d = Ok(());
-        while self.frames.last().is_some_and(|f| !f.scopes.is_empty()) {
+        let scope_start = self.frame().scope_start;
+        while self.scopes.len() > scope_start {
             let x = self.pop_scope();
             d = Self::combine(d, x);
         }
@@ -613,6 +666,12 @@ impl Interp {
             Err(e) => (Err(e), Value::Void),
         };
         Self::combine(r, d).map(|_| v)
+    }
+
+    fn eval_initializer(&mut self, frame: Frame, expr: &'static ast::Expr) -> R<Value> {
+        self.enter(frame)?;
+        let result = self.eval_store(expr).and_then(|value| Err(Flow::Return(value)));
+        self.leave(result)
     }
 
     // ------------------------------------------------------------ Start
@@ -633,7 +692,8 @@ impl Interp {
         };
         let argv: Vec<Value> = args.iter().map(|a| Value::Str(Rc::from(a.as_str()))).collect();
         let vec = self.new_vec(argv);
-        let frame = Frame { scopes: vec![Vec::new()], env: Vec::new(), this: None, class: None, file, label: "main".into(), locks: Vec::new(), mtargs: Vec::new() };
+        let frame = Frame { scope_start: self.scopes.len(), env: Vec::new(), this: None, class: None, file, label: FrameLabel::Bare("main"), locks: Vec::new(), mtargs: Vec::new() };
+        self.push_scope();
         self.frames.push(frame);
         self.declare(&m.args.name, Value::Obj(vec, Form::Own));
         let r = self.block(&m.body);
@@ -694,7 +754,7 @@ impl Interp {
         self.with_scope(|it| {
             for s in &b.stmts {
                 it.stmt(s)?;
-                if it.check && it.frames.len() == 1 && it.frames[0].scopes.len() == 2 {
+                if it.check && it.frames.len() == 1 && it.scopes.len() == 2 {
                     it.check_invariants()?;
                 }
             }
@@ -714,7 +774,8 @@ impl Interp {
         let mut seen_cells: HashSet<*const RefCell<Value>> = HashSet::new();
         let mut stack: Vec<(Value, String)> = Vec::new();
         for (i, f) in self.frames.iter().enumerate() {
-            for (n, c) in f.scopes.iter().flatten().chain(f.env.iter()) {
+            let end = self.frames.get(i + 1).map_or(self.scopes.len(), |next| next.scope_start);
+            for (n, c) in self.scopes[f.scope_start..end].iter().flatten().chain(f.env.iter()) {
                 if seen_cells.insert(Rc::as_ptr(c)) {
                     stack.push((c.borrow().clone(), format!("variable {n} in frame {i}")));
                 }
@@ -1138,19 +1199,15 @@ impl Interp {
 
     fn matches(&mut self, pat: &'static ast::Pattern, v: &Value) -> R<Option<Vec<(String, Value)>>> {
         match pat {
-            ast::Pattern::Literal { negative, lit } => {
-                let pv = match lit {
-                    ast::Literal::Int(s) => {
-                        let n = ty::int_value(s).unwrap_or(0);
-                        let n = if *negative { -n } else { n };
-                        return Ok(if v.as_i128() == Some(n) { Some(Vec::new()) } else { None });
+            ast::Pattern::Literal { id, .. } => {
+                let equal = match FileLiterals::get(&self.literals, (self.file(), *id)) {
+                    PreparedLiteral::PatternInt(n) => v.as_i128() == Some(*n),
+                    PreparedLiteral::Value(value) => {
+                        let value = value.clone();
+                        self.equal(v, &value)?
                     }
-                    ast::Literal::Char(s) => Value::Char(unescape(s).chars().next().unwrap_or('\0')),
-                    ast::Literal::Str(s) => Value::Str(Rc::from(unescape(s).as_str())),
-                    ast::Literal::Bool(b) => Value::Bool(*b),
-                    _ => Value::Null,
                 };
-                Ok(if self.equal(v, &pv)? { Some(Vec::new()) } else { None })
+                Ok(equal.then(Vec::new))
             }
             ast::Pattern::Name { name, bindings } => {
                 let n = match name {
@@ -1193,13 +1250,13 @@ impl Interp {
                 }
                 let this = self.frames.last().and_then(|f| f.this.clone());
                 let Some(o) = this.as_ref().and_then(Value::obj).cloned() else { return Err(self.internal(format!("{} ist unbekannt", n.name))) };
-                self.field_slot(o, &n.name)
+                self.field_slot(self.key(e), o, &n.name)
             }
             E::Member { object, name, .. } => {
                 let ov = self.eval(object)?;
                 let ov = self.temp(ov);
                 let Some(o) = ov.obj().cloned() else { return Err(self.internal(format!("kein Objekt für .{}", name.name))) };
-                self.field_slot(o, &name.name)
+                self.field_slot(self.key(e), o, &name.name)
             }
             E::Index { object, index } => {
                 let ov = self.eval(object)?;
@@ -1226,11 +1283,44 @@ impl Interp {
         }
     }
 
-    fn field_slot(&mut self, o: ORef, name: &str) -> R<Slot> {
+    fn field_index(&mut self, site: Key, class: DefId, name: &str) -> Option<usize> {
+        let (file, id) = site;
+        let id = id as usize;
+        let cached = self.fields_by_site[file].get(id).copied().flatten();
+        if let Some(field) = cached {
+            if field.class == class {
+                return field.index;
+            }
+        }
+        self.resolve_field_index(site, class, name, cached.is_some())
+    }
+
+    #[cold]
+    fn resolve_field_index(&mut self, site: Key, class: DefId, name: &str, other_class: bool) -> Option<usize> {
+        if other_class {
+            if let Some(index) = self.other_field_indices.get(&(site, class)) {
+                return *index;
+            }
+        }
+        let index = self.layout(class).index.get(name).copied();
+        if other_class {
+            self.other_field_indices.insert((site, class), index);
+        } else {
+            let (file, id) = site;
+            let id = id as usize;
+            let fields = &mut self.fields_by_site[file];
+            if id >= fields.len() {
+                fields.resize(id + 1, None);
+            }
+            fields[id] = Some(CachedField { class, index });
+        }
+        index
+    }
+
+    fn field_slot(&mut self, site: Key, o: ORef, name: &str) -> R<Slot> {
         let Some(d) = o.class else { return Err(self.internal("Feld eines Vektors")) };
-        let lay = self.layout(d);
-        match lay.index.get(name) {
-            Some(i) => Ok(Slot::Field(o, *i)),
+        match self.field_index(site, d, name) {
+            Some(i) => Ok(Slot::Field(o, i)),
             None => Err(self.internal(format!("Feld {name} fehlt"))),
         }
     }
@@ -1479,7 +1569,7 @@ impl Interp {
 
     fn eval(&mut self, e: &'static ast::Expr) -> R<Value> {
         match &e.kind {
-            E::Literal(lit) => self.literal(e, lit, false),
+            E::Literal(_) => Ok(FileLiterals::expression(&self.literals, self.key(e))),
             E::Name(n) => {
                 if let Some(c) = self.lookup(&n.name) {
                     let v = c.borrow().view();
@@ -1491,8 +1581,8 @@ impl Interp {
                 let this = self.frames.last().and_then(|f| f.this.clone());
                 if let Some(o) = this.as_ref().and_then(Value::obj).cloned() {
                     if let Some(d) = o.class {
-                        if self.layout(d).index.contains_key(&n.name) {
-                            let s = self.field_slot(o, &n.name)?;
+                        if let Some(i) = self.field_index(self.key(e), d, &n.name) {
+                            let s = Slot::Field(o, i);
                             return Ok(self.get(&s).view());
                         }
                     }
@@ -1534,7 +1624,7 @@ impl Interp {
                         let vals = self.args(args, &params)?;
                         // Typargumente mit der Belegung der umgebenden Typ-Parameter (R-7.26)
                         let targs = match self.p.rt.types.get(&self.key(e)) {
-                            Some(Ty::Named(_, a)) => {
+                            Some(Ty::Named(_, a)) if !a.is_empty() => {
                                 let map = self.tmap();
                                 a.iter().map(|t| t.subst(&map)).collect()
                             }
@@ -1619,7 +1709,7 @@ impl Interp {
                     (Value::Obj(o, _), "length") if o.class.is_none() => Ok(Value::I64(o.slots.borrow().len() as i64)),
                     (Value::Slice(_, a, b), "length") => Ok(Value::I64((b - a) as i64)),
                     (Value::Obj(o, _), _) => {
-                        let s = self.field_slot(o.clone(), &name.name)?;
+                        let s = self.field_slot(self.key(e), o.clone(), &name.name)?;
                         Ok(self.get(&s).view())
                     }
                     _ => Err(self.internal(format!("Feld {} auf diesem Wert", name.name))),
@@ -1696,46 +1786,20 @@ impl Interp {
         }
     }
 
-    fn literal(&mut self, e: &ast::Expr, lit: &ast::Literal, negative: bool) -> R<Value> {
-        let t = self.p.rt.types.get(&self.key(e)).cloned();
-        let p = t.as_ref().and_then(prim_of);
-        Ok(match lit {
-            ast::Literal::Int(s) => {
-                let v = ty::int_value(s).unwrap_or(0);
-                let v = if negative { -v } else { v };
-                make_int(v, p.unwrap_or(ty::default_int(v)))
-            }
-            ast::Literal::Float(s) => {
-                let clean: String = s.chars().filter(|&c| c != '_').collect();
-                let x: f64 = clean.parse().unwrap_or(0.0);
-                let x = if negative { -x } else { x };
-                if p == Some(P::F32) {
-                    Value::F32(if negative { -(clean.parse::<f32>().unwrap_or(0.0)) } else { clean.parse::<f32>().unwrap_or(0.0) })
-                } else {
-                    Value::F64(x)
-                }
-            }
-            ast::Literal::Str(s) => Value::Str(Rc::from(unescape(s).as_str())),
-            ast::Literal::Char(s) => Value::Char(unescape(s).chars().next().unwrap_or('\0')),
-            ast::Literal::Bool(b) => Value::Bool(*b),
-            ast::Literal::Null => Value::Null,
-        })
-    }
-
     fn static_field(&mut self, d: DefId, name: &str) -> R<Value> {
         if let Some(v) = self.statics.get(&(d, name.to_string())) {
             return Ok(v.view());
         }
-        let init = self.members(d).iter().find_map(|m| match m {
-            ast::ClassMember::Field(f) if f.is_static && f.name.name == name => f.init.as_ref(),
+        let field = self.members(d).iter().find_map(|m| match m {
+            ast::ClassMember::Field(f) if f.is_static && f.name.name == name => {
+                f.init.as_ref().map(|init| (&f.name.name, init))
+            }
             _ => None,
         });
-        let Some(init) = init else { return Err(self.internal(format!("statisches Feld {name}"))) };
+        let Some((field_name, init)) = field else { return Err(self.internal(format!("statisches Feld {name}"))) };
         let file = self.p.defs[d].file;
-        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: None, class: Some(d), file, label: self.label(d, name), locks: Vec::new(), mtargs: Vec::new() })?;
-        let r = self.eval_store(init);
-        self.frames.pop();
-        let v = r?;
+        let frame = Frame { scope_start: self.scopes.len(), env: Vec::new(), this: None, class: Some(d), file, label: FrameLabel::Member(d, field_name), locks: Vec::new(), mtargs: Vec::new() };
+        let v = self.eval_initializer(frame, init)?;
         self.statics.insert((d, name.to_string()), v.clone());
         Ok(v.view())
     }
@@ -1744,8 +1808,8 @@ impl Interp {
         match op {
             U::Not => Ok(Value::Bool(!self.eval(x)?.as_bool())),
             U::Neg => {
-                if let E::Literal(lit @ (ast::Literal::Int(_) | ast::Literal::Float(_))) = &x.kind {
-                    return self.literal(e, lit, true);
+                if matches!(&x.kind, E::Literal(ast::Literal::Int(_) | ast::Literal::Float(_))) {
+                    return Ok(FileLiterals::expression(&self.literals, self.key(e)));
                 }
                 let v = self.eval(x)?;
                 match v {
@@ -2028,7 +2092,7 @@ impl Interp {
                         match body {
                             Some((param, b)) => {
                                 let file = self.p.defs[c].file;
-                                self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(n.clone(), Form::Borrow)), class: Some(c), file, label: self.label(c, "copy"), locks: Vec::new(), mtargs: Vec::new() })?;
+                                self.enter(Frame { scope_start: self.scopes.len(), env: Vec::new(), this: Some(Value::Obj(n.clone(), Form::Borrow)), class: Some(c), file, label: FrameLabel::Member(c, "copy"), locks: Vec::new(), mtargs: Vec::new() })?;
                                 self.declare(&param.name.name, v.view());
                                 let r = self.block(b);
                                 self.leave(r)?;
@@ -2071,12 +2135,18 @@ impl Interp {
             map.insert(*p, t.clone());
         }
         let (Some(c), Some(Value::Obj(o, _))) = (f.class, &f.this) else { return map };
+        let params = &self.p.defs[c].tparams;
+        if params.is_empty() {
+            return map;
+        }
         let Some(dynamic) = o.class else { return map };
-        let st = Ty::Named(dynamic, o.targs.borrow().clone());
-        let seen = std::iter::once(st.clone()).chain(self.p.supertypes(&st)).find(|t| matches!(t, Ty::Named(x, _) if *x == c));
-        if let Some(Ty::Named(_, args)) = seen {
-            for (p, a) in self.p.defs[c].tparams.iter().zip(args) {
-                map.insert(*p, a);
+        if dynamic == c {
+            map.extend(params.iter().copied().zip(o.targs.borrow().iter().cloned()));
+        } else {
+            let st = Ty::Named(dynamic, o.targs.borrow().clone());
+            let seen = self.p.supertypes(&st).into_iter().find(|t| matches!(t, Ty::Named(x, _) if *x == c));
+            if let Some(Ty::Named(_, args)) = seen {
+                map.extend(params.iter().copied().zip(args));
             }
         }
         map
@@ -2107,10 +2177,8 @@ impl Interp {
             let Some(i) = lay.index.get(&f.name.name).copied() else { continue };
             let v = match &f.init {
                 Some(init) => {
-                    self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label: self.label(c, &f.name.name), locks: Vec::new(), mtargs: Vec::new() })?;
-                    let r = self.eval_store(init);
-                    self.frames.pop();
-                    r?
+                    let frame = Frame { scope_start: self.scopes.len(), env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label: FrameLabel::Member(c, &f.name.name), locks: Vec::new(), mtargs: Vec::new() };
+                    self.eval_initializer(frame, init)?
                 }
                 None => {
                     let fty = self.p.defs[c].fields.iter().find(|x| x.name == f.name.name).map(|x| x.ty.clone());
@@ -2134,7 +2202,7 @@ impl Interp {
             _ => None,
         });
         let file = ctor.as_ref().map(|k| k.ast.0).unwrap_or(self.p.defs[c].file);
-        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label: self.label(c, "constructor"), locks: Vec::new(), mtargs: Vec::new() })?;
+        self.enter(Frame { scope_start: self.scopes.len(), env: Vec::new(), this: Some(Value::Obj(o.clone(), Form::Borrow)), class: Some(c), file, label: FrameLabel::Member(c, "constructor"), locks: Vec::new(), mtargs: Vec::new() })?;
         if let Some(k) = &ctor {
             for (pi, v) in k.params.iter().zip(args) {
                 self.declare(&pi.name, v);
@@ -2223,13 +2291,14 @@ impl Interp {
     }
 
     fn call(&mut self, e: &'static ast::Expr, callee: &'static ast::Expr, args: &'static [ast::Arg]) -> R<Value> {
-        let Some(info) = self.p.rt.calls.get(&self.key(e)).cloned() else {
+        let key = self.key(e);
+        let Some(info) = self.p.rt.calls.get(&key) else {
             // direkt aufgerufenes Lambda
             let f = self.eval(callee)?;
             return self.call_value(f, args);
         };
-        match info.target {
-            Target::Builtin(name) => self.builtin(&name, args),
+        match &info.target {
+            Target::Builtin(name) => self.builtin(name, args),
             Target::FuncValue => {
                 let f = self.eval(callee)?;
                 self.call_value(f, args)
@@ -2239,7 +2308,7 @@ impl Interp {
                 for a in args {
                     vs.push(self.eval_store(&a.expr)?);
                 }
-                Ok(Value::Enum(d, i, vs))
+                Ok(Value::Enum(*d, *i, vs))
             }
             Target::Lock => {
                 let E::Member { object, safe, .. } = &callee.kind else { return Err(self.internal("lock")) };
@@ -2263,14 +2332,14 @@ impl Interp {
                 }
                 let recv = self.temp(recv);
                 let vals = self.args(args, &info.params)?;
-                self.builtin_method(&recv, &name, vals)
+                self.builtin_method(&recv, name, vals)
             }
             Target::BuiltinStatic(p, name) => {
                 let vals = self.args(args, &info.params)?;
-                self.builtin_static(p, &name, vals)
+                self.builtin_static(*p, name, vals)
             }
             Target::Method(m) | Target::Exact(m) => {
-                let exact = matches!(self.p.rt.calls.get(&self.key(e)).map(|c| &c.target), Some(Target::Exact(_)));
+                let virtual_site = matches!(&info.target, Target::Method(_)).then_some(key);
                 let recv = if m.is_static {
                     None
                 } else {
@@ -2293,7 +2362,7 @@ impl Interp {
                         held.push((o, m.mut_this));
                     }
                 }
-                let r = self.locked_call(args, m, recv, exact, &mut held);
+                let r = self.locked_call(args, m, recv, virtual_site, &mut held);
                 for (o, mutable) in held.iter().rev() {
                     Self::release(o, *mutable);
                 }
@@ -2303,7 +2372,14 @@ impl Interp {
         }
     }
 
-    fn locked_call(&mut self, args: &'static [ast::Arg], m: MethodInfo, recv: Option<Value>, exact: bool, held: &mut Vec<(ORef, bool)>) -> R<Value> {
+    fn locked_call(
+        &mut self,
+        args: &'static [ast::Arg],
+        m: &MethodInfo,
+        recv: Option<Value>,
+        virtual_site: Option<Key>,
+        held: &mut Vec<(ORef, bool)>,
+    ) -> R<Value> {
         // Geliehene Objektargumente sperren (R-5.9 zur Laufzeit, V-1); primitive Werte werden gelesen.
         let mut locked = Vec::new();
         for (i, (a, p)) in args.iter().zip(&m.params).enumerate() {
@@ -2318,44 +2394,50 @@ impl Interp {
         }
         self.locked_args = locked;
         let vals = self.args(args, &m.params)?;
-        let targs = m.targs.clone();
-        let mut target = match (&recv, exact) {
-            (Some(Value::Obj(o, _)), false) => o.class.and_then(|d| self.dispatch(d, &m)).unwrap_or(m),
-            _ => m,
+        let target = match (&recv, virtual_site) {
+            (Some(Value::Obj(o, _)), Some(site)) => o.class.and_then(|d| self.dispatch(site, d, m)),
+            _ => None,
         };
-        // die Fassung der Unterklasse hat dieselben Typ-Parameter; die Typargumente des Aufrufs gelten weiter
-        if target.targs.is_empty() && target.tparams.len() == targs.len() {
-            target.targs = targs;
-        }
-        self.call_method(&target, recv.map(|r| r.view()), vals)
+        self.call_method(target.as_deref().unwrap_or(m), recv.map(|r| r.view()), vals)
     }
 
     /// Fassung der Methode in der Klasse des Objekts (virtueller Aufruf, R-7.13, R-7.22).
-    fn dispatch(&self, d: DefId, m: &MethodInfo) -> Option<MethodInfo> {
-        self.p.methods_of(&Ty::Named(d, Vec::new()), &m.name).into_iter().find(|c| {
-            c.has_body
-                && c.params.len() == m.params.len()
-                && c.params.iter().zip(&m.params).all(|(a, b)| a.mode == b.mode && (a.ty.unformed() == b.ty.unformed() || a.ty.mentions_param() || b.ty.mentions_param()))
-        })
+    fn dispatch(&mut self, site: Key, d: DefId, m: &MethodInfo) -> Option<Rc<MethodInfo>> {
+        self.virtual_methods.entry((site, d)).or_insert_with(|| {
+            let mut target = self.p.methods_of(&Ty::Named(d, Vec::new()), &m.name).into_iter().find(|c| {
+                c.has_body
+                    && c.params.len() == m.params.len()
+                    && c.params.iter().zip(&m.params).all(|(a, b)| a.mode == b.mode && (a.ty.unformed() == b.ty.unformed() || a.ty.mentions_param() || b.ty.mentions_param()))
+            })?;
+            // Die statischen Typargumente des Aufrufs gelten auch für den gewählten Rumpf.
+            if target.targs.is_empty() && target.tparams.len() == m.targs.len() {
+                target.targs.clone_from(&m.targs);
+            }
+            Some(Rc::new(target))
+        }).clone()
     }
 
     fn call_method(&mut self, m: &MethodInfo, this: Option<Value>, args: Vec<Value>) -> R<Value> {
-        if let Some(v) = this.clone().filter(|v| prim_of_value(v).is_some()) {
-            if let Some(r) = self.prim_mixin(&m.name, &v, &args) {
+        if let Some(v) = this.as_ref().filter(|v| prim_of_value(v).is_some()) {
+            if let Some(r) = self.prim_mixin(&m.name, v, &args) {
                 return r;
             }
-        }
-        if let Some(n) = self.native_name(m) {
-            return self.native(&n, m, this, args);
         }
         let Some(ast::ClassMember::Method(md)) = self.member_at(m.ast) else {
             return Err(self.internal(format!("Methode {} ohne Rumpf", m.name)));
         };
+        if let Some(n) = self.native_name(m, md) {
+            return self.native(&n, m, this, args);
+        }
         let Some(body) = &md.body else { return Err(self.internal(format!("Methode {} ohne Rumpf", m.name))) };
         // Typargumente einer generischen Methode, gesehen vom Aufrufer (R-7.26)
-        let outer = self.tmap();
-        let mtargs: Vec<(usize, Ty)> = m.tparams.iter().zip(&m.targs).map(|(p, t)| (*p, t.subst(&outer))).collect();
-        self.enter(Frame { scopes: vec![Vec::new()], env: Vec::new(), this, class: Some(m.owner).filter(|o| *o != usize::MAX), file: m.ast.0, label: self.label(m.owner, &m.name), locks: Vec::new(), mtargs })?;
+        let mtargs = if m.targs.is_empty() || m.tparams.is_empty() {
+            Vec::new()
+        } else {
+            let outer = self.tmap();
+            m.tparams.iter().zip(&m.targs).map(|(p, t)| (*p, t.subst(&outer))).collect()
+        };
+        self.enter(Frame { scope_start: self.scopes.len(), env: Vec::new(), this, class: Some(m.owner).filter(|o| *o != usize::MAX), file: m.ast.0, label: FrameLabel::Member(m.owner, &md.name.name), locks: Vec::new(), mtargs })?;
         for (p, v) in m.params.iter().zip(args) {
             self.declare(&p.name, v);
         }
@@ -2395,7 +2477,7 @@ impl Interp {
         } else {
             let f = self.frames.last().unwrap();
             let mut env = f.env.clone();
-            for s in &f.scopes {
+            for s in &self.scopes[f.scope_start..] {
                 env.extend(s.iter().cloned());
             }
             env
@@ -2425,7 +2507,7 @@ impl Interp {
     }
 
     fn call_closure(&mut self, c: &Rc<Closure>, vals: Vec<Value>) -> R<Value> {
-        self.enter(Frame { scopes: vec![Vec::new()], env: c.env.clone(), this: c.this.clone(), class: c.class, file: c.file, label: "Lambda".into(), locks: Vec::new(), mtargs: c.mtargs.clone() })?;
+        self.enter(Frame { scope_start: self.scopes.len(), env: c.env.clone(), this: c.this.clone(), class: c.class, file: c.file, label: FrameLabel::Bare("Lambda"), locks: Vec::new(), mtargs: c.mtargs.clone() })?;
         for ((n, _), v) in c.params.iter().zip(vals) {
             self.declare(n, v);
         }

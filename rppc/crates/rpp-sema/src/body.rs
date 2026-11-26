@@ -1688,7 +1688,7 @@ impl<'p> Checker<'p> {
     /// Prüft eine Case-Marke und liefert ihren Schlüssel für die Prüfung auf Doppelte.
     fn pattern(&mut self, pat: &ast::Pattern, st: &Ty, enum_def: Option<DefId>) -> Option<String> {
         match pat {
-            ast::Pattern::Literal { negative, lit } => {
+            ast::Pattern::Literal { negative, lit, .. } => {
                 let lt = match lit {
                     ast::Literal::Int(_) if st.is_integer() => st.clone(),
                     ast::Literal::Int(_) => Ty::Prim(P::I32),
