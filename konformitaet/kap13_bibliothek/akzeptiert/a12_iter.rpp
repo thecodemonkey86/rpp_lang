@@ -1,0 +1,13 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.42
+using rpp.iter.Iter;
+
+i32 main(string[] args) {
+    // Lazy map: jedes Element wird verdoppelt.
+    for (i32 x : Iter::map([1, 2, 3, 4, 5], (i32 v) => v * 2)) { print(x.toString()); }
+    // Lazy filter: Elemente großer 2.
+    for (i32 x : Iter::filter([1, 2, 3, 4, 5], (i32 v) => v > 2)) { print(x.toString()); }
+    // Lazy take: höchstens drei Elemente.
+    for (i32 x : Iter::take([1, 2, 3, 4, 5], 3)) { print(x.toString()); }
+    return 0;
+}

@@ -374,6 +374,59 @@ Neue Tests: `a09_text`, `l28_text_lines`, `l29_text_hilfen`, `l30_text_split_lim
 
 `copy` ist ein Schlüsselwort (Kapitel 7), deshalb `copyFile`/`moveFile`. Neue Tests: `a10_io`, `l33_io_datei_ops` (alle Operationen im frischen Arbeitsverzeichnis, V-14.3), `l34_io_fehler` (`IOException` bei fehlender Datei). `rppc test ..`: alle 289 Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Gegenprobe mit dem Compiler in R++: `diagnose` meldet für `Io.rpp` und die drei neuen Tests auf beiden Seiten dasselbe. Offen bleiben gepuffertes Lesen und Mtime (letzteres braucht `rpp.time`, Phase B).
 
+**Ausbau: Elementare Vektor-Algorithmen (25.11.2026).** `rppc/std/rpp/collections/Vectors.rpp` (reiner R++-Quelltext, V-13.10) ergänzt `rpp.collections` um die elementaren Algorithmen: `count<T : Equatable<T>>(Slice<T> s, T x)` (Anzahl der Vorkommen, R-13.38) und `any<T>(Slice<T> s, Func<T, bool> predicate)`, `all<T>(…)` sowie `none<T>(…)` (Prädikate, R-13.39). Porte: C++ `<algorithm>` (`count`, `any_of`, `all_of`, `none_of`), Rust `iter().filter(..).count()` bzw. `Iterator`, Python `list.count`.
+
+| Teil | Inhalt |
+|---|---|
+| `count` | Zählt über den Slice; leerer Slice ergibt `0`; `Equatable` nötig (R-13.38, R-7.26). |
+| `any`/`all`/`none` | Prädikat über den Slice; `any` beendet sich beim ersten Treffer, `all` bei erstem Gegenbeispiel. Leere Slice: `any` → `false`, `all` → `true`, `none` → `true`. |
+
+Neue Tests: `a07_vectors` (erweitert um `count`, `any`, `all`, `none`), `l35_vectors_algorithmen`, `n09_vectors_ohne_Equatable` (R-7.26, Constraint-Check wie bei `binarySearch` ohne `Comparable`). `rppc test ..`: alle Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler. Offen bleibt die Lazy-Sicht `zip`/`windowed`/`chunked` (Phase A, Roadmap).
+
+**Ausbau: rpp.math – Transzendente (26.11.2026).** `rppc/std/rpp/math/Math.rpp` (reiner R++-Quelltext, V-13.9; Muster `sqrt`, V-13.11) ergänzt `rpp.math` um die Transzendente `pow`, `exp`, `log`, `sin`, `cos` und `tan` als eingebaut (`fail("eingebaut")`, Dispatch in `stdlib.rs` über `rpp.math.Math`). Ergebnisse plattformabhängig und nicht bitgleich; innerhalb einer Plattform deterministisch, beide Modi gleich.
+
+| Teil | Inhalt |
+|---|---|
+| `pow(x, y)` | `x.powf(y)` |
+| `exp(x)` | `x.exp()` |
+| `log(x)` | `x.ln()` |
+| `sin(x)`, `cos(x)`, `tan(x)` | Native Sin/Cos/Tan |
+
+Neue Tests: `a08_math` (erweitert um `pow`, `exp`, `log`, `sin`, `cos`, `tan`), `l36_math_transzendenten` (Werte wie `exp(0) = 1`, `log(1) = 0`, `sin`/`cos`/`tan(0)`, `pow(2, 10) = 1024`). `rppc test ..`: alle Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler.
+
+**Ausbau: rpp.math – Transzendente Ergänzungen (26.11.2026).** `rppc/std/rpp/math/Math.rpp` ergänzt `rpp.math` um die Transzendenten `log10`, `hypot`, `atan2`, `sinh`, `cosh` und `tanh` (eingebaut, Dispatch in `stdlib.rs`, wie bei `pow`/`exp`/`log`/`sin`/`cos`/`tan`, R-13.41) sowie die Umrechnungen `toDegrees`/`toRadians` (reiner R++-Quelltext, Arithmetik über `Math::PI`).
+
+| Teil | Inhalt |
+|---|---|
+| `log10(x)` | `x.log10()` |
+| `hypot(x, y)` | `x.hypot(y)` |
+| `atan2(y, x)` | `y.atan2(x)` |
+| `sinh(x)`, `cosh(x)`, `tanh(x)` | Native Hyperbolische Funktionen |
+
+Neue Tests: `a08_math` (erweitert um `log10`, `hypot`, `atan2`, `toDegrees`, `toRadians`, `sinh`, `cosh`, `tanh`), `l46_math_transzendenten_ergaenzungen` (Werte wie `log10(1000) = 3`, `hypot(3, 4) = 5`, `atan2(1, 0) = π/2`, `toRadians(180) = π`, `toDegrees(π) = 180`, `sinh`/`cosh`/`tanh(0)`).
+
+**Ausbau: Text-Hilfen (26.11.2026).** `rppc/std/rpp/text/Text.rpp` (reiner R++-Quelltext, V-13.10) ergänzt `rpp.text` um die Text-Hilfen: `isBlank` (über das Builtin `trim`), `substringBefore`/`substringAfter` (über `splitLimit` mit `limit = 2`) sowie `capitalize`, `toUpperCase` und `toLowerCase` (über `substring` und die Builtins `toUpper`/`toLower`). Porte: C#/.NET `IsNullOrWhiteSpace`, Java/Kotlin `substringBefore`/`substringAfter`, Kotlin/Rust `capitalize`, `toUpperCase`/`toLowerCase`.
+
+| Methode | Inhalt |
+|---|---|
+| `isBlank(s)` | `true`, wenn s leer oder nur Whitespace; über `trim`, leerer Ergebnis → `true`. |
+| `substringBefore(s, delimiter)` | Teil vor dem ersten Vorkommen; nicht gefunden → s unverändert. |
+| `substringAfter(s, delimiter)` | Teil nach dem ersten Vorkommen; nicht gefunden → leer. |
+| `capitalize(s)` | Erster Buchstabe groß, Rest klein; `capitalize("")` → `""`. |
+| `toUpperCase(s)` / `toLowerCase(s)` | Gesamte s in Groß-/Kleinschreibung. |
+
+Neue Tests: `a09_text` (erweitert um `isBlank`, `substringBefore`, `substringAfter`, `toUpperCase`, `toLowerCase`, `capitalize`), `l45_text_hilfen` (Laufzeit). `rppc test ..`: alle Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler.
+
+**Ausbau: rpp.iter – Lazy Iteratoren (26.11.2026).** `rppc/std/rpp/iter/Iter.rpp` (reiner R++-Quelltext, V-13.10, Muster von `Vectors`) ergänzt `rpp.iter` um die Lazy-Operationen: `map`, `filter` und `take` über `Slice<T>`. Porte: Rust `Iterator`, Kotlin Sequence, C++20 ranges.
+
+| Methode | Inhalt |
+|---|---|
+| `map(source, f)` | neues Element pro Quellelement unter `f`; Reihenfolge und Länge bleiben. |
+| `filter(source, p)` | behält die Elemente, für die `p` wahr ist. |
+| `take(source, n)` | liefert die ersten `n` Elemente. |
+
+Neue Tests: `a12_iter`, `l47_iter_lazy` (map, filter, take, flatMap, chain). `rppc test ..`: alle Konformitätstests bestehen, die Laufzeittests in beiden Modi und im Prüfmodus; `cargo test` ohne Fehler.
+
 **Merge des Bibliotheksausbaus und C-Laufzeit nachgezogen (23.11.2026).** Der Ausbau der Standardbibliothek (oben, Zweig `temp_merge`) ist mit M6 zusammengeführt; die neuen Teile verwenden `mut` statt `&`. V-13.9 war doppelt vergeben, die Regel zum Text von `IOException` heißt jetzt V-13.12. Die C-Laufzeit (`rpp_rt.c`) kennt jetzt alle neuen eingebauten Teile wie `stdlib.rs`:
 
 | Teil | Umsetzung in C |

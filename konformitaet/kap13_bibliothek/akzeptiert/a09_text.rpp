@@ -1,5 +1,5 @@
 // Konformitätstest Kapitel 13 – muss übersetzt werden.
-// Regel: R-13.30
+// Regel: R-13.30, R-13.40
 using rpp.text.Text;
 
 i32 main(string[] args) {
@@ -11,5 +11,13 @@ i32 main(string[] args) {
     print(p + s + r);
     print(l.length.toString());
     print(parts.length.toString());
+
+    // Neue Text-Hilfen (R-13.40).
+    print(Text::isBlank("  ").toString());
+    print(Text::substringBefore("hello world", " "));
+    print(Text::substringAfter("hello world", " "));
+    print(Text::toUpperCase("abc"));
+    print(Text::toLowerCase("ABC"));
+    print(Text::capitalize("hELLO"));
     return 0;
 }

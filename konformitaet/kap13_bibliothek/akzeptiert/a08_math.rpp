@@ -1,5 +1,5 @@
 // Konformitätstest Kapitel 13 – muss übersetzt werden.
-// Regel: R-13.28, R-13.29
+// Regel: R-13.28, R-13.29, R-13.37, R-13.41
 using rpp.math.Math;
 
 i32 main(string[] args) {
@@ -9,8 +9,24 @@ i32 main(string[] args) {
     f64 d = Math::trunc(-2.9);
     f64 e = Math::round(2.5);
     f64 f = Math::clamp(5.0, 0.0, 3.0);
+    f64 g = Math::pow(2.0, 10.0);
+    f64 h = Math::exp(0.0);
+    f64 i = Math::log(1.0);
+    f64 j = Math::sin(0.0);
+    f64 k = Math::cos(0.0);
+    f64 l = Math::tan(0.0);
     f64 p = Math::PI;
     f64 q = Math::E;
-    print((a + b + c + d + e + f + p + q).toString());
+    print((a + b + c + d + e + f + g + h + i + j + k + l + p + q).toString());
+
+    // Transzendente Ergänzungen (R-13.41).
+    print(Math::log10(1000.0).toString());
+    print(Math::hypot(3.0, 4.0).toString());
+    print(Math::atan2(1.0, 0.0).toString());
+    print(Math::toDegrees(Math::PI).toString());
+    print(Math::toRadians(180.0).toString());
+    print(Math::sinh(0.0).toString());
+    print(Math::cosh(0.0).toString());
+    print(Math::tanh(0.0).toString());
     return 0;
 }

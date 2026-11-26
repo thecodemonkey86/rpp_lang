@@ -1,0 +1,26 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.41
+// Erwartet: Ausgabe "3\n5\n1.5707963267948966\n3.141592653589793\n180\n0\n1\n0"; Exit-Code 0
+using rpp.math.Math;
+
+i32 main(string[] args) {
+    // log10(1000) = 3.
+    print(Math::log10(1000.0).toString());
+
+    // hypot(3, 4) = 5.
+    print(Math::hypot(3.0, 4.0).toString());
+
+    // atan2(1, 0) = PI/2.
+    print(Math::atan2(1.0, 0.0).toString());
+
+    // toRadians(180) = PI, toDegrees(PI) = 180.
+    print(Math::toRadians(180.0).toString());
+    print(Math::toDegrees(Math::PI).toString());
+
+    // sinh(0) = 0, cosh(0) = 1, tanh(0) = 0.
+    print(Math::sinh(0.0).toString());
+    print(Math::cosh(0.0).toString());
+    print(Math::tanh(0.0).toString());
+
+    return 0;
+}

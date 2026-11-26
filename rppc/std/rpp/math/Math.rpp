@@ -1,6 +1,8 @@
-// Standardbibliothek: rpp.math (Kapitel 13, R-13.28, R-13.29)
+// Standardbibliothek: rpp.math (Kapitel 13, R-13.28, R-13.29, R-13.37, R-13.41)
 // Reiner R++-Quelltext für Runden und clamp (V-13.9); sqrt ist eingebaut
-// (korrekt gerundet nach IEEE 754, wie Fmt::fixed). Beide Modi laufen gleich.
+// (korrekt gerundet nach IEEE 754, wie Fmt::fixed). Transzendente folgen dem
+// Muster von sqrt: eingebaut, da sie plattformabhängig sind und nicht
+// bitgleich (V-13.11); beide Modi laufen gleich. Beide Modi laufen gleich.
 package rpp.math;
 
 export class Math {
@@ -50,6 +52,52 @@ public:
         if (x > hi) { return hi; }
         return x;
     }
+
+    // Umrechnung Grad nach Radiant; reine Arithmetik.
+    static f64 toDegrees(f64 x) {
+        return x * 180.0 / Math::PI;
+    }
+
+    // Umrechnung Radiant nach Grad; reine Arithmetik.
+    static f64 toRadians(f64 x) {
+        return x * Math::PI / 180.0;
+    }
+
+    // Exponentiation x^y; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 pow(f64 x, f64 y) { fail("eingebaut"); }
+
+    // Exponentialfunktion e^x; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 exp(f64 x) { fail("eingebaut"); }
+
+    // Natürliche Logarithmus; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 log(f64 x) { fail("eingebaut"); }
+
+    // Sinus; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 sin(f64 x) { fail("eingebaut"); }
+
+    // Kosinus; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 cos(f64 x) { fail("eingebaut"); }
+
+    // Tangens; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 tan(f64 x) { fail("eingebaut"); }
+
+    // Logarithmus base 10; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 log10(f64 x) { fail("eingebaut"); }
+
+    // Hypotenuse; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 hypot(f64 x, f64 y) { fail("eingebaut"); }
+
+    // Arkustangensinus atan2(y, x); plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 atan2(f64 y, f64 x) { fail("eingebaut"); }
+
+    // Sinus hyperbolicus; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 sinh(f64 x) { fail("eingebaut"); }
+
+    // Kosinus hyperbolicus; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 cosh(f64 x) { fail("eingebaut"); }
+
+    // Tangens hyperbolicus; plattformabhängig, nicht bitgleich (V-13.11).
+    static f64 tanh(f64 x) { fail("eingebaut"); }
 
 private:
     // x bleibt unverändert: NaN, ±0.0 oder |x| >= 2^52. Ab 2^52 ist jeder

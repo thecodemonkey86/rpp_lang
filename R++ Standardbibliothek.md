@@ -321,9 +321,9 @@ Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. 
 | A | `rpp.collections` (Ausbau) | `Vectors` (Abschnitt 11), `Deque` und `Map.getOrPut` (Abschnitt 15), **festgelegt**; offen: Sichten (`chunked`, `windowed`, `zip`) | Rust `Vec`, Go `slices`, C++ `<algorithm>`, Kotlin, Python |
 | A | `rpp.math` | `sqrt`, `floor`/`ceil`/`trunc`/`round`, `clamp`, `PI`/`E` (Abschnitt 12, **festgelegt**); offen: `pow`, `exp`, `log`, `sin`, `cos` (plattformabhängig) | Rust `f64`, Java `Math` |
 | A | `rpp.random` | seedbarer Zufall, `shuffle` (Abschnitt 10, **festgelegt**) | Rust `rand`, Go `math/rand` |
-| A | `rpp.text` (Ausbau) | `Text`: `lines`, `removePrefix`/`removeSuffix`, `repeat`, `splitLimit` (Abschnitt 13, **festgelegt**) | Kotlin, Python |
+| A | `rpp.text` (Ausbau) | `Text`: `lines`, `removePrefix`/`removeSuffix`, `repeat`, `splitLimit`, `isBlank`, `substringBefore`/`substringAfter`, `capitalize`, `toUpperCase`/`toLowerCase` (Abschnitt 13, **festgelegt**) | Kotlin, Python, Java, C# |
 | A | `rpp.io` (Ausbau) | Datei-Operationen und gepuffertes Lesen mit `TextReader` (Abschnitt 14, **festgelegt**). Offen ist die Änderungszeit (braucht `rpp.time`). | Java `BufferedReader`, Go `os` |
-| B | `rpp.iter` | lazy `map`/`filter`/`take`/`flatMap`/`chain` über dem Cursor-Protokoll | Rust Iterator, Kotlin Sequence, C++20 ranges |
+| B | `rpp.iter` | `map`, `filter`, `take` über `Slice<T>` (Abschnitt 13, **festgelegt**); offen: `flatMap`, `chain` | Rust Iterator, Kotlin Sequence, C++20 ranges |
 | B | `rpp.regex` | lineare Zeit, kein katastrophales Backtracking | RE2 (Go) |
 | B | `rpp.json` | Typisierter Baum, `parse` und `stringify`, Parsefehler mit Zeile und Spalte (Abschnitt 16, **festgelegt**). Offen bleibt der Pull-Parser. | Go `encoding/json`, Rust `serde_json` |
 | B | `rpp.time` | `Duration`, monotone `Instant` (Ausbau von `ElapsedTimer`) | Rust `std::time`, Java `java.time` |
@@ -435,6 +435,12 @@ Alle drei arbeiten über `remove`/`insert` (R-13.16): Aus Elementen wird nicht h
 
 Die Constraints werden am Aufruf geprüft (R-7.26). `binarySearch`, `lowerBound` und `upperBound` verlangen `Comparable`, `equals` und `dedup` verlangen `Equatable`.
 
+**R-13.37 (Transzendente).** `Math.pow(f64 x, f64 y)`, `Math.exp(f64 x)`, `Math.log(f64 x)`, `Math.sin(f64 x)`, `Math.cos(f64 x)` und `Math.tan(f64 x)` liegen als eingebaut vor (`fail("eingebaut")`, Dispatch in `stdlib.rs` über `rpp.math.Math`); die Ergebnisse sind plattformabhängig und nicht bitgleich, innerhalb einer Plattform deterministisch; beide Modi laufen gleich.
+
+**R-13.38 (Zählen).** `Vectors.count<T : Equatable<T>>(Slice<T> s, T x)` liefert die Anzahl der Vorkommen von `x` in `s`; ein leerer Slice ergibt `0`. Voraussetzung: `T : Equatable<T>` (R-7.26).
+
+**R-13.39 (Prädikate).** `Vectors.any<T>(Slice<T> s, Func<T, bool> predicate)`, `Vectors.all<T>(…)` und `Vectors.none<T>(…)` prüfen einen Slice auf ein Prädikat; `any` beendet sich beim ersten wahren Ergebnis, `all` liefert das Urteil über alle Elemente. Für einen leeren Slice: `any` → `false`, `all` → `true`, `none` → `true`.
+
 ## 12. rpp.math
 
 Gleitkomma-Hilfen für `f64`, eingebunden mit `using rpp.math.Math;`. Die Rundungs- und Begrenzungsfunktionen sind reiner R++-Quelltext, `sqrt` ist eingebaut (V-13.11). Alle Funktionen verhalten sich in beiden Modi gleich (V-13.9). `abs`, `min` und `max` gibt es bereits als Methoden der Zahltypen (R-13.11) und werden hier nicht wiederholt.
@@ -469,7 +475,7 @@ Die Rundungsfunktionen liefern exakte ganzzahlige Werte. Für alle gilt: NaN ble
 
 **R-13.29 (clamp).** `clamp(x, lo, hi)` begrenzt x auf das Intervall `[lo, hi]`: kleiner als lo → lo, größer als hi → hi, sonst x. `lo <= hi` wird verlangt; `lo > hi` ist ein Programmfehler (`FailError`). Ist x NaN, bleibt das Ergebnis NaN.
 
-Transzendente Funktionen (`pow`, `exp`, `log`, `sin`, `cos`, `tan`) sind noch nicht festgelegt; sie folgen mit einer späteren Version (Abschnitt 9). Ihr Ergebnis ist plattformabhängig und nicht bitgleich.
+Transzendente Funktionen (`pow`, `exp`, `log`, `sin`, `cos`, `tan`) sind mit R-13.37 festgelegt (Abschnitt 12); das Ergebnis ist plattformabhängig und nicht bitgleich.
 
 ## 13. rpp.text: Text-Hilfen (Ausbau)
 
@@ -497,6 +503,81 @@ public:
 | `splitLimit(s, sep, limit)` | teilt s an sep in höchstens limit Teile; der letzte Teil enthält den ungeteilten Rest. `limit >= 1` und ein nicht leerer sep werden verlangt, sonst Programmfehler (`FailError`). `limit = 1` ergibt `[s]`; ist die Teilzahl kleiner als limit, werden alle Teile geliefert. Leere Teile bleiben erhalten. |
 
 `lines` und `splitLimit` liefern neue Vektoren; die übrigen Methoden geben unveränderliche Strings zurück (Strings sind implizit geteilt, R-4.18).
+
+**R-13.40 (Text-Hilfen).**
+
+```
+export class Text {
+public:
+    static bool isBlank(string s);
+    static string substringBefore(string s, string delimiter);
+    static string substringAfter(string s, string delimiter);
+    static string capitalize(string s);
+    static string toUpperCase(string s);
+    static string toLowerCase(string s);
+}
+```
+
+| Methode | Verhalten |
+|---|---|
+| `isBlank(s)` | liefert `true`, wenn s leer ist oder nur aus Whitespace besteht; sonst `false`. |
+| `substringBefore(s, delimiter)` | liefert den Teil von s vor dem ersten Vorkommen von delimiter; fehlt delimiter, bleibt s unverändert. |
+| `substringAfter(s, delimiter)` | liefert den Teil von s nach dem ersten Vorkommen von delimiter; fehlt delimiter, ist der Teil leer. |
+| `capitalize(s)` | liefert s mit erstem Buchstaben groß und dem Rest klein; bei leerem s bleibt s leer. |
+| `toUpperCase(s)` | liefert s in Großbuchstaben. |
+| `toLowerCase(s)` | liefert s in Kleinbuchstaben. |
+
+`substringBefore` und `substringAfter` sind über `splitLimit` mit `limit = 2` realisiert; ein leerer delimiter oder `limit < 1` ist wie bei `splitLimit` ein Programmfehler (`FailError`). `isBlank` prüft über `trim`.
+
+**R-13.41 (Math-Ergänzungen).**
+
+```
+export class Math {
+public:
+    static f64 log10(f64 x);
+    static f64 hypot(f64 x, f64 y);
+    static f64 atan2(f64 y, f64 x);
+    static f64 sinh(f64 x);
+    static f64 cosh(f64 x);
+    static f64 tanh(f64 x);
+    static f64 toDegrees(f64 x);
+    static f64 toRadians(f64 x);
+}
+```
+
+| Methode | Verhalten |
+|---|---|
+| `log10(x)` | Logarithmus zur Basis 10; plattformabhängig, nicht bitgleich (R-13.37). |
+| `hypot(x, y)` | Länge der Hypotenuse; plattformabhängig, nicht bitgleich. |
+| `atan2(y, x)` | Arkustangensinus; plattformabhängig, nicht bitgleich. |
+| `sinh(x)`, `cosh(x)`, `tanh(x)` | Hyperbolische Funktionen; plattformabhängig, nicht bitgleich. |
+| `toDegrees(x)` | Umrechnung Grad → Radiant: `x * 180 / PI`. |
+| `toRadians(x)` | Umrechnung Radiant → Grad: `x * PI / 180`. |
+
+Die Transzendenten (`log10`, `hypot`, `atan2`, `sinh`, `cosh`, `tanh`) liegen als eingebaut vor (`fail("eingebaut")`, Dispatch in `stdlib.rs` über `rpp.math.Math`); `toDegrees` und `toRadians` sind reiner R++-Quelltext (Arithmetik über `Math::PI`).
+
+**R-13.42 (Lazy Iteratoren).**
+
+```
+export class Iter {
+public:
+    static T[] map<T>(Slice<T> source, Func<T, T> f);
+    static T[] filter<T>(Slice<T> source, Func<T, bool> p);
+    static T[] take<T>(Slice<T> source, i64 n);
+    static T[] flatMap<T>(Slice<T> source, Func<T, T[]> f);
+    static T[] chain<T>(Slice<T> source, Slice<T> second);
+}
+```
+
+| Methode | Verhalten |
+|---|---|
+| `map(source, f)` | liefert ein neues Element pro Quellelement unter `f`; Reihenfolge und Länge bleiben erhalten. |
+| `filter(source, p)` | liefert die Quellelemente, für die `p` wahr ist. |
+| `take(source, n)` | liefert die ersten `n` Quellelemente (n übersteigt die Länge nicht). |
+| `flatMap(source, f)` | konkateniert die Folge jedes Elements (`f` liefert ein Array); Länge ergibt sich aus den Teilmengen. |
+| `chain(source, second)` | Quelle gefolgt von `second`; die Elemente beider Quellen in Reihenfolge. |
+
+Porte: Rust `Iterator`, Kotlin Sequence, C++20 ranges.
 
 ## 14. rpp.io: Datei-Operationen (Ausbau)
 

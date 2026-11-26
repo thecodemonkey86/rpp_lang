@@ -506,6 +506,57 @@ impl Interp {
                 let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
                 Ok(Value::F64(x.sqrt()))
             }
+            "rpp.math.Math.pow" => {
+                let x = args.get(0).and_then(Value::as_f64).unwrap_or(0.0);
+                let y = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.powf(y)))
+            }
+            "rpp.math.Math.exp" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.exp()))
+            }
+            "rpp.math.Math.log" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.ln()))
+            }
+            "rpp.math.Math.sin" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.sin()))
+            }
+            "rpp.math.Math.cos" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.cos()))
+            }
+            "rpp.math.Math.tan" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.tan()))
+            }
+            "rpp.math.Math.log10" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.log10()))
+            }
+            "rpp.math.Math.hypot" => {
+                let x = args.get(0).and_then(Value::as_f64).unwrap_or(0.0);
+                let y = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.hypot(y)))
+            }
+            "rpp.math.Math.atan2" => {
+                let y = args.get(0).and_then(Value::as_f64).unwrap_or(0.0);
+                let x = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(y.atan2(x)))
+            }
+            "rpp.math.Math.sinh" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.sinh()))
+            }
+            "rpp.math.Math.cosh" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.cosh()))
+            }
+            "rpp.math.Math.tanh" => {
+                let x = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Value::F64(x.tanh()))
+            }
             // ---------------------------------------------------------------- rpp.text
             "rpp.text.StringBuilder.length" => Ok(Value::I64(o.as_ref().map(|o| Self::sb_text(o).chars().count()).unwrap_or(0) as i64)),
             "rpp.text.StringBuilder.toString" => Ok(str_value(o.as_ref().map(Self::sb_text).unwrap_or_default())),

@@ -374,6 +374,13 @@ Entschieden am 23.11.2026; Einzelheiten in „R++ Standardbibliothek“, Abschni
 - [E] R-13.32: `Deque<T>` (reiner R++-Quelltext, vektorbasiert, `Iterable<T, i64>`) mit `pushFront`/`pushBack`, `popFront`/`popBack` (leer → `IndexError`), `front`/`back` (`ref T?`), `length`/`isEmpty`/`clear`. Operationen am Anfang sind linear; ein Ringpuffer wäre eine spätere eingebaute Variante.
 - [E] R-13.33: `Map.getOrPut(own K key, Func<V> factory)` liefert `ref mut V`; fehlt der Schlüssel, wird `factory()` eingesetzt (nur dann aufgerufen). Eingebaut, damit auch `own`-Schlüssel gehen (eine reine R++-Fassung müsste den verschobenen Schlüssel nach `put` erneut verwenden).
 
+- [E] V-13.37 (angenommen am 26.11.2026): `Math.pow`, `Math.exp`, `Math.log`, `Math.sin`, `Math.cos` und `Math.tan` als eingebaut (`fail("eingebaut")`, Dispatch in `stdlib.rs`); Ergebnisse plattformabhängig, nicht bitgleich; innerhalb einer Plattform deterministisch, beide Modi gleich.
+- [E] V-13.38 (angenommen am 26.11.2026): `Vectors.count<T : Equatable<T>>(Slice<T> s, T x)` als statische generische Methode der Hilfsklasse `Vectors`; zählt die Vorkommen von `x`, leerer Slice ergibt `0`.
+- [E] V-13.39 (angenommen am 26.11.2026): `Vectors.any<T>(Slice<T> s, Func<T, bool> predicate)`, `Vectors.all<T>(…)` und `Vectors.none<T>(…)` als statische generische Methoden; Prädikate über den Slice, leere Slice: `any` → `false`, `all` → `true`, `none` → `true`.
+- [E] V-13.40 (angenommen am 26.11.2026): `rpp.text.Text` ergänzt die Text-Hilfen um `isBlank` (über `trim`), `substringBefore`/`substringAfter` (über `splitLimit` mit `limit = 2`) sowie `capitalize`, `toUpperCase` und `toLowerCase` (über `substring` und die Builtins `toUpper`/`toLower`); reiner R++-Quelltext, V-13.10, Muster `Fmt`.
+- [E] V-13.41 (angenommen am 26.11.2026): `rpp.math.Math` ergänzt um die Transzendenten `log10`, `hypot`, `atan2`, `sinh`, `cosh` und `tanh` (eingebaut, Dispatch in `stdlib.rs`, plattformabhängig, nicht bitgleich, V-13.11) sowie die Umrechnungen `toDegrees`/`toRadians` (reiner R++-Quelltext, Arithmetik über `Math::PI`).
+- [E] V-13.42 (angenommen am 26.11.2026): `rpp.iter.Iter` (reiner R++-Quelltext, V-13.10, Muster von `Vectors`) ergänzt `rpp.iter` um die Lazy-Operationen `map`, `filter`, `take`, `flatMap` und `chain` über `Slice<T>`; Porte: Rust `Iterator`, Kotlin Sequence, C++20 ranges.
+
 ## 25. Festlegungen aus Kapitel 1, 11, 12 und 14
 
 Entschieden am 21.11.2026; Einzelheiten in „R++ Einleitung“, „R++ Pakete und Projekte“, „R++ Ausführungsmodell“ und „R++ Konformitätstests“.

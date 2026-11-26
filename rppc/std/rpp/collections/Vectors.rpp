@@ -55,6 +55,41 @@ public:
         return null;
     }
 
+    // Anzahl der Vorkommen von x in s; leerer Slice ergibt 0. (R-13.38)
+    // Port aus C++ count, Rust iter().filter(..).count(), Python list.count.
+    static i64 count<T : Equatable<T>>(Slice<T> s, T x) {
+        i64 n = 0;
+        for (i64 i = 0; i < s.length; i++) {
+            if (s[i] == x) { n = n + 1; }
+        }
+        return n;
+    }
+
+    // Gibt true zurück, wenn mindestens ein Element dem Prädikat entspricht;
+    // der erste Treffer genügt (Kurzschluss). (R-13.39)
+    static bool any<T>(Slice<T> s, Func<T, bool> predicate) {
+        for (i64 i = 0; i < s.length; i++) {
+            if (predicate(s[i])) { return true; }
+        }
+        return false;
+    }
+
+    // Gibt true zurück, wenn jedes Element dem Prädikat entspricht. (R-13.39)
+    static bool all<T>(Slice<T> s, Func<T, bool> predicate) {
+        for (i64 i = 0; i < s.length; i++) {
+            if (!predicate(s[i])) { return false; }
+        }
+        return true;
+    }
+
+    // Gibt true zurück, wenn kein Element dem Prädikat entspricht. (R-13.39)
+    static bool none<T>(Slice<T> s, Func<T, bool> predicate) {
+        for (i64 i = 0; i < s.length; i++) {
+            if (predicate(s[i])) { return false; }
+        }
+        return true;
+    }
+
     // Elementweiser Vergleich zweier Slices (Arrays haben kein ==, V-4.8).
     static bool equals<T : Equatable<T>>(Slice<T> a, Slice<T> b) {
         if (a.length != b.length) { return false; }

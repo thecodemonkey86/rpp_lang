@@ -1,4 +1,4 @@
-// Standardbibliothek: rpp.text, Text-Hilfen (Kapitel 13, R-13.30)
+// Standardbibliothek: rpp.text, Text-Hilfen (Kapitel 13, R-13.30, R-13.40)
 // Reiner R++-Quelltext (V-13.9): statische Methoden auf string nach dem Muster
 // von Fmt. Beide Compiler behandeln sie gleich (keine M6-Divergenz, V-13.10).
 package rpp.text;
@@ -50,5 +50,42 @@ public:
         for (i64 i = 0; i < limit - 1; i++) { result.push(all[i]); }
         result.push(string::join(sep, all[limit - 1..]));
         return result;
+    }
+
+    // Prüft, ob s leer ist oder nur aus Whitespace besteht (R-13.40).
+    static bool isBlank(string s) {
+        return s.trim().length == 0;
+    }
+
+    // Teil von s vor dem ersten Vorkommen von delimiter; fehlt delimiter,
+    // bleibt s unverändert (R-13.40).
+    static string substringBefore(string s, string delimiter) {
+        string[] parts = splitLimit(s, delimiter, 2);
+        if (parts.length == 2) { return parts[0]; }
+        return s;
+    }
+
+    // Teil von s nach dem ersten Vorkommen von delimiter; fehlt delimiter,
+    // ist der Teil leer (R-13.40).
+    static string substringAfter(string s, string delimiter) {
+        string[] parts = splitLimit(s, delimiter, 2);
+        if (parts.length == 2) { return parts[1]; }
+        return "";
+    }
+
+    // Erster Buchstabe groß, der Rest klein (R-13.40).
+    static string capitalize(string s) {
+        if (s.length == 0) { return s; }
+        return s.substring(0, 1).toUpper() + s.substring(1, s.length).toLower();
+    }
+
+    // Gesamte s in Großbuchstaben (R-13.40).
+    static string toUpperCase(string s) {
+        return s.substring(0, s.length).toUpper();
+    }
+
+    // Gesamte s in Kleinbuchstaben (R-13.40).
+    static string toLowerCase(string s) {
+        return s.substring(0, s.length).toLower();
     }
 }

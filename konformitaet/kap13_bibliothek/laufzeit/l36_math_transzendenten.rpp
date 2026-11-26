@@ -1,0 +1,20 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.37
+// Erwartet: Ausgabe "1\n0\n0\n1\n0\n1024"; Exit-Code 0
+using rpp.math.Math;
+
+i32 main(string[] args) {
+    // exp(0) = 1, log(1) = 0.
+    print(Math::exp(0.0).toString());
+    print(Math::log(1.0).toString());
+
+    // sin(0) = 0, cos(0) = 1, tan(0) = 0.
+    print(Math::sin(0.0).toString());
+    print(Math::cos(0.0).toString());
+    print(Math::tan(0.0).toString());
+
+    // pow(2, 10) = 1024.
+    print(Math::pow(2.0, 10.0).toString());
+
+    return 0;
+}

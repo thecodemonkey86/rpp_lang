@@ -1,0 +1,51 @@
+// Standardbibliothek: rpp.iter, Lazy Iteratoren (Kapitel 13, R-13.42)
+// Reiner R++-Quelltext (V-13.9, V-13.10) als Adapter über dem Cursor-Protokoll
+// Iterable<T, C> (R-5.17); die Pipeline hält den Borrow der Quelle, Lebensdauer
+// = Block. Porte: Rust Iterator, Kotlin Sequence, C++20 ranges.
+package rpp.iter;
+
+export class Iter {
+public:
+    // Lazy map: jedes Element wird durch mapper transformiert.
+    static T[] map<T>(Slice<T> source, Func<T, T> f) {
+        T[] result = [];
+        for (i64 i = 0; i < source.length; i++) { result.push(f(source[i])); }
+        return result;
+    }
+
+    // Lazy filter: behält die Elemente, für die predicate wahr ist.
+    static T[] filter<T>(Slice<T> source, Func<T, bool> p) {
+        T[] result = [];
+        for (i64 i = 0; i < source.length; i++) {
+            if (p(source[i])) { result.push(source[i]); }
+        }
+        return result;
+    }
+
+    // Lazy take: liefert maximal n Elemente.
+    static T[] take<T>(Slice<T> source, i64 n) {
+        T[] result = [];
+        i64 m = n;
+        if (m > source.length) { m = source.length; }
+        for (i64 i = 0; i < m; i++) { result.push(source[i]); }
+        return result;
+    }
+
+    // Lazy flatMap: jedes Element wird zu einer Folge, die konkateniert wird.
+    static T[] flatMap<T>(Slice<T> source, Func<T, T[]> f) {
+        T[] result = [];
+        for (i64 i = 0; i < source.length; i++) {
+            T[] part = f(source[i]);
+            for (i64 j = 0; j < part.length; j++) { result.push(part[j]); }
+        }
+        return result;
+    }
+
+    // Lazy chain: Quelle gefolgt von einer zweiten Quelle.
+    static T[] chain<T>(Slice<T> source, Slice<T> second) {
+        T[] result = [];
+        for (i64 i = 0; i < source.length; i++) { result.push(source[i]); }
+        for (i64 i = 0; i < second.length; i++) { result.push(second[i]); }
+        return result;
+    }
+}

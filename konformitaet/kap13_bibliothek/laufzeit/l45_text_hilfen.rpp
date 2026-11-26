@@ -1,0 +1,22 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.40
+// Erwartet: Ausgabe "true\ntrue\nfalse\nhello|hello\nworld|\nABC|abc|Hello|"; Exit-Code 0
+using rpp.text.Text;
+
+i32 main(string[] args) {
+    // isBlank: leer, Whitespace, Inhalt.
+    print(Text::isBlank("").toString());
+    print(Text::isBlank("   ").toString());
+    print(Text::isBlank(" x ").toString());
+
+    // substringBefore: vorhanden, nicht vorhanden.
+    print(Text::substringBefore("hello world", " ") + "|" + Text::substringBefore("hello", "zz"));
+
+    // substringAfter: vorhanden, nicht vorhanden.
+    print(Text::substringAfter("hello world", " ") + "|" + Text::substringAfter("hello", "zz"));
+
+    // toUpperCase / toLowerCase / capitalize.
+    print(Text::toUpperCase("abc") + "|" + Text::toLowerCase("ABC") + "|" + Text::capitalize("hELLO") + "|" + Text::capitalize(""));
+
+    return 0;
+}

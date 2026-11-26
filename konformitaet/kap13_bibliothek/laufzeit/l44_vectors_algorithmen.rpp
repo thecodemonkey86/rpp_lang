@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 13 – Laufzeit.
+// Regel: R-13.38, R-13.39
+// Erwartet: Ausgabe "1\n0\n2\n0\nja\nja\nja\nnein\nnein\nja\nja"; Exit-Code 0
+using rpp.collections.Vectors;
+
+i32 main(string[] args) {
+    i32[] s = [1, 2, 3, 4, 5];
+    i32[] e = [];
+    i32[] d = [1, 1, 2];
+
+    // count: Anzahl der Vorkommen von x in s; leerer Slice ergibt 0.
+    print(Vectors::count(s, 3).toString());
+    print(Vectors::count(s, 9).toString());
+    print(Vectors::count(d, 1).toString());
+    print(Vectors::count(e, 1).toString());
+
+    // any / all / none über ein Prädikat.
+    print(Vectors::any(s, (i32 x) => x > 3) ? "ja" : "nein");
+    print(Vectors::all(s, (i32 x) => x > 0) ? "ja" : "nein");
+    print(Vectors::none(s, (i32 x) => x > 10) ? "ja" : "nein");
+    print(Vectors::none(s, (i32 x) => x > 2) ? "ja" : "nein");
+    print(Vectors::any(e, (i32 x) => x > 0) ? "ja" : "nein");
+    print(Vectors::all(e, (i32 x) => x > 0) ? "ja" : "nein");
+    print(Vectors::none(e, (i32 x) => x > 0) ? "ja" : "nein");
+
+    return 0;
+}
