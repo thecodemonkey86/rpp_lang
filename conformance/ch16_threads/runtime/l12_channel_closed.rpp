@@ -1,0 +1,26 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.16, R-16.15
+// Erwartet: Ausgabe "true\na\nb\nnull\nnull"; Exit-Code 0
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+class Fill {
+public:
+    // übernimmt den Sender und gibt ihn am Ende frei
+    static bool both(own Sender<string> tx) {
+        bool first = tx.send("a");
+        return tx.send("b") && first;
+    }
+}
+
+i32 main(string[] args) {
+    (Sender<string> tx, Receiver<string> rx) = Channel<string>::open(3);
+    print(Fill::both(tx).toString());
+    // die gesendeten Werte bleiben; danach meldet null das Ende
+    for (i64 i = 0; i < 4; i++) {
+        string? v = rx.receive();
+        print(v == null ? "null" : v);
+    }
+    return 0;
+}

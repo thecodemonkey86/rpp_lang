@@ -1,0 +1,47 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.18, R-12.4
+// Erwartet: Ausgabe "ping 1\npong 1\nping 2\npong 2\nping 3\npong 3\nend"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+class Ends {
+public:
+    Receiver<i64> requests;
+    Sender<i64> replies;
+    constructor(own Receiver<i64> requests, own Sender<i64> replies) {
+        this.requests = requests;
+        this.replies = replies;
+    }
+}
+
+class Ping {
+public:
+    // Senden und Empfangen ordnen die Ausgaben beider Threads (R-16.18); am Ende gibt run
+    // den Sender frei, und der Thread endet.
+    static void run(own Sender<i64> req, Receiver<i64> replies) {
+        for (i64 i = 1; i <= 3; i++) {
+            print("ping " + i.toString());
+            discard req.send(i);
+            discard replies.receive();
+        }
+    }
+}
+
+i32 main(string[] args) {
+    (Sender<i64> req, Receiver<i64> reqIn) = Channel<i64>::open(1);
+    (Sender<i64> rep, Receiver<i64> repIn) = Channel<i64>::open(1);
+    Thread t = Thread::spawnWith(new Ends(reqIn, rep), own (own Ends e) => {
+        i64? n = e.requests.receive();
+        while (n != null) {
+            print("pong " + n.toString());
+            discard e.replies.send(n);
+            n = e.requests.receive();
+        }
+    });
+    Ping::run(req, repIn);
+    t.join();
+    print("end");
+    return 0;
+}

@@ -601,6 +601,8 @@ public:
         if (t.kind == TK::Named && defs[t.id].isExternClass()) {
             string n = defs[t.id].name;
             error(file, line, col, "R-15.2", "The extern class " + n + " cannot be used as a type");
+        } else if (t.kind == TK::Named && isTransferableMixin(t.id)) {
+            error(file, line, col, "R-16.8", "Transferable is a built-in constraint, not a type of values");
         } else if ((t.kind == TK::Shared || t.kind == TK::Weak) && t.args[0].kind == TK::Named && defs[t.args[0].id].isHandle()) {
             string f = t.kind == TK::Shared ? "shared" : "weak";
             string n = defs[t.args[0].id].name;
@@ -761,6 +763,9 @@ private:
                     if (defs[t.id].kind != DefKind::Class) {
                         string msg = defs[t.id].name + " is not a class";
                         error(file, bf.line, bf.col, "R-7.12", msg);
+                    } else if (isSyncClass(t.id)) {
+                        string msg = defs[t.id].name + " cannot be a base class";
+                        error(file, bf.line, bf.col, "R-16.1", msg);
                     } else {
                         defs[def].baseType = t;
                     }
@@ -777,6 +782,10 @@ private:
                     if (defs[t.id].kind != DefKind::Mixin) {
                         string msg = defs[t.id].name + " is not a mixin";
                         error(file, tf.line, tf.col, "R-7.20", msg);
+                        continue;
+                    }
+                    if (isTransferableMixin(t.id)) {
+                        error(file, tf.line, tf.col, "R-16.8", "Transferable is a built-in constraint and cannot be imported");
                         continue;
                     }
                     defs[def].imports.push(t);
@@ -1035,6 +1044,9 @@ public:
         if (t.isError()) {
             return true;
         }
+        if (mname == "rpp.sync.Transferable") {
+            return transferable(t);
+        }
         shared Ty u = Ty::unformed(t);
         bool selfArg = m.args.length == 0 || m.args[0].isError() || m.args[0].same(u);
         bool eqOrHash = mname == "rpp.core.Equatable" || mname == "rpp.core.Hashable";
@@ -1068,6 +1080,155 @@ public:
             return upcasts(t, m);
         }
         return false;
+    }
+
+    // Die eingebaute Einschränkung rpp.sync.Transferable (R-16.8)
+    bool isTransferableMixin(i64 d) {
+        return defs[d].kind == DefKind::Mixin && defs[d].name == "Transferable" && defs[d].pkg == "rpp.sync";
+    }
+
+    // Typ aus rpp.sync der Standardbibliothek
+    bool inSync(i64 d) {
+        return defs[d].pkg == "rpp.sync" && projStd[defs[d].project];
+    }
+
+    // Klasse aus rpp.sync (R-16.1): nicht mit new zu erzeugen, nicht ableitbar, nicht kopierbar
+    bool isSyncClass(i64 d) {
+        return defs[d].kind == DefKind::Class && defs[d].pkg == "rpp.sync" && projStd[defs[d].project];
+    }
+
+    // R-16.7: Darf ein Wert dieses Typs in einen anderen Thread gelangen?
+    bool transferable(shared Ty t) {
+        shared Ty[] seen = [];
+        return transferableIn(t, mut seen);
+    }
+
+    // eigener Typ einer Klasse mit ihren Typ-Parametern als Argumenten
+    shared Ty selfType(i64 d) {
+        shared Ty[] args = [];
+        for (i64 tp : defs[d].tparams) {
+            args.push(Ty::param(tp));
+        }
+        return Ty::named(d, args);
+    }
+
+    bool transferableIn(shared Ty t, mut shared Ty[] seen) {
+        if (t.kind == TK::Error || t.kind == TK::Null || t.kind == TK::Prim) {
+            return true;
+        }
+        if (t.kind == TK::Void || t.kind == TK::Func || t.kind == TK::Shared || t.kind == TK::Weak) {
+            return false;
+        }
+        if (t.kind == TK::Nullable || t.kind == TK::Vector || t.kind == TK::Array || t.kind == TK::Slice) {
+            return transferableIn(t.args[0], mut seen);
+        }
+        if (t.kind == TK::Tuple) {
+            for (shared Ty x : t.args) {
+                if (!transferableIn(x, mut seen)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (t.kind == TK::Param) {
+            for (shared Ty c : tparams[t.id].constraints) {
+                if (c.kind == TK::Named && isTransferableMixin(c.id)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (hasTy(seen, t)) {
+            return true;
+        }
+        seen.push(t);
+        i64 d = t.id;
+        if (defs[d].pkg == "rpp.sync" && projStd[defs[d].project]) {
+            string n = defs[d].name;
+            return n == "Thread" || n == "Task" || n == "Sender" || n == "Receiver";
+        }
+        if (defs[d].isExtern) {
+            return true;
+        }
+        if (defs[d].kind == DefKind::Enum) {
+            Subst map = substMap(d, t.args);
+            for (VariantInfo v : defs[d].variants) {
+                for (PInfo f : v.fields) {
+                    if (!transferableIn(Ty::subst(f.ty, map), mut seen)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        if (defs[d].kind == DefKind::Class) {
+            if (!fieldsTransferable(t, mut seen)) {
+                return false;
+            }
+            // jede Unterklasse im Programm: Der Wert kann zur Laufzeit eine sein
+            for (i64 s = 0; s < defs.length; s++) {
+                if (s == d || defs[s].kind != DefKind::Class || !isSubclass(s, d)) {
+                    continue;
+                }
+                if (!ownFieldsTransferable(selfType(s), mut seen)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        // Mixin: jede Klasse, die es importiert
+        for (i64 c = 0; c < defs.length; c++) {
+            if (defs[c].kind != DefKind::Class) {
+                continue;
+            }
+            shared Ty ct = selfType(c);
+            bool imports = false;
+            for (shared Ty s : supertypes(ct)) {
+                if (s.kind == TK::Named && s.id == d) {
+                    imports = true;
+                }
+            }
+            if (imports && !fieldsTransferable(ct, mut seen)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Felder der Klasse selbst (mit eingesetzten Typargumenten)
+    bool ownFieldsTransferable(shared Ty t, mut shared Ty[] seen) {
+        if (t.kind != TK::Named) {
+            return true;
+        }
+        Subst map = substMap(t.id, t.args);
+        for (i64 i = 0; i < defs[t.id].fields.length; i++) {
+            if (defs[t.id].fields[i].isStatic) {
+                continue;
+            }
+            shared Ty ft = Ty::subst(defs[t.id].fields[i].ty, map);
+            if (!transferableIn(ft, mut seen)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Felder der Klasse und ihrer Basisklassen
+    bool fieldsTransferable(shared Ty t, mut shared Ty[] seen) {
+        shared Ty cur = t;
+        while (true) {
+            if (!ownFieldsTransferable(cur, mut seen)) {
+                return false;
+            }
+            if (cur.kind != TK::Named) {
+                return true;
+            }
+            shared Ty? b = defs[cur.id].baseType;
+            if (b == null) {
+                return true;
+            }
+            cur = Ty::subst(b, substMap(cur.id, cur.args));
+        }
     }
 
     // Bringt das Mixin a (mit seinen Importen) das Mixin b mit?
@@ -1163,6 +1324,11 @@ public:
         Diag[] found = [];
         for (Pending p : pending) {
             Subst map = substMap(p.def, p.args);
+            // R-16.14: Der Elementtyp eines Kanals ist nicht nullbar (null heißt: Kanal geschlossen).
+            string pn = defs[p.def].name;
+            if (defs[p.def].pkg == "rpp.sync" && (pn == "Channel" || pn == "Sender" || pn == "Receiver") && p.args.length > 0 && p.args[0].kind == TK::Nullable) {
+                found.push(mk(p.file, p.line, p.col, "R-16.14", "The element type of " + pn + " cannot be nullable"));
+            }
             for (i64 i = 0; i < defs[p.def].tparams.length; i++) {
                 i64 tp = defs[p.def].tparams[i];
                 shared Ty arg = p.args[i];
@@ -1689,6 +1855,19 @@ private:
                     }
                     out.push(mk(file, l, c, "R-7.1", "A field and a method share the name " + m.name));
                     break;
+                }
+            }
+        }
+
+        // R-16.10: Eine Exception kann mit join() in einen anderen Thread gelangen.
+        if (d.kind == DefKind::Class) {
+            i64 ex = lookupFull("rpp.core.Exception");
+            if (ex >= 0 && isSubclass(def, ex)) {
+                for (FieldInfo f : d.fields) {
+                    if (!f.isStatic && !transferable(f.ty)) {
+                        out.push(mk(file, f.line, f.col, "R-16.10", "Field " + f.name + " of the exception class " + d.name
+                            + " is not transferable to another thread (no shared, weak or function values)"));
+                    }
                 }
             }
         }

@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.14, R-9.2
+// Erwartet: Ausgabe "before"; Exit-Code 2; Fehlerausgabe enthält "ThreadError"
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+i32 main(string[] args) {
+    print("before");
+    i64 capacity = 0;
+    (Sender<i64> tx, Receiver<i64> rx) = Channel<i64>::open(capacity);
+    print("after");
+    return 0;
+}

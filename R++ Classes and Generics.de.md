@@ -111,7 +111,7 @@ Beispiele:
 
 **R-7.27 (Statische Member).** Statische Methoden und Konstanten einer generischen Klasse werden mit Typargumenten angesprochen: `List<Foo>::create()`. Eine statische Konstante darf nicht von einem Typ-Parameter abhängen.
 
-**R-7.28 (Generische Methoden).** Typargumente einer generischen Methode werden nur aus den Argumenten abgeleitet, nie ausgeschrieben. Lässt sich ein Typ-Parameter nicht eindeutig ableiten, ist das ein Fehler.
+**R-7.28 (Generische Methoden).** Typargumente einer generischen Methode werden nur aus den Argumenten abgeleitet, nie ausgeschrieben. Lässt sich ein Typ-Parameter nicht eindeutig ableiten, ist das ein Fehler. Ein als Argument übergebenes Lambda trägt seine Parametertypen bei und, wo ein Typ-Parameter der Methode im Rückgabetyp des Funktionsparameters steht, seinen Rückgabetyp (R-10.3); `void` wird nie als Typargument abgeleitet (R-4.42).
 
 ## 8. Konformitätstests
 

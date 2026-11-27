@@ -1,0 +1,3 @@
+// Name: Tupel-Deklaration mit generischen Typen
+// Lesart: tupleDecl
+class T { void m() { (Box<Foo> a, Box<Bar> b) = f(); } }

@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.1, R-7.11
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (ein Handle lässt sich nicht kopieren).
+package conformance.ch16;
+
+using rpp.sync.Task;
+
+class Use {
+public:
+    static void run(Task<i64> t) {
+        Task<i64> u = copy(t);   // FEHLER
+        discard u.join();
+    }
+}

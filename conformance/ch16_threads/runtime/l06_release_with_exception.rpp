@@ -1,0 +1,18 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.4, R-16.5, R-9.2
+// Erwartet: Ausgabe "start"; Exit-Code 2; Fehlerausgabe enthält "ThreadError"; Fehlerausgabe enthält "boom"
+using rpp.sync.Thread;
+
+class Run {
+public:
+    static void block() {
+        Thread t = Thread::spawn(own () => { throw new Exception("boom"); });
+    }
+}
+
+i32 main(string[] args) {
+    print("start");
+    Run::block();
+    print("not reached");
+    return 0;
+}

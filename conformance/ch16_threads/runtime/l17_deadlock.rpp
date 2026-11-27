@@ -1,0 +1,22 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.19, R-9.2
+// Erwartet: Ausgabe "waiting"; Exit-Code 2; Fehlerausgabe enthält "ThreadError"
+using rpp.sync.Thread;
+using rpp.sync.Task;
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+i32 main(string[] args) {
+    (Sender<i64> tx, Receiver<i64> rx) = Channel<i64>::open(1);
+    Task<i64> t = Thread::spawnWith(rx, own (own Receiver<i64> r) => {
+        i64? v = r.receive();
+        return v == null ? 0 : v;
+    });
+    print("waiting");
+    // main wartet auf den Thread, der Thread auf einen Wert von main: keiner kann weiter
+    i64 x = t.join();
+    discard tx.send(x);
+    print("not reached");
+    return 0;
+}

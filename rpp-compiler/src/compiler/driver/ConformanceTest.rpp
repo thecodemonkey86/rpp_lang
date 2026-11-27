@@ -506,6 +506,13 @@ private:
                 input = unquote(l.substring(8, l.length));
             }
         }
+        // Kapitel 16: Ein Test mit Threads muss bei jedem Lauf dasselbe liefern; er läuft dreimal je Modus.
+        i64 rounds = 1;
+        for (string f : u.files) {
+            if (f.endsWith(".rpp") && File::open(f).readAllText().contains("rpp.sync")) {
+                rounds = 3;
+            }
+        }
         for (i64 mode = 0; mode < 2; mode++) {
             ref Expect e = exp[mode];
             if (!e.given) {
@@ -532,6 +539,7 @@ private:
             if (buildError) {
                 return new Outcome(1, name + ": expected a build error");
             }
+            for (i64 round = 0; round < rounds; round++) {
             // V-14.3: jeder Lauf in einem frischen, leeren Arbeitsverzeichnis, das danach gelöscht wird
             string dir = Path::join(work, "run-" + name);
             Dir::create(dir);
@@ -560,6 +568,7 @@ private:
             if (problems.length > 0) {
                 string first = Text::lines(o.errorOutput).length > 0 ? Text::lines(o.errorOutput)[0] : "";
                 return new Outcome(1, name + ": " + problems.substring(2, problems.length) + "; stderr: " + quote(first));
+            }
             }
         }
         return new Outcome(0, "");

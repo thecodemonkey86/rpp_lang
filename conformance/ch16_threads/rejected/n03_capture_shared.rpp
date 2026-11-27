@@ -1,0 +1,20 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.9, R-16.7
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (ein shared-Wert gelangt nicht in einen anderen Thread).
+package conformance.ch16;
+
+using rpp.sync.Thread;
+
+class Counter {
+public:
+    i64 n = 0;
+}
+
+class Use {
+public:
+    static void run() {
+        shared Counter c = new Counter();
+        Thread t = Thread::spawn(own () => { c.n += 1; });   // FEHLER
+        t.join();
+    }
+}

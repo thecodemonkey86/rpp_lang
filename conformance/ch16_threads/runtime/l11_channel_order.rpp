@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.14, R-16.15, R-16.16, R-16.17
+// Erwartet: Ausgabe "1\n2\n3\n4\n5\n6\nend"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+i32 main(string[] args) {
+    // Kapazität 2: der Sender wartet, wenn der Kanal voll ist
+    (Sender<i64> tx, Receiver<i64> rx) = Channel<i64>::open(2);
+    Thread producer = Thread::spawnWith(tx, own (own Sender<i64> s) => {
+        for (i64 i = 1; i <= 6; i++) {
+            discard s.send(i);
+        }
+    });
+    i64? v = rx.receive();
+    while (v != null) {
+        print(v.toString());
+        v = rx.receive();
+    }
+    print("end");
+    producer.join();
+    return 0;
+}

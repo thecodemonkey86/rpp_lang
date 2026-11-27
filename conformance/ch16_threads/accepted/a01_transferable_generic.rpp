@@ -1,0 +1,71 @@
+// Konformitätstest Kapitel 16 – muss übersetzt werden.
+// Regel: R-16.7, R-16.8, R-16.1, R-16.9
+package conformance.ch16;
+
+using rpp.sync.Thread;
+using rpp.sync.Task;
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+using rpp.sync.Transferable;
+
+enum Kind { Small, Large }
+
+class Item {
+public:
+    i64 id = 0;
+    string name = "";
+    i64[] values = [];
+    Item? next;
+    Kind kind = Kind::Small;
+    (i64, string) pair = (0, "");
+}
+
+mixin Named {
+    string label();
+}
+
+class Tag {
+    import Named;
+public:
+    string text = "";
+    override string label() {
+        return this.text;
+    }
+}
+
+// generischer Code, der Werte eines Typ-Parameters an Threads übergibt
+class Worker<T : Transferable> {
+public:
+    static own Task<T> start(own T value) {
+        return Thread::spawnWith(value, own (own T v) => v);
+    }
+
+    static own T through(own T value) {
+        (Sender<T> tx, Receiver<T> rx) = Channel<T>::open(1);
+        discard tx.send(value);
+        T? back = rx.receive();
+        if (back == null) {
+            fail("leer");
+        }
+        return back;
+    }
+}
+
+class Use {
+public:
+    static void run() {
+        Task<Item> a = Worker<Item>::start(new Item());
+        Item item = a.join();
+        Task<i64> b = Worker<i64>::start(1);
+        Task<string[]> c = Worker<string[]>::start(["x"]);
+        // Handles und Kanalenden sind selbst übertragbar
+        Task<Task<i64>> d = Worker<Task<i64>>::start(b);
+        Tag tag = Worker<Tag>::through(new Tag());
+        Named named = Worker<Named>::through(new Tag());
+        discard c.join();
+        discard d.join().join();
+        i64 used = item.id + tag.text.length + named.label().length;
+        assert(used >= 0, "used");
+    }
+}

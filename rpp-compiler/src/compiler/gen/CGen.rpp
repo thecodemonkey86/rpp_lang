@@ -196,7 +196,8 @@ private:
                 continue;
             }
             string full = c.p.defs[d].fullName();
-            bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env" || full == "rpp.io.SaveFile" || full == "rpp.io.TextReader" || full == "rpp.text.StringView" || full == "rpp.math.Math" || full == "rpp.env.ElapsedTimer" || full == "rpp.process.Process";
+            bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env" || full == "rpp.io.SaveFile" || full == "rpp.io.TextReader" || full == "rpp.text.StringView" || full == "rpp.math.Math" || full == "rpp.env.ElapsedTimer" || full == "rpp.process.Process"
+                || full == "rpp.sync.Thread" || full == "rpp.sync.Task" || full == "rpp.sync.Scope" || full == "rpp.sync.Channel" || full == "rpp.sync.Sender" || full == "rpp.sync.Receiver";
             if (dk != DefKind::Enum) {
                 i64 fileIdx = c.p.defs[d].file;
                 i64 declIdx = c.p.defs[d].decl;
@@ -1023,6 +1024,13 @@ private:
         string label = c.p.defs[d].name + "." + m.name;
         if (isNative(d, m.member)) {
             string full = c.p.defs[d].fullName() + "." + m.name;
+            // Thread::spawn und spawnWith gibt es mit und ohne Ergebnis (V-16.1)
+            if (full == "rpp.sync.Thread.spawn" || full == "rpp.sync.Thread.spawnWith") {
+                shared Ty rt0 = Tys::core(m.ret.ty);
+                if (rt0.kind == TK::Named && c.p.defs[rt0.id].name == "Task") {
+                    full = full + "Task";
+                }
+            }
             string mt = "0";
             if (m.mutThis) {
                 mt = "1";
@@ -1193,6 +1201,7 @@ private:
         } else {
             b.append("    " + ret + " r = " + callExpr + ";\n");
         }
+        b.append("    rt_native_done();\n");
         // Puffer zurückschreiben (mut byte[]) und freigeben; own H geht an C
         for (i64 i = 0; i < m.params.length; i++) {
             string a = "args[" + i.toString() + "]";
@@ -2015,6 +2024,7 @@ private:
         subStmt(body);
         emit("if (st == ST_BRK) { st = ST_OK; goto " + end + "; }");
         emit("if (st == ST_CONT) st = ST_OK;");
+        emit("if (rt_cancel && !st) st = rt_cancel_point();");
         chk();
     }
 
@@ -2222,6 +2232,7 @@ private:
             popScope();
             emit("if (st == ST_BRK) { st = ST_OK; goto " + end + "; }");
             emit("if (st == ST_CONT) st = ST_OK;");
+        emit("if (rt_cancel && !st) st = rt_cancel_point();");
             chk();
             emit("goto " + head + ";");
         }
@@ -2257,6 +2268,7 @@ private:
         popScope();
         emit("if (st == ST_BRK) { st = ST_OK; goto " + end + "; }");
         emit("if (st == ST_CONT) st = ST_OK;");
+        emit("if (rt_cancel && !st) st = rt_cancel_point();");
         chk();
         emit(a1 + " = " + cur + ";");
         call(next + "(&" + cur + ", " + view + ", &" + a1 + ")");

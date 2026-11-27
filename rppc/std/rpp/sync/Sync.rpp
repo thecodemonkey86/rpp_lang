@@ -1,0 +1,73 @@
+// Standardbibliothek: rpp.sync (Kapitel 16, R-16.1)
+package rpp.sync;
+
+// Eingebaute Einschränkung (R-16.8): Jeder übertragbare Typ (R-16.7) erfüllt sie von selbst;
+// importieren lässt sie sich nicht.
+export mixin Transferable {
+}
+
+// Thread ohne Ergebnis (V-16.1)
+export class Thread {
+private:
+    i64 id;
+    constructor() { this.id = 0; }
+    void release() mut { fail("eingebaut"); }
+public:
+    static own Thread spawn(own Func<void> body) { fail("eingebaut"); }
+    static own Task<T> spawn<T : Transferable>(own Func<T> body) { fail("eingebaut"); }
+    static own Thread spawnWith<D : Transferable>(own D input, own Func<own D, void> body) { fail("eingebaut"); }
+    static own Task<T> spawnWith<D : Transferable, T : Transferable>(own D input, own Func<own D, T> body) { fail("eingebaut"); }
+    static void scope(Func<mut Scope, void> body) { fail("eingebaut"); }
+    static void sleep(i64 millis) { fail("eingebaut"); }
+    void join() mut { fail("eingebaut"); }
+    destructor() { release(); }
+}
+
+// Thread mit Ergebnis (V-16.1)
+export class Task<T : Transferable> {
+private:
+    i64 id;
+    constructor() { this.id = 0; }
+    void release() mut { fail("eingebaut"); }
+public:
+    own T join() mut { fail("eingebaut"); }
+    destructor() { release(); }
+}
+
+// Bereich: seine Threads enden vor dem Ende von Thread::scope (R-16.11)
+export class Scope {
+private:
+    i64 id;
+    constructor() { this.id = 0; }
+public:
+    void spawn(Func<void> body) mut { fail("eingebaut"); }
+}
+
+// Kanal mit fester Kapazität (R-16.14)
+export class Channel<T : Transferable> {
+private:
+    constructor() { }
+public:
+    static (own Sender<T>, own Receiver<T>) open(i64 capacity) { fail("eingebaut"); }
+}
+
+export class Sender<T : Transferable> {
+private:
+    i64 id;
+    constructor() { this.id = 0; }
+    void close() mut { fail("eingebaut"); }
+public:
+    bool send(own T value) { fail("eingebaut"); }
+    own Sender<T> clone() { fail("eingebaut"); }
+    destructor() { close(); }
+}
+
+export class Receiver<T : Transferable> {
+private:
+    i64 id;
+    constructor() { this.id = 0; }
+    void close() mut { fail("eingebaut"); }
+public:
+    T? receive() { fail("eingebaut"); }
+    destructor() { close(); }
+}

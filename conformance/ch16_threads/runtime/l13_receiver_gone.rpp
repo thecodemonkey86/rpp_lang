@@ -1,0 +1,54 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.15, R-16.22
+// Erwartet: Ausgabe "sent queued\nreleased queued\nreleased late\nfalse\nsender stopped"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Task;
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+class Noisy {
+public:
+    string name;
+    constructor(string name) {
+        this.name = name;
+    }
+    destructor() {
+        print("released " + this.name);
+    }
+}
+
+class Drop {
+public:
+    static void receiver(own Receiver<Noisy> rx) {
+    }
+    static void numbers(own Receiver<i64> rx) {
+        discard rx.receive();
+    }
+}
+
+i32 main(string[] args) {
+    (Sender<Noisy> tx, Receiver<Noisy> rx) = Channel<Noisy>::open(2);
+    if (tx.send(new Noisy("queued"))) {
+        print("sent queued");
+    }
+    // mit dem Empfänger werden die Werte im Kanal freigegeben
+    Drop::receiver(rx);
+    // ohne Empfänger gibt send den Wert frei und liefert false
+    print(tx.send(new Noisy("late")).toString());
+
+    // ein wartender Sender erfährt ebenfalls, dass der Empfänger fehlt
+    (Sender<i64> ntx, Receiver<i64> nrx) = Channel<i64>::open(1);
+    Task<bool> t = Thread::spawnWith(ntx, own (own Sender<i64> s) => {
+        bool ok = true;
+        while (ok) {
+            ok = s.send(1);
+        }
+        return true;
+    });
+    Drop::numbers(nrx);
+    if (t.join()) {
+        print("sender stopped");
+    }
+    return 0;
+}

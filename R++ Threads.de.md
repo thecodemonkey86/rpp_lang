@@ -4,7 +4,7 @@
 
 Stand: 27.11.2026, Entwurf 0.1. Dieses Dokument füllt Kapitel 16 der „R++ Spezifikationsübersicht“. Es legt fest, wie ein R++-Programm Code in mehreren Threads ausführt: Threads starten und auf sie warten, Bereiche, deren Threads Daten des umgebenden Blocks leihen, welche Werte in einen anderen Thread gelangen dürfen, Kanäle als einziger Weg zum Austausch von Daten, Ausnahmen und Programmfehler in Threads und was beobachtbar bleibt, wenn mehrere Threads laufen.
 
-Die Grundzüge sind entschieden (siehe „R++ Designentscheidungen“, Abschnitt 12, Meilenstein M11 im Implementierungsplan). Die Vorschläge in Abschnitt 0 sind beim Ausformulieren entstanden und wurden am 27.11.2026 angenommen, V-16.9 in geänderter Form (alle Threads werden abgewickelt); die Regeln, die auf ihnen beruhen, nennen sie. Jede normative Regel trägt eine Nummer `R-16.n`. Die Konformitätstests werden in `conformance/ch16_threads/` liegen.
+Die Grundzüge sind entschieden (siehe „R++ Designentscheidungen“, Abschnitt 12, Meilenstein M11 im Implementierungsplan). Die Vorschläge in Abschnitt 0 sind beim Ausformulieren entstanden und wurden am 27.11.2026 angenommen, V-16.9 in geänderter Form (alle Threads werden abgewickelt); die Regeln, die auf ihnen beruhen, nennen sie. Jede normative Regel trägt eine Nummer `R-16.n`. Die Konformitätstests liegen in `conformance/ch16_threads/`.
 
 ## 0. Ergänzungen aus dem Ausformulieren (angenommen am 27.11.2026)
 
@@ -84,7 +84,7 @@ Keine dieser Klassen lässt sich mit `new` erzeugen oder ableiten. `Thread`, `Ta
 ## 2. Übergabe zwischen Threads
 
 **R-16.7 (Übertragbare Typen).** Ein Typ ist übertragbar, wenn ein Wert von ihm keine Referenz enthält, die ein anderer Thread gleichzeitig benutzen könnte:
-- primitive Typen, `string`, Enums und Handle-Typen (Kapitel 15) sind übertragbar;
+- primitive Typen, `string`, Enums ohne Daten und Handle-Typen (Kapitel 15) sind übertragbar; ein Enum mit Daten ist übertragbar, wenn die Typen seiner Daten es sind;
 - `T?`, `T[]` und Tupel sind übertragbar, wenn ihre Elementtypen es sind;
 - ein Klassentyp ist übertragbar, wenn kein Feld der Klasse, ihrer Basisklassen und keiner Unterklasse im Programm einen Typ mit `shared` oder `weak` oder einen nicht übertragbaren Typ hat; bei generischen Klassen mit eingesetzten Typargumenten;
 - ein Mixin-Typ ist übertragbar, wenn jede Klasse im Programm, die das Mixin importiert, es ist;
@@ -94,7 +94,7 @@ Strings werden intern geteilt; Implementierungen zählen ihre Referenzen atomar 
 
 **R-16.8 (Einschränkung Transferable).** `Transferable` (V-16.5) ist eine Einschränkung wie ein Mixin-Typ (R-7.23), die jeder übertragbare Typ erfüllt. Sie lässt sich nicht importieren und ist kein Typ von Werten. Ein Typparameter mit dieser Einschränkung ist übertragbar, einer ohne sie nicht.
 
-**R-16.9 (Was beim Start hinüber geht).** Bei `Thread::spawn` und `spawnWith` darf das `own`-Lambda nur Werte übertragbarer Typen erfassen (R-10.8), und `D` und `T` müssen übertragbar sein. Ein gewöhnliches Lambda oder ein vorhandener Funktionswert wird nicht angenommen: `body` muss beim Aufruf ein `own`-Lambda-Ausdruck sein, damit sich seine Erfassungen prüfen lassen.
+**R-16.9 (Was beim Start hinüber geht).** Bei `Thread::spawn` und `spawnWith` darf das `own`-Lambda nur Werte übertragbarer Typen erfassen (R-10.8), und `D` und `T` müssen übertragbar sein. Ein gewöhnliches Lambda oder ein vorhandener Funktionswert wird nicht angenommen: `body` muss beim Aufruf ein `own`-Lambda-Ausdruck sein, damit sich seine Erfassungen prüfen lassen. Ein Typargument `D` oder `T`, das nicht übertragbar ist, wird nach R-7.26 gemeldet; `T` wird aus dem Rückgabetyp des Lambdas abgeleitet (R-7.28).
 
 **R-16.10 (Ausnahmen gehen hinüber).** Jede von `Exception` abgeleitete Klasse muss übertragbar sein (V-16.6). Ein Feld vom Typ `shared`, `weak` oder eines nicht übertragbaren Typs in einer solchen Klasse oder einer ihrer Unterklassen ist ein Fehler am Feld.
 
@@ -102,7 +102,7 @@ Strings werden intern geteilt; Implementierungen zählen ihre Referenzen atomar 
 
 **R-16.11 (Bereich).** `Thread::scope(body)` ruft `body` mit einem neuen `Scope` auf und kehrt erst zurück, wenn `body` geendet hat und jeder mit `Scope.spawn` gestartete Thread geendet hat. `Scope.spawn(f)` startet einen Thread, der `f` ausführt; es liefert kein Handle (V-16.11).
 
-**R-16.12 (Leihen in einem Bereich).** Das an `Scope.spawn` übergebene Lambda muss beim Aufruf ein Lambda-Ausdruck sein. Es darf ein `own`-Lambda sein; dann gilt R-16.9. Ein gewöhnliches Lambda darf nur lesend leihen, und nur Variablen, die das an `Thread::scope` übergebene Lambda erfasst; ihre Typen müssen übertragbar sein. Diese Variablen gelten für den ganzen Aufruf von `Thread::scope` als von `body` lesend geliehen (R-10.7), deshalb kann auch `body` sie nicht ändern. Eine veränderliche Leihe, eine Leihe einer lokalen Variablen von `body` und `this` mit nicht übertragbarem Typ sind Fehler.
+**R-16.12 (Leihen in einem Bereich).** Das an `Scope.spawn` übergebene Lambda muss beim Aufruf ein Lambda-Ausdruck sein. Es darf ein `own`-Lambda sein; dann gilt R-16.9. Ein gewöhnliches Lambda ist nur innerhalb des Lambda-Ausdrucks erlaubt, der an `Thread::scope` übergeben ist, an dessen `Scope`-Parameter. Es darf nur lesend leihen, und nur Variablen, die das an `Thread::scope` übergebene Lambda erfasst; ihre Typen müssen übertragbar sein. Diese Variablen gelten für den ganzen Aufruf von `Thread::scope` als von `body` lesend geliehen (R-10.7), deshalb kann auch `body` sie nicht ändern. Eine veränderliche Leihe, eine Leihe einer lokalen Variablen von `body` und `this` mit nicht übertragbarem Typ sind Fehler.
 
 **R-16.13 (Ausnahmen in einem Bereich).** Eine Ausnahme, die `body` oder einen Thread des Bereichs verlässt, beendet die anderen Threads des Bereichs nicht. Wenn alle geendet haben, wirft `Thread::scope` die Ausnahme von `body`, falls es eine gibt, sonst die des ersten Threads in Startreihenfolge, der mit einer Ausnahme endete; alle anderen Ausnahmen werden freigegeben (V-16.11).
 
@@ -134,7 +134,7 @@ Wirkungen, die diese Regeln nicht ordnen, dürfen in jeder Reihenfolge geschehen
 
 **R-16.22 (Destruktoren).** Ein Destruktor läuft in dem Thread, der das Objekt freigibt. Ein Objekt führt deshalb nie in zwei Threads gleichzeitig Code aus.
 
-**R-16.23 (Beide Modi).** Threads verhalten sich im Debug- und Releasemodus gleich (R-12.5). C-Code darf aus jedem Thread gerufen werden; R-15.16 gilt für jeden Aufruf. Wie eine Implementierung Threads auf das System abbildet, ist ihr überlassen: Sie darf jeden Thread als Thread des Betriebssystems ausführen oder als leichten Thread (Koroutine) mit eigenem Stapel, den ein Scheduler der Laufzeit auf weniger Threads des Betriebssystems verteilt, solange R-16.18 und R-16.19 gelten. Bei leichten Threads lässt das Warten in `join()`, `send`, `receive`, am Ende von `Thread::scope`, in `Thread::sleep` und bei Ein- und Ausgabe andere Threads laufen; ein Thread, der lange rechnet, darf die anderen nicht für immer am Laufen hindern. Damit bleibt der Weg zu vielen gleichzeitigen Wartevorgängen offen, ohne neue Syntax wie `async` und `await`.
+**R-16.23 (Beide Modi).** Threads verhalten sich im Debug- und Releasemodus gleich (R-12.5). C-Code darf aus jedem Thread gerufen werden; R-15.16 gilt für jeden Aufruf. Wie eine Implementierung Threads auf das System abbildet, ist ihr überlassen: Sie darf jeden Thread als Thread des Betriebssystems ausführen oder als leichten Thread (Koroutine) mit eigenem Stapel, den ein Scheduler der Laufzeit auf weniger Threads des Betriebssystems verteilt, solange R-16.18 und R-16.19 gelten. Bei leichten Threads lässt das Warten in `join()`, `send`, `receive`, am Ende von `Thread::scope`, in `Thread::sleep` und bei Ein- und Ausgabe andere Threads laufen; ein Thread, der lange rechnet, darf die anderen nicht für immer am Laufen hindern. Damit bleibt der Weg zu vielen gleichzeitigen Wartevorgängen offen, ohne neue Syntax wie `async` und `await`. In der ersten Implementierung nutzen beide Compiler Threads des Betriebssystems: Programme aus `rppcc` führen ihre Threads parallel aus; der Interpreter `rppc` lässt immer nur einen Thread R++-Code ausführen und wechselt beim Warten und regelmäßig an den Abbruchstellen aus R-16.6.
 
 ## 6. Beispiel
 
@@ -190,6 +190,7 @@ Mit diesem Kapitel haben sich die folgenden Stellen geändert (eingetragen am 27
 | Stelle | Änderung |
 |---|---|
 | R-4.42, R-7.23 | die eingebaute Einschränkung `Transferable` (V-16.5) |
+| R-7.28, R-10.18 | ein Typ-Parameter, der nur im Rückgabetyp eines Funktionsparameters steht, wird aus dem übergebenen Lambda abgeleitet |
 | R-9.2 | neue Art `ThreadError` (V-16.7) |
 | R-9.4 | von `Exception` abgeleitete Klassen müssen übertragbar sein (V-16.6, R-16.10) |
 | R-12.4, R-12.6 | mehrere erlaubte Verhalten mit Threads; Ausgabeaufrufe werden nicht verzahnt (V-16.8) |
@@ -201,23 +202,23 @@ Keine Änderung an `RPP.g4`: Threads, Bereiche und Kanäle sind Klassen der Stan
 
 ## 8. Konformitätstests
 
-Die Laufzeittests sind so geschrieben, dass ihre Ausgabe nicht von der Verzahnung abhängt: Entweder schreibt nur ein Thread, oder die Reihenfolge folgt aus R-16.18. Der Testlauf führt jeden Laufzeittest dieses Kapitels mehrfach aus.
+Die Laufzeittests sind so geschrieben, dass ihre Ausgabe nicht von der Verzahnung abhängt: Entweder schreibt nur ein Thread, oder die Reihenfolge folgt aus R-16.18. Der Testlauf führt jeden Laufzeittest dieses Kapitels dreimal je Modus aus.
 
 | Regeln | Angenommen oder Laufzeit | Abgelehnt |
 |---|---|---|
-| R-16.1 bis R-16.3 | `l01_spawn_join`, `l02_task_result` | `n01_new_thread`, `n02_copy_task` |
+| R-16.1 bis R-16.3 | `l01_spawn_join`, `l02_task_result` | `n01_new_thread`, `n02_copy_task`, `n15_derive_thread` |
 | R-16.2, V-16.2 | `l03_spawn_with_input` | – |
 | R-16.3 | `l04_join_twice` (Laufzeit: `ThreadError`) | – |
 | R-16.4 | `l05_release_waits`, `l06_release_with_exception` (Laufzeit: `ThreadError`) | – |
 | R-16.5 | `l07_join_rethrows` | – |
 | R-16.6 | `l08_program_error_in_thread` (Laufzeit: Exit-Code 2; die Destruktoren des anderen Threads laufen) | – |
-| R-16.7 bis R-16.9 | `a01_transferable_generic` | `n03_capture_shared`, `n04_field_weak`, `n05_subclass_shared`, `n06_ordinary_lambda`, `n07_generic_without_constraint` |
+| R-16.7 bis R-16.9 | `a01_transferable_generic` | `n03_capture_shared`, `n04_field_weak`, `n05_subclass_shared`, `n06_ordinary_lambda`, `n07_generic_without_constraint`, `n13_import_transferable` |
 | R-16.10 | – | `n08_exception_with_shared` |
-| R-16.11 bis R-16.13 | `l09_scope_borrows`, `l10_scope_exception` | `n09_scope_mut_borrow`, `n10_scope_local_borrow`, `n11_scope_change_borrowed` |
+| R-16.11 bis R-16.13 | `l09_scope_borrows`, `l10_scope_exception` | `n09_scope_mut_borrow`, `n10_scope_local_borrow`, `n11_scope_change_borrowed`, `n14_scope_spawn_outside` |
 | R-16.14 bis R-16.17 | `l11_channel_order`, `l12_channel_closed`, `l13_receiver_gone`, `l14_clone_sender` | `n12_nullable_element` |
 | R-16.14 | `l15_capacity_zero` (Laufzeit: `ThreadError`) | – |
 | R-16.18 | `l16_order_through_channel` | – |
 | R-16.19 | `l17_deadlock` (Laufzeit: `ThreadError`) | – |
 | R-16.20 bis R-16.22 | `l18_end_waits`, `l19_destructor_thread` | – |
 
-R-16.23 lässt sich nicht mit einzelnen Programmen prüfen; es ist dadurch abgedeckt, dass alle Laufzeittests dieses Kapitels in beiden Modi laufen.
+R-16.21 und R-16.23 lassen sich nicht mit einzelnen Programmen prüfen: R-16.21 wiederholt R-12.10 für jeden Thread, und R-16.23 ist dadurch abgedeckt, dass alle Laufzeittests dieses Kapitels in beiden Modi laufen.

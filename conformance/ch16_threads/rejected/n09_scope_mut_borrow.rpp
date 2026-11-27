@@ -1,0 +1,18 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.12
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (ein Thread eines Bereichs leiht nur lesend).
+package conformance.ch16;
+
+using rpp.sync.Thread;
+using rpp.sync.Scope;
+
+class Use {
+public:
+    static void run() {
+        i64 count = 0;
+        Thread::scope((mut Scope s) => {
+            s.spawn(() => { count += 1; });   // FEHLER
+        });
+        print(count.toString());
+    }
+}

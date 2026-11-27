@@ -38,24 +38,77 @@
 /* ================================================================ Zustand */
 
 int rt_release = 0;
-rv rt_exc;
-RTrace rt_exc_trace;
-int rt_fatals = 0;
+RT_TLS rv rt_exc;
+RT_TLS RTrace rt_exc_trace;
+RT_TLS int rt_fatals = 0;
 static int rt_nofree = 0;
 
-static const char* fatal_name = NULL;
-static char* fatal_msg = NULL;
-static RTrace fatal_trace;
-static int fatal_pending = 0;
+static RT_TLS const char* fatal_name = NULL;
+static RT_TLS char* fatal_msg = NULL;
+static RT_TLS RTrace fatal_trace;
+static RT_TLS int fatal_pending = 0;
 
-const char* rt_frames[RT_MAX_DEPTH + 16];
-int rt_fdepth = 0;
+RT_TLS const char* rt_frames[RT_MAX_DEPTH + 16];
+RT_TLS int rt_fdepth = 0;
+
+/* ---------------------------------------------------------------- Sperren (Kapitel 16) */
+#ifdef _WIN32
+typedef SRWLOCK RtMutex;
+typedef CONDITION_VARIABLE RtCond;
+#define RT_MUTEX_INIT SRWLOCK_INIT
+#define RT_COND_INIT CONDITION_VARIABLE_INIT
+static void mu_lock(RtMutex* m) { AcquireSRWLockExclusive(m); }
+static void mu_unlock(RtMutex* m) { ReleaseSRWLockExclusive(m); }
+/* wartet höchstens ms Millisekunden (ms < 0: ohne Grenze) */
+static void cv_wait(RtCond* c, RtMutex* m, int64_t ms) {
+    SleepConditionVariableSRW(c, m, ms < 0 ? INFINITE : (DWORD)(ms > 0x7FFFFFF ? 0x7FFFFFF : ms), 0);
+}
+static void cv_all(RtCond* c) { WakeAllConditionVariable(c); }
+static int64_t now_ms(void) { return (int64_t)GetTickCount64(); }
+#else
+typedef pthread_mutex_t RtMutex;
+typedef pthread_cond_t RtCond;
+#define RT_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
+#define RT_COND_INIT PTHREAD_COND_INITIALIZER
+static void mu_lock(RtMutex* m) { pthread_mutex_lock(m); }
+static void mu_unlock(RtMutex* m) { pthread_mutex_unlock(m); }
+static void cv_wait(RtCond* c, RtMutex* m, int64_t ms) {
+    if (ms < 0) {
+        pthread_cond_wait(c, m);
+        return;
+    }
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += (time_t)(ms / 1000);
+    ts.tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L) {
+        ts.tv_sec++;
+        ts.tv_nsec -= 1000000000L;
+    }
+    pthread_cond_timedwait(c, m, &ts);
+}
+static void cv_all(RtCond* c) { pthread_cond_broadcast(c); }
+static int64_t now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L);
+}
+#endif
+
+/* Tabellen, die alle Threads teilen (Literale, Laufzeittypen), und die Eingabe */
+static RtMutex tab_mu = RT_MUTEX_INIT;
+static RtMutex in_mu = RT_MUTEX_INIT;
+static void sync_first_fatal(const char* name, const char* msg, RTrace trace);
+static void sync_input(int entering);
+static int native_sync(rv* out, const char* name, RObj* o, rv* args);
 
 /* ---------------------------------------------------------------- Speicher (M7)
  * Kleine Blöcke (bis 1024 Byte) kommen aus Freilisten je Größenklasse, die aus großen Stücken
  * gespeist werden; größere direkt von malloc. Vor jedem Block steht ein Kopf mit der Klasse
  * (16 Byte, damit die Ausrichtung erhalten bleibt). Der Speicher kleiner Blöcke geht nicht an
- * das Betriebssystem zurück. Die Laufzeit führt R++-Code in einem einzigen Thread aus. */
+ * das Betriebssystem zurück. Freilisten und Stücke hat jeder Thread für sich (Kapitel 16); ein
+ * Block darf in einem anderen Thread freigegeben werden und geht dann in dessen Listen. Endet
+ * ein Thread, übernimmt der nächste neue Thread seine Listen (mem_donate, mem_adopt). */
 #define MEM_HDR 16
 #define MEM_SMALL 1024
 #define MEM_CLASSES 64              /* Klassen in Schritten von 16 Byte */
@@ -63,9 +116,49 @@ int rt_fdepth = 0;
 #define MEM_CHUNK ((size_t)1 << 20)
 
 typedef struct MemFree { struct MemFree* next; } MemFree;
-static MemFree* mem_free_list[MEM_CLASSES + 1];
-static char* mem_chunk_cur = NULL;
-static size_t mem_chunk_left = 0;
+static RT_TLS MemFree* mem_free_list[MEM_CLASSES + 1];
+static RT_TLS char* mem_chunk_cur = NULL;
+static RT_TLS size_t mem_chunk_left = 0;
+
+static RtMutex mem_mu = RT_MUTEX_INIT;
+static MemFree* mem_orphan_list[MEM_CLASSES + 1];
+static char* mem_orphan_cur = NULL;
+static size_t mem_orphan_left = 0;
+
+/* Ein endender Thread gibt seine Freilisten und sein angebrochenes Stück ab. */
+static void mem_donate(void) {
+    mu_lock(&mem_mu);
+    for (int k = 0; k <= MEM_CLASSES; k++) {
+        MemFree* f = mem_free_list[k];
+        if (!f) continue;
+        MemFree* last = f;
+        while (last->next) last = last->next;
+        last->next = mem_orphan_list[k];
+        mem_orphan_list[k] = f;
+        mem_free_list[k] = NULL;
+    }
+    if (mem_chunk_left > mem_orphan_left) {
+        mem_orphan_cur = mem_chunk_cur;
+        mem_orphan_left = mem_chunk_left;
+    }
+    mem_chunk_cur = NULL;
+    mem_chunk_left = 0;
+    mu_unlock(&mem_mu);
+}
+
+/* Ein neuer Thread übernimmt, was beendete Threads abgegeben haben. */
+static void mem_adopt(void) {
+    mu_lock(&mem_mu);
+    for (int k = 0; k <= MEM_CLASSES; k++) {
+        mem_free_list[k] = mem_orphan_list[k];
+        mem_orphan_list[k] = NULL;
+    }
+    mem_chunk_cur = mem_orphan_cur;
+    mem_chunk_left = mem_orphan_left;
+    mem_orphan_cur = NULL;
+    mem_orphan_left = 0;
+    mu_unlock(&mem_mu);
+}
 
 static void mem_oom(void) {
     fputs("Internal error: out of memory\n", stderr);
@@ -440,6 +533,8 @@ static int fatal_v(const char* name, char* msg) {
     fatal_name = name;
     fatal_msg = msg;
     fatal_trace = rt_trace();
+    /* R-16.6: Der erste Programmfehler bricht alle anderen Threads ab. */
+    if (rt_mt) sync_first_fatal(name, msg, fatal_trace);
     return ST_FATAL;
 }
 
@@ -552,8 +647,14 @@ static int io_error(const char* msg, const char* path) {
 
 /* ================================================================ Rahmen */
 
-int rt_enter_overflow(void) {
-    return rt_fatal("StackOverflowError", "More than %d nested calls", RT_MAX_DEPTH);
+/* Der seltene Weg von rt_enter: Stapel voll oder Abbruch (R-16.6). Ein Thread, der schon
+ * abgewickelt wird, ruft weiter Destruktoren und finally-Blöcke auf. */
+int rt_enter_slow(const char* label) {
+    if (rt_fdepth >= RT_MAX_DEPTH) return rt_fatal("StackOverflowError", "More than %d nested calls", RT_MAX_DEPTH);
+    int st = rt_cancel_point();
+    if (st) return st;
+    rt_frames[rt_fdepth++] = label;
+    return ST_OK;
 }
 
 int rt_depth(void) { return rt_fdepth; }
@@ -594,7 +695,17 @@ static uint64_t lit_hash(const char* p, int64_t len) {
     return h;
 }
 
+static RStr* lit_intern_locked(const char* p, int64_t len);
+
 static RStr* lit_intern(const char* p, int64_t len) {
+    if (!rt_mt) return lit_intern_locked(p, len);
+    mu_lock(&tab_mu);
+    RStr* s = lit_intern_locked(p, len);
+    mu_unlock(&tab_mu);
+    return s;
+}
+
+static RStr* lit_intern_locked(const char* p, int64_t len) {
     if ((lit_n + 1) * 2 > lit_cap) {
         size_t cap = lit_cap ? lit_cap * 2 : 1024;
         RStr** tab = (RStr**)calloc(cap, sizeof(RStr*));
@@ -824,7 +935,7 @@ static void text_of(Buf* b, rv v) {
 rv rt_text(rv v) {
     if (v.tag == RT_STR) {
         RStr* s = rt_s(v);
-        if (s->rc >= 0) s->rc++;
+        rt_str_ref(s);
         return rv_str(s, F_OWN);
     }
     Buf b = { 0 };
@@ -854,7 +965,7 @@ static void obj_free(RObj* o) {
 
 static int drop_agg(RAgg* a, uint8_t tag) {
     (void)tag;
-    if (--a->rc > 0) return ST_OK;
+    if (RT_RC_DEC(&a->rc) > 0) return ST_OK;
     int st = ST_OK;
     for (int i = a->n - 1; i >= 0; i--) {
         int d = rt_drop(a->items[i]);
@@ -883,7 +994,7 @@ int rt_drop_slow(rv v) {
     case RT_STR:
         if (v.form == F_OWN) {
             RStr* s = (RStr*)v.v.p;
-            if (s->rc > 0 && --s->rc == 0 && !rt_nofree) xfree(s);
+            if (s->rc > 0 && RT_RC_DEC(&s->rc) == 0 && !rt_nofree) xfree(s);
         }
         return ST_OK;
     case RT_TUP: case RT_ENUMD:
@@ -892,7 +1003,7 @@ int rt_drop_slow(rv v) {
     case RT_FUNC:
         if (v.form == F_OWN) {
             RFun* f = (RFun*)v.v.p;
-            if (--f->rc > 0) return ST_OK;
+            if (RT_RC_DEC(&f->rc) > 0) return ST_OK;
             int st = ST_OK;
             if (f->own) {
                 for (int i = f->n - 1; i >= 0; i--) {
@@ -917,10 +1028,10 @@ int rt_drop_slow(rv v) {
 
 /* ---------------------------------------------------------------- Zwischenwerte */
 
-static rv* temps = NULL;
-int64_t rt_ntemps = 0;
+static RT_TLS rv* temps = NULL;
+RT_TLS int64_t rt_ntemps = 0;
 #define ntemps rt_ntemps
-static int64_t captemps = 0;
+static RT_TLS int64_t captemps = 0;
 
 rv rt_temp_push(rv v) {
     if (ntemps == captemps) {
@@ -984,8 +1095,7 @@ rv rt_promote_slow(rv v) {
     }
     case RT_STR:
         if (v.form == F_BORROW) {
-            RStr* s = (RStr*)v.v.p;
-            if (s->rc >= 0) s->rc++;
+            rt_str_ref((RStr*)v.v.p);
             v.form = F_OWN;
         }
         return v;
@@ -1029,13 +1139,13 @@ rv rt_own_copy(rv v) {
     }
     case RT_FUNC: {
         RFun* f = (RFun*)v.v.p;
-        f->rc++;
+        RT_RC_INC(&f->rc);
         v.form = F_OWN;
         return v;
     }
     case RT_ENUMD: {
         RAgg* a = (RAgg*)v.v.p;
-        a->rc++;
+        RT_RC_INC(&a->rc);
         v.form = F_OWN;
         return v;
     }
@@ -1063,7 +1173,7 @@ int rt_plain(rv v) {
 static rv share(rv v) {
     if (v.tag == RT_TUP || v.tag == RT_ENUMD) {
         if (v.form == F_BORROW) return rt_own_copy(v);
-        ((RAgg*)v.v.p)->rc++;
+        RT_RC_INC(&((RAgg*)v.v.p)->rc);
         v.form = F_OWN;
         return v;
     }
@@ -1236,7 +1346,17 @@ typedef struct TyNode {
 } TyNode;
 static TyNode* tys = NULL;
 
+static const RTy* rt_ty_locked(int32_t kind, int32_t def, int32_t n, const RTy** args);
+
 const RTy* rt_ty(int32_t kind, int32_t def, int32_t n, const RTy** args) {
+    if (!rt_mt) return rt_ty_locked(kind, def, n, args);
+    mu_lock(&tab_mu);
+    const RTy* t = rt_ty_locked(kind, def, n, args);
+    mu_unlock(&tab_mu);
+    return t;
+}
+
+static const RTy* rt_ty_locked(int32_t kind, int32_t def, int32_t n, const RTy** args) {
     for (TyNode* p = tys; p; p = p->next) {
         if (p->t.kind != kind || p->t.def != def || p->t.n != n) continue;
         int same = 1;
@@ -1360,12 +1480,16 @@ static int destruct(RObj* o) {
 int rt_unpack(rv v, int n, rv* out) {
     if (v.tag == RT_TUP) {
         RAgg* a = (RAgg*)v.v.p;
-        for (int i = 0; i < n && i < a->n; i++) out[i] = (v.form == F_BORROW) ? rv_view(a->items[i]) : (a->rc == 1 ? a->items[i] : share(a->items[i]));
+        /* einziger Verweis: Die Elemente gehen über; sonst werden sie geteilt */
+        int single = a->rc == 1;
+        for (int i = 0; i < n && i < a->n; i++) out[i] = (v.form == F_BORROW) ? rv_view(a->items[i]) : (single ? a->items[i] : share(a->items[i]));
         if (v.form == F_OWN) {
-            if (a->rc == 1) {
+            if (single) {
                 if (!rt_nofree) xfree(a);
-            } else {
-                a->rc--;
+            } else if (RT_RC_DEC(&a->rc) == 0) {
+                /* ein anderer Thread hat seinen Verweis inzwischen aufgegeben */
+                for (int i = a->n - 1; i >= 0; i--) rt_drop(a->items[i]);
+                if (!rt_nofree) xfree(a);
             }
         }
         return ST_OK;
@@ -1504,8 +1628,7 @@ int rt_deep_copy(rv* out, rv v) {
                     continue;
                 }
                 if (x.tag == RT_STR) {
-                    RStr* s = (RStr*)x.v.p;
-                    if (s->rc >= 0) s->rc++;
+                    rt_str_ref((RStr*)x.v.p);
                     x.form = F_OWN;
                     n->slots[n->len++] = x;
                     continue;
@@ -2764,7 +2887,7 @@ static int is_file(const char* p) { return file_mode(p) == S_IFREG; }
 static int is_dir(const char* p) { return file_mode(p) == S_IFDIR; }
 
 static const char* sys_err(void) {
-    static char buf[256];
+    static RT_TLS char buf[256];
     snprintf(buf, sizeof buf, "%s (os error %d)", strerror(errno), errno);
     return buf;
 }
@@ -2802,9 +2925,26 @@ static void read_input(void) {
     Buf b = { 0 };
     char tmp[4096];
     size_t n;
+    /* R-16.6: Ein Thread, der auf Eingabe wartet, hält das Programmende nicht auf. */
+    if (rt_mt) sync_input(1);
     while ((n = fread(tmp, 1, sizeof tmp, stdin)) > 0) buf_add(&b, tmp, (int64_t)n);
+    if (rt_mt) sync_input(0);
     in_buf = b.p ? b.p : (char*)"";
     in_len = b.n;
+}
+
+/* Console::readLine; mit mehreren Threads liest immer nur einer (R-16.18) */
+static int console_read_line(rv* out) {
+    read_input();
+    if (in_pos >= in_len) { *out = rv_null(); return ST_OK; }
+    int64_t e = in_pos;
+    while (e < in_len && in_buf[e] != '\n') e++;
+    int64_t used = e < in_len ? e - in_pos + 1 : e - in_pos;
+    int64_t l = e - in_pos;
+    if (l > 0 && in_buf[in_pos + l - 1] == '\r') l--;
+    *out = rt_str_from(in_buf + in_pos, l);
+    in_pos += used;
+    return ST_OK;
 }
 
 static void normalize_path(const char* in, Buf* out) {
@@ -3697,17 +3837,17 @@ int rt_native(rv* out, const char* name, rv self, int n, rv* args, int mut_this,
         return ST_OK;
     }
     if (IS("rpp.io.Console.readLine")) {
-        read_input();
-        if (in_pos >= in_len) { *out = rv_null(); return ST_OK; }
-        int64_t e = in_pos;
-        while (e < in_len && in_buf[e] != '\n') e++;
-        int64_t used = e < in_len ? e - in_pos + 1 : e - in_pos;
-        int64_t l = e - in_pos;
-        if (l > 0 && in_buf[in_pos + l - 1] == '\r') l--;
-        *out = rt_str_from(in_buf + in_pos, l);
-        in_pos += used;
-        return ST_OK;
+        if (!rt_mt) return console_read_line(out);
+        mu_lock(&in_mu);
+        int st = console_read_line(out);
+        mu_unlock(&in_mu);
+        if (st == ST_OK) {
+            st = rt_cancel_point();
+            if (st) rt_drop(*out);
+        }
+        return st;
     }
+    if (name[4] == 's' && !strncmp(name, "rpp.sync.", 9)) return native_sync(out, name + 9, o, args);
     if (IS("rpp.io.File.openTextReader")) {
         const char* path = rt_s(args[0])->data;
         if (is_dir(path)) { errno = EISDIR; return path_io_error(path); }
@@ -4370,7 +4510,7 @@ int rt_new_param(rv* out, const RTy* t) {
     return ST_OK;
 }
 
-static const RTy** pending_mtargs = NULL;
+static RT_TLS const RTy** pending_mtargs = NULL;
 
 void rt_set_mtargs(const RTy** t) { pending_mtargs = t; }
 
@@ -4399,6 +4539,646 @@ typedef struct MainArgs {
 static void print_trace(RTrace t) {
     if (rt_release) return;
     for (int i = 0; i < t.n; i++) fprintf(stderr, "    at %s\n", t.labels[i]);
+}
+
+/* ================================================================ Threads (Kapitel 16)
+ *
+ * rpp.sync: Thread, Task, Scope und Kanäle. Jeder R++-Thread ist ein Thread des Betriebssystems;
+ * die Threads laufen wirklich nebeneinander. Das Register der Threads, Bereiche und Kanäle
+ * schützt eine Sperre (sync_mu); gewartet wird an einer Bedingung (sync_cv), die jede Änderung
+ * weckt. Die Objekte Thread, Task, Scope, Sender und Receiver tragen in ihrem Feld id die
+ * Nummer des Eintrags.
+ *
+ * Verklemmung (R-16.19): sync_gen zählt die Änderungen; sync_waiting zählt die Threads, die
+ * beim jetzigen Stand ihre Bedingung geprüft haben und warten. Warten so alle laufenden
+ * Threads, kann keiner mehr etwas ändern.
+ */
+
+int rt_mt = 0;
+volatile int rt_cancel = 0;
+int rt_depth_limit = RT_MAX_DEPTH;
+
+typedef struct SyncThread {
+    int64_t id;
+    int done, joined, external;
+    int st;             /* ST_OK, ST_THROW oder ST_FATAL */
+    rv result;          /* Ergebnis oder Exception */
+    RTrace trace;
+    RFun* body;
+    rv input;
+    int has_input;
+    struct SyncThread* next;
+} SyncThread;
+
+typedef struct SyncChan {
+    int64_t id;
+    rv* q;
+    int64_t head, n, cap, senders;
+    int receiver;
+    struct SyncChan* next;
+} SyncChan;
+
+typedef struct SyncScope {
+    int64_t id;
+    int64_t* ids;       /* Threads in Startreihenfolge (R-16.13) */
+    int n, cap;
+    struct SyncScope* next;
+} SyncScope;
+
+static RtMutex sync_mu = RT_MUTEX_INIT;
+static RtCond sync_cv = RT_COND_INIT;
+static SyncThread* sync_threads = NULL;
+static SyncChan* sync_chans = NULL;
+static SyncScope* sync_scopes = NULL;
+static int64_t sync_next = 1;
+static int64_t sync_alive = 1;      /* laufende Threads einschließlich main */
+static int64_t sync_gen = 0;
+static int64_t sync_waiting = 0;
+static int64_t sync_external = 0;   /* Threads, die auf Eingabe warten */
+static RT_TLS int64_t sync_tid = 0;
+static RT_TLS SyncThread* sync_self = NULL;
+
+/* der erste Programmfehler (R-16.6) */
+static int ff_set = 0;
+static int64_t ff_tid = 0;
+static const char* ff_name = NULL;
+static char* ff_msg = NULL;
+static RTrace ff_trace;
+
+/* mit gehaltener Sperre: Es hat sich etwas geändert, worauf ein Thread warten kann. */
+static void sync_bump(void) {
+    sync_gen++;
+    sync_waiting = 0;
+    cv_all(&sync_cv);
+}
+
+static void sync_first_fatal(const char* name, const char* msg, RTrace trace) {
+    mu_lock(&sync_mu);
+    if (!ff_set) {
+        ff_set = 1;
+        ff_tid = sync_tid;
+        ff_name = name;
+        size_t n = strlen(msg);
+        ff_msg = (char*)malloc(n + 1);
+        if (ff_msg) memcpy(ff_msg, msg, n + 1);
+        ff_trace = trace;
+    }
+    rt_depth_limit = 0;
+    rt_cancel = 1;
+    sync_bump();
+    mu_unlock(&sync_mu);
+}
+
+/* Abbruchstelle (R-16.6): Nach einem Programmfehler in einem anderen Thread wird dieser Thread
+ * abgewickelt wie bei einem eigenen Programmfehler. */
+int rt_cancel_point(void) {
+    if (!rt_cancel || fatal_pending) return ST_OK;
+    rt_fatals++;
+    fatal_pending = 1;
+    fatal_name = "Cancelled";
+    fatal_msg = (char*)xmalloc(1);
+    fatal_msg[0] = 0;
+    fatal_trace.n = 0;
+    fatal_trace.labels = NULL;
+    return ST_FATAL;
+}
+
+static void sync_input(int entering) {
+    mu_lock(&sync_mu);
+    sync_external += entering ? 1 : -1;
+    if (sync_self) sync_self->external = entering;
+    sync_bump();
+    mu_unlock(&sync_mu);
+}
+
+/* mit gehaltener Sperre: wartet auf eine Änderung. ST_FATAL, wenn dieser Thread abgebrochen
+ * wird oder alle Threads warten (R-16.19); ein Thread, der schon abgewickelt wird, wartet weiter. */
+static int sync_wait_change(void) {
+    if (rt_cancel) {
+        if (!fatal_pending) return rt_cancel_point();
+        cv_wait(&sync_cv, &sync_mu, -1);
+        return ST_OK;
+    }
+    int64_t g = sync_gen;
+    sync_waiting++;
+    if (sync_waiting >= sync_alive) {
+        sync_waiting--;
+        mu_unlock(&sync_mu);
+        int st = rt_fatal("ThreadError", "Deadlock: every thread is waiting for another one");
+        /* welcher Thread die Verklemmung bemerkt, ist Zufall: ohne Stacktrace */
+        fatal_trace.n = 0;
+        mu_lock(&sync_mu);
+        if (ff_tid == sync_tid) ff_trace.n = 0;
+        return st;
+    }
+    cv_wait(&sync_cv, &sync_mu, -1);
+    if (sync_gen == g) sync_waiting--;
+    return ST_OK;
+}
+
+static SyncThread* sync_find_thread(int64_t id) {
+    for (SyncThread* t = sync_threads; t; t = t->next)
+        if (t->id == id) return t;
+    return NULL;
+}
+
+static void sync_remove_thread(SyncThread* t) {
+    for (SyncThread** p = &sync_threads; *p; p = &(*p)->next) {
+        if (*p == t) {
+            *p = t->next;
+            break;
+        }
+    }
+    free(t);
+}
+
+static SyncChan* sync_find_chan(int64_t id) {
+    for (SyncChan* c = sync_chans; c; c = c->next)
+        if (c->id == id) return c;
+    return NULL;
+}
+
+static void sync_remove_chan(SyncChan* c) {
+    for (SyncChan** p = &sync_chans; *p; p = &(*p)->next) {
+        if (*p == c) {
+            *p = c->next;
+            break;
+        }
+    }
+    free(c->q);
+    free(c);
+}
+
+static SyncScope* sync_find_scope(int64_t id) {
+    for (SyncScope* s = sync_scopes; s; s = s->next)
+        if (s->id == id) return s;
+    return NULL;
+}
+
+static void sync_run(SyncThread* t) {
+    sync_tid = t->id;
+    sync_self = t;
+    rt_exc = rv_null();
+    mem_adopt();
+    rv ret = rv_void();
+    rv args[1];
+    args[0] = t->input;
+    int st = t->body->fn(&ret, t->body, args);
+    if (st == ST_RET) st = ST_OK;
+    rv exc = rv_null();
+    RTrace trace;
+    trace.n = 0;
+    trace.labels = NULL;
+    if (st == ST_THROW) {
+        exc = rt_take_exc();
+        trace = rt_exc_trace;
+    }
+    int d = rt_drop(rv_fun(t->body, F_OWN));
+    if (d == ST_FATAL) {
+        if (st == ST_OK) rt_drop(ret);
+        if (st == ST_THROW) rt_drop(exc);
+        st = ST_FATAL;
+    }
+    fflush(stdout);
+    mem_donate();
+    mu_lock(&sync_mu);
+    t->st = st;
+    t->result = st == ST_OK ? ret : (st == ST_THROW ? exc : rv_void());
+    t->trace = trace;
+    t->done = 1;
+    sync_alive--;
+    sync_bump();
+    mu_unlock(&sync_mu);
+}
+
+#ifdef _WIN32
+static DWORD WINAPI sync_entry(LPVOID p) {
+    sync_run((SyncThread*)p);
+    return 0;
+}
+#else
+static void* sync_entry(void* p) {
+    sync_run((SyncThread*)p);
+    return NULL;
+}
+#endif
+
+/* Startet einen Thread, der body ausführt (R-16.2); er übernimmt body und input. */
+static int sync_start(int64_t* id, RFun* body, rv input, int has_input) {
+    rt_mt = 1;
+    SyncThread* t = (SyncThread*)calloc(1, sizeof(SyncThread));
+    if (!t) mem_oom();
+    t->body = body;
+    t->input = input;
+    t->has_input = has_input;
+    t->result = rv_void();
+    mu_lock(&sync_mu);
+    t->id = sync_next++;
+    t->next = sync_threads;
+    sync_threads = t;
+    sync_alive++;
+    mu_unlock(&sync_mu);
+    *id = t->id;
+    int ok;
+#ifdef _WIN32
+    HANDLE h = CreateThread(NULL, (SIZE_T)1 << 30, sync_entry, t, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+    ok = h != NULL;
+    if (h) CloseHandle(h);
+#else
+    pthread_attr_t a;
+    pthread_attr_init(&a);
+    pthread_attr_setstacksize(&a, (size_t)1 << 30);
+    pthread_t th;
+    ok = pthread_create(&th, &a, sync_entry, t) == 0;
+    pthread_attr_destroy(&a);
+    if (ok) pthread_detach(th);
+#endif
+    if (!ok) {
+        mu_lock(&sync_mu);
+        sync_remove_thread(t);
+        sync_alive--;
+        mu_unlock(&sync_mu);
+        rt_drop(rv_fun(body, F_OWN));
+        if (has_input) rt_drop(input);
+        return rt_fatal("ThreadError", "The thread cannot be started");
+    }
+    return ST_OK;
+}
+
+static int sync_object(rv* out, const char* full, int64_t id) {
+    int st = rt_std_new(out, full, 0, NULL);
+    if (st) return st;
+    RObj* o = (RObj*)out->v.p;
+    o->slots[0] = rn_box(id, RT_I64);
+    return ST_OK;
+}
+
+/* Ist der Thread fertig? Beim Abwickeln nach einem Programmfehler gilt auch ein Thread als
+ * fertig, der auf Eingabe wartet (R-16.6). */
+static int sync_done(SyncThread* t) {
+    return !t || t->done || (fatal_pending && t->external);
+}
+
+static int sync_join(rv* out, int64_t id) {
+    mu_lock(&sync_mu);
+    SyncThread* t = sync_find_thread(id);
+    if (!t || t->joined) {
+        mu_unlock(&sync_mu);
+        return rt_fatal("ThreadError", "The thread has already been joined");
+    }
+    if (id == sync_tid) {
+        mu_unlock(&sync_mu);
+        return rt_fatal("ThreadError", "A thread cannot join itself");
+    }
+    while (!t->done) {
+        int st = sync_wait_change();
+        if (st) {
+            mu_unlock(&sync_mu);
+            return st;
+        }
+    }
+    t->joined = 1;
+    int st = t->st;
+    rv r = t->result;
+    RTrace trace = t->trace;
+    t->result = rv_void();
+    mu_unlock(&sync_mu);
+    if (st == ST_OK) {
+        *out = r;
+        return ST_OK;
+    }
+    if (st == ST_THROW) {
+        /* R-16.5: dieselbe Exception, mit dem Stacktrace des beendeten Threads */
+        rt_exc = r;
+        rt_exc_trace = trace;
+        return ST_THROW;
+    }
+    st = rt_cancel_point();
+    return st ? st : ST_FATAL;
+}
+
+/* Thread- oder Task-Handle freigeben (R-16.4) */
+static int sync_release(int64_t id) {
+    mu_lock(&sync_mu);
+    SyncThread* t = sync_find_thread(id);
+    if (!t) {
+        mu_unlock(&sync_mu);
+        return ST_OK;
+    }
+    int st = ST_OK;
+    if (!t->joined) {
+        if (id == sync_tid) {
+            t->joined = 1;
+            mu_unlock(&sync_mu);
+            return rt_fatal("ThreadError", "A thread cannot wait for itself");
+        }
+        while (!sync_done(t)) {
+            int w = sync_wait_change();
+            if (w && !st) st = w;
+        }
+        int ts = t->done ? t->st : ST_FATAL;
+        rv r = t->result;
+        t->result = rv_void();
+        if (t->done) sync_remove_thread(t);
+        mu_unlock(&sync_mu);
+        if (ts == ST_OK) return rt_combine(st, rt_drop(r));
+        if (ts == ST_THROW) {
+            if (fatal_pending) {
+                rt_drop(r);
+                return st;
+            }
+            rv msg;
+            rt_describe(&msg, r);
+            const char* name = (r.tag == RT_OBJ && ((RObj*)r.v.p)->cls) ? ((RObj*)r.v.p)->cls->name : "";
+            st = rt_fatal("ThreadError", "A thread ended with an exception that nobody retrieved with join: %s: %s", name, rt_s(msg)->data);
+            rt_drop(msg);
+            rt_drop(r);
+        }
+        return st;
+    }
+    if (t->done) sync_remove_thread(t);
+    mu_unlock(&sync_mu);
+    return ST_OK;
+}
+
+/* Thread::scope (R-16.11, R-16.13) */
+static int sync_scope(rv* out, rv body) {
+    SyncScope* sc = (SyncScope*)calloc(1, sizeof(SyncScope));
+    if (!sc) mem_oom();
+    mu_lock(&sync_mu);
+    sc->id = sync_next++;
+    sc->next = sync_scopes;
+    sync_scopes = sc;
+    mu_unlock(&sync_mu);
+    rv so;
+    int st = sync_object(&so, "rpp.sync.Scope", sc->id);
+    rv ret = rv_void();
+    if (st == ST_OK) {
+        rv args[1];
+        args[0] = rv_view(so);
+        st = rt_call_value(&ret, body, args);
+        if (st == ST_RET) st = ST_OK;
+    }
+    /* Alle Threads des Bereichs enden vor seinem Ende; ein Fehler beim Warten (Abbruch,
+     * Verklemmung) wickelt diesen Thread ab, gewartet wird trotzdem. */
+    int failed = ST_OK;
+    mu_lock(&sync_mu);
+    for (int i = 0; i < sc->n; i++) {
+        SyncThread* t = sync_find_thread(sc->ids[i]);
+        while (!sync_done(t)) {
+            int w = sync_wait_change();
+            if (w && !failed && st != ST_FATAL) failed = w;
+        }
+    }
+    rv first = rv_null();
+    RTrace first_trace;
+    first_trace.n = 0;
+    first_trace.labels = NULL;
+    int have = 0;
+    rv* rest = (rv*)calloc((size_t)sc->n + 1, sizeof(rv));
+    int nrest = 0;
+    for (int i = 0; i < sc->n; i++) {
+        SyncThread* t = sync_find_thread(sc->ids[i]);
+        if (!t || !t->done) continue;
+        if (t->st == ST_THROW && !have && st == ST_OK && !failed) {
+            first = t->result;
+            first_trace = t->trace;
+            have = 1;
+        } else if (t->st != ST_FATAL && rest) {
+            rest[nrest++] = t->result;
+        }
+        sync_remove_thread(t);
+    }
+    for (SyncScope** p = &sync_scopes; *p; p = &(*p)->next) {
+        if (*p == sc) {
+            *p = sc->next;
+            break;
+        }
+    }
+    mu_unlock(&sync_mu);
+    free(sc->ids);
+    free(sc);
+    for (int i = 0; i < nrest; i++) rt_drop(rest[i]);
+    free(rest);
+    int d = (so.tag == RT_OBJ) ? rt_drop(so) : ST_OK;
+    *out = rv_void();
+    if (st == ST_FATAL) return st;
+    if (failed) {
+        if (st == ST_THROW) rt_drop(rt_take_exc());
+        return failed;
+    }
+    if (st) return st;
+    if (have) {
+        rt_exc = first;
+        rt_exc_trace = first_trace;
+        return ST_THROW;
+    }
+    return d;
+}
+
+static int sync_sleep(int64_t ms) {
+    if (ms < 0) ms = 0;
+    if (!rt_mt) {
+#ifdef _WIN32
+        Sleep((DWORD)ms);
+#else
+        struct timespec ts;
+        ts.tv_sec = (time_t)(ms / 1000);
+        ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+        nanosleep(&ts, NULL);
+#endif
+        return ST_OK;
+    }
+    int64_t end = now_ms() + ms;
+    mu_lock(&sync_mu);
+    for (;;) {
+        if (rt_cancel && !fatal_pending) {
+            mu_unlock(&sync_mu);
+            return rt_cancel_point();
+        }
+        int64_t rest = end - now_ms();
+        if (rest <= 0) break;
+        cv_wait(&sync_cv, &sync_mu, rest);
+    }
+    mu_unlock(&sync_mu);
+    return ST_OK;
+}
+
+static int sync_send(rv* out, int64_t id, rv value) {
+    mu_lock(&sync_mu);
+    for (;;) {
+        SyncChan* c = sync_find_chan(id);
+        if (!c || !c->receiver) break;
+        if (c->n < c->cap) {
+            c->q[(c->head + c->n) % c->cap] = value;
+            c->n++;
+            sync_bump();
+            mu_unlock(&sync_mu);
+            *out = rv_bool(1);
+            return ST_OK;
+        }
+        int st = sync_wait_change();
+        if (st) {
+            mu_unlock(&sync_mu);
+            rt_drop(value);
+            return st;
+        }
+    }
+    mu_unlock(&sync_mu);
+    /* R-16.15: Der Empfänger ist freigegeben. */
+    int st = rt_drop(value);
+    *out = rv_bool(0);
+    return st;
+}
+
+static int sync_receive(rv* out, int64_t id) {
+    mu_lock(&sync_mu);
+    for (;;) {
+        SyncChan* c = sync_find_chan(id);
+        if (!c) break;
+        if (c->n > 0) {
+            *out = c->q[c->head];
+            c->head = (c->head + 1) % c->cap;
+            c->n--;
+            sync_bump();
+            mu_unlock(&sync_mu);
+            return ST_OK;
+        }
+        if (c->senders == 0) break;
+        int st = sync_wait_change();
+        if (st) {
+            mu_unlock(&sync_mu);
+            return st;
+        }
+    }
+    mu_unlock(&sync_mu);
+    *out = rv_null();
+    return ST_OK;
+}
+
+static int native_sync(rv* out, const char* name, RObj* o, rv* args) {
+    int64_t id = (o && o->len > 0) ? o->slots[0].v.i : 0;
+#define SY(x) (!strcmp(name, x))
+    if (SY("Thread.spawn") || SY("Thread.spawnTask") || SY("Thread.spawnWith") || SY("Thread.spawnWithTask")) {
+        int with = name[12] == 'W';
+        int task = name[strlen(name) - 1] == 'k';
+        rv f = args[with];
+        if (f.tag != RT_FUNC) return rt_internal("Thread ohne Rumpf");
+        int64_t tid;
+        int st = sync_start(&tid, (RFun*)f.v.p, with ? args[0] : rv_void(), with);
+        if (st) return st;
+        return sync_object(out, task ? "rpp.sync.Task" : "rpp.sync.Thread", tid);
+    }
+    if (SY("Thread.scope")) return sync_scope(out, args[0]);
+    if (SY("Thread.sleep")) return sync_sleep(args[0].v.i);
+    if (SY("Thread.join") || SY("Task.join")) return sync_join(out, id);
+    if (SY("Thread.release") || SY("Task.release")) return sync_release(id);
+    if (SY("Scope.spawn")) {
+        rv f = args[0];
+        if (f.tag != RT_FUNC) return rt_internal("Thread ohne Rumpf");
+        RFun* body = (RFun*)f.v.p;
+        rt_mt = 1;
+        RT_RC_INC(&body->rc);      /* der Thread hält einen eigenen Verweis auf den Rumpf */
+        int64_t tid;
+        int st = sync_start(&tid, body, rv_void(), 0);
+        if (st) return st;
+        mu_lock(&sync_mu);
+        SyncScope* sc = sync_find_scope(id);
+        if (sc) {
+            if (sc->n == sc->cap) {
+                sc->cap = sc->cap ? sc->cap * 2 : 8;
+                sc->ids = (int64_t*)realloc(sc->ids, sizeof(int64_t) * (size_t)sc->cap);
+                if (!sc->ids) mem_oom();
+            }
+            sc->ids[sc->n++] = tid;
+        }
+        mu_unlock(&sync_mu);
+        return ST_OK;
+    }
+    if (SY("Channel.open")) {
+        int64_t cap = args[0].v.i;
+        if (cap < 1) return rt_fatal("ThreadError", "The capacity of a channel must be at least 1, got %lld", (long long)cap);
+        SyncChan* c = (SyncChan*)calloc(1, sizeof(SyncChan));
+        if (!c) mem_oom();
+        c->q = (rv*)calloc((size_t)cap, sizeof(rv));
+        if (!c->q) mem_oom();
+        c->cap = cap;
+        c->senders = 1;
+        c->receiver = 1;
+        mu_lock(&sync_mu);
+        c->id = sync_next++;
+        c->next = sync_chans;
+        sync_chans = c;
+        int64_t cid = c->id;
+        mu_unlock(&sync_mu);
+        rv ends[2];
+        int st = sync_object(&ends[0], "rpp.sync.Sender", cid);
+        if (st) return st;
+        st = sync_object(&ends[1], "rpp.sync.Receiver", cid);
+        if (st) return st;
+        *out = rt_tuple(2, ends);
+        return ST_OK;
+    }
+    if (SY("Sender.send")) return sync_send(out, id, args[0]);
+    if (SY("Sender.clone")) {
+        mu_lock(&sync_mu);
+        SyncChan* c = sync_find_chan(id);
+        if (c) c->senders++;
+        mu_unlock(&sync_mu);
+        return sync_object(out, "rpp.sync.Sender", id);
+    }
+    if (SY("Sender.close")) {
+        mu_lock(&sync_mu);
+        SyncChan* c = sync_find_chan(id);
+        if (c) {
+            if (c->senders > 0) c->senders--;
+            if (c->senders == 0 && !c->receiver) sync_remove_chan(c);
+            sync_bump();
+        }
+        mu_unlock(&sync_mu);
+        return ST_OK;
+    }
+    if (SY("Receiver.receive")) return sync_receive(out, id);
+    if (SY("Receiver.close")) {
+        rv* left = NULL;
+        int64_t n = 0;
+        mu_lock(&sync_mu);
+        SyncChan* c = sync_find_chan(id);
+        if (c) {
+            c->receiver = 0;
+            n = c->n;
+            left = (rv*)calloc((size_t)n + 1, sizeof(rv));
+            if (!left) mem_oom();
+            for (int64_t i = 0; i < n; i++) left[i] = c->q[(c->head + i) % c->cap];
+            c->n = 0;
+            if (c->senders == 0) sync_remove_chan(c);
+            sync_bump();
+        }
+        mu_unlock(&sync_mu);
+        /* Werte, die niemand mehr empfängt, werden freigegeben. */
+        int st = ST_OK;
+        for (int64_t i = 0; i < n; i++) st = rt_combine(st, rt_drop(left[i]));
+        free(left);
+        return st;
+    }
+#undef SY
+    return rt_internal("rpp.sync");
+}
+
+/* Ende von main mit Threads (R-16.6, R-16.20): warten, bis alle Threads geendet haben. Nach
+ * einem Programmfehler in einem anderen Thread dessen Meldung; dann liefert es 1. */
+static int sync_end_main(int st) {
+    mu_lock(&sync_mu);
+    /* Nur nach einem Programmfehler bleibt ein Thread zurück, der auf Eingabe wartet oder in
+     * C-Code steckt (R-16.6); sonst wartet main auf alle (R-16.20). */
+    while (sync_alive - (rt_cancel ? sync_external : 0) > 1) cv_wait(&sync_cv, &sync_mu, 200);
+    int other = ff_set && !(ff_tid == 0 && st == ST_FATAL);
+    mu_unlock(&sync_mu);
+    if (!other) return 0;
+    fflush(stdout);
+    fprintf(stderr, "%s: %s\n", ff_name ? ff_name : "?", ff_msg ? ff_msg : "");
+    print_trace(ff_trace);
+    return 1;
 }
 
 static void run_main(MainArgs* m) {
@@ -4430,6 +5210,12 @@ static void run_main(MainArgs* m) {
 #endif
     rv ret = rv_void();
     int st = m->body(&ret, rv_obj(v, F_OWN));
+    if (rt_mt && sync_end_main(st)) {
+        m->exit = 2;
+        fflush(stdout);
+        fflush(stderr);
+        return;
+    }
     fflush(stdout);
     if (st == ST_OK) {
         m->exit = rt_is_int_tag(ret.tag) ? (int32_t)w_of(ret).lo : 0;
@@ -4646,10 +5432,16 @@ void* rt_native_sym(void* h, const char* lib, const char* name) {
     return f;
 }
 
-/* V-15.6: Ausgaben vor jedem Aufruf leeren */
+/* V-15.6: Ausgaben vor jedem Aufruf leeren. Mit mehreren Threads gilt der Thread bis
+ * rt_native_done als außerhalb von R++ (R-16.6). */
 void rt_native_flush(void) {
     fflush(stdout);
     fflush(stderr);
+    if (rt_mt) sync_input(1);
+}
+
+void rt_native_done(void) {
+    if (rt_mt) sync_input(0);
 }
 
 /* R-15.7: string als UTF-8 mit abschließender 0; U+0000 im Text ist ein NativeError */

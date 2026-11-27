@@ -57,6 +57,8 @@ Runtime tests are executed in both modes and in the test mode (output, exit code
 
 Before the tests of a chapter with a folder `native/`, the test run compiles every `native/*.c` into a shared library in `native/build/` (`cl /LD` under Windows, `cc -shared` otherwise); under Windows `test` therefore has to run in the MSVC environment (`vcvars64.bat`). Runtime tests of such projects run as a separate `rppc run` process, so that a crash in C does not end the test run. The interpreter loads every library named by `extern` declarations before `main` and resolves all symbols (R-15.12); in release mode, a missing library or symbol counts as a build error.
 
+Threads (chapter 16): every R++ thread is an operating system thread with an interpreter of its own (`rpp-interp/src/sync.rs`). The interpreter's values are not thread-safe, so only the thread holding the lock of the shared state (`world.rs`) runs R++ code; the lock is handed over at waits and regularly at calls and loop iterations. Threads therefore do not run in parallel here, unlike in programs from `rppcc`. A test that uses `rpp.sync` runs three times in each mode, and the invariant checks of `--check-invariants` apply only to programs without `rpp.sync`.
+
 Use a source file or project directory for `PATH`. In a `run` command, arguments after the second `--` go to the R++ program. `Console::readLine()` reads from standard input, including from a pipe or redirected file.
 
 ```

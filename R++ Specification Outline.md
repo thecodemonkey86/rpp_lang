@@ -125,7 +125,7 @@ Priority from weak to strong binding:
 
 ### 3.3 Tested readings
 
-The ambiguities suspected in the draft are resolved as follows. ANTLR reports ambiguity only for the last row of the table.
+The ambiguities suspected in the draft are resolved as follows. ANTLR reports an ambiguity only for the tuple declaration with generic types and for the last row of the table.
 
 | Entry | Less | Reason |
 |---|---|---|
@@ -135,6 +135,7 @@ The ambiguities suspected in the draft are resolved as follows. ANTLR reports am
 | `Foo? f = flag ? a : b;` | Conditional expression declaration | `Foo? f` is not an expression |
 | `a?.b();` | Zero call | `?.` is its own token; `.5` is not a literal |
 | `(i32 a, i32 b) = f();` | Tuple Declaration | Type followed by name |
+| `(Box<Foo> a, Box<Bar> b) = f();` | Tuple declaration | Type followed by name; ANTLR reports the reading as an assignment to a tuple of comparisons as an ambiguity, the declaration takes precedence |
 | `(i32, i32) t = f();` | Variable with tuple type | |
 | `(a, b) = f();` | Allocation of existing variables | |
 | `f((i32 x) => x + 1, y);` | Lambda with hull `x + 1`, then second argument | Lambda at expression level |

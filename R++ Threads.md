@@ -4,7 +4,7 @@
 
 Status: 27.11.2026, draft 0.1. This document fills Chapter 16 of the "R++ Specification Outline". It specifies how an R++ program runs code in several threads: starting and joining threads, scopes whose threads borrow data of the enclosing block, which values may cross to another thread, channels as the only way to exchange data, exceptions and program errors in threads, and what remains observable when several threads run.
 
-The fundamentals are decided (see "R++ Design Decisions", Section 12, milestone M11 in the Implementation Plan). The proposals in Section 0 arose while writing out the rules and were accepted on 27.11.2026, V-16.9 in an amended form (all threads unwind); the rules that depend on them name them. Every normative rule carries a number `R-16.n`. The conformance tests will be in `conformance/ch16_threads/`.
+The fundamentals are decided (see "R++ Design Decisions", Section 12, milestone M11 in the Implementation Plan). The proposals in Section 0 arose while writing out the rules and were accepted on 27.11.2026, V-16.9 in an amended form (all threads unwind); the rules that depend on them name them. Every normative rule carries a number `R-16.n`. The conformance tests are in `conformance/ch16_threads/`.
 
 ## 0. Amendments from writing out the rules (adopted on 27.11.2026)
 
@@ -84,7 +84,7 @@ None of these classes can be constructed with `new` or derived from. `Thread`, `
 ## 2. Transfer between threads
 
 **R-16.7 (Transferable types).** A type is transferable if a value of it contains no reference that another thread could use at the same time:
-- primitive types, `string`, enums and handle types (Chapter 15) are transferable;
+- primitive types, `string`, enums without data and handle types (Chapter 15) are transferable; an enum with data is transferable if the types of its data are;
 - `T?`, `T[]` and tuples are transferable if their element types are;
 - a class type is transferable if no field of the class, of its base classes and of any subclass in the program has a type with `shared` or `weak` or a non-transferable type; for generic classes, with the type arguments substituted;
 - a mixin type is transferable if every class in the program that imports the mixin is;
@@ -94,7 +94,7 @@ Strings are shared internally; implementations count their references atomically
 
 **R-16.8 (Transferable constraint).** `Transferable` (V-16.5) is a constraint like a mixin type (R-7.23) that every transferable type satisfies. It cannot be imported and is not a type of values. A type parameter with this constraint is transferable; a type parameter without it is not.
 
-**R-16.9 (What crosses at the start).** For `Thread::spawn` and `spawnWith`, the `own` lambda must capture only values of transferable types (R-10.8), and `D` and `T` must be transferable. An ordinary lambda or an existing function value is not accepted: `body` must be an `own` lambda expression at the call, so that its captures can be checked.
+**R-16.9 (What crosses at the start).** For `Thread::spawn` and `spawnWith`, the `own` lambda must capture only values of transferable types (R-10.8), and `D` and `T` must be transferable. An ordinary lambda or an existing function value is not accepted: `body` must be an `own` lambda expression at the call, so that its captures can be checked. A type argument `D` or `T` that is not transferable is reported under R-7.26; `T` is derived from the return type of the lambda (R-7.28).
 
 **R-16.10 (Exceptions cross).** Every class derived from `Exception` must be transferable (V-16.6). A field of type `shared`, `weak` or of a non-transferable type in such a class or in one of its subclasses is an error at the field.
 
@@ -102,7 +102,7 @@ Strings are shared internally; implementations count their references atomically
 
 **R-16.11 (Scope).** `Thread::scope(body)` calls `body` with a new `Scope` and returns only after `body` has ended and every thread started with `Scope.spawn` has ended. `Scope.spawn(f)` starts a thread that runs `f`; it returns no handle (V-16.11).
 
-**R-16.12 (Borrows in a scope).** The lambda passed to `Scope.spawn` must be a lambda expression at the call. It may be an `own` lambda; then R-16.9 applies. An ordinary lambda may only borrow read-only, and only variables that the lambda passed to `Thread::scope` captures; their types must be transferable. These variables count as borrowed read-only by `body` for the whole call of `Thread::scope` (R-10.7), so `body` cannot change them either. A mutable borrow, a borrow of a local variable of `body` and `this` with a non-transferable type are errors.
+**R-16.12 (Borrows in a scope).** The lambda passed to `Scope.spawn` must be a lambda expression at the call. It may be an `own` lambda; then R-16.9 applies. An ordinary lambda is allowed only inside the lambda expression passed to `Thread::scope`, on its `Scope` parameter. It may only borrow read-only, and only variables that the lambda passed to `Thread::scope` captures; their types must be transferable. These variables count as borrowed read-only by `body` for the whole call of `Thread::scope` (R-10.7), so `body` cannot change them either. A mutable borrow, a borrow of a local variable of `body` and `this` with a non-transferable type are errors.
 
 **R-16.13 (Exceptions in a scope).** An exception that leaves `body` or a thread of the scope does not end the other threads of the scope. When all have ended, `Thread::scope` throws the exception of `body` if there is one, otherwise that of the first thread in start order that ended with an exception; all other exceptions are released (V-16.11).
 
@@ -134,7 +134,7 @@ Effects that are not ordered by these rules may happen in any order (V-16.8). A 
 
 **R-16.22 (Destructors).** A destructor runs in the thread that releases the object. An object therefore never runs code in two threads at the same time.
 
-**R-16.23 (Both modes).** Threads behave the same in debug and release mode (R-12.5). C code may be called from any thread; R-15.16 applies to each call. How an implementation maps threads onto the system is up to it: it may run each thread as an operating system thread or as a lightweight thread (coroutine) with its own stack that a scheduler of the runtime places on fewer operating system threads, as long as R-16.18 and R-16.19 hold. With lightweight threads, waiting in `join()`, `send`, `receive`, at the end of `Thread::scope`, in `Thread::sleep` and in input and output lets other threads run; a thread that computes for a long time must not keep the others from running forever. This keeps the way open to many concurrent waits without new syntax such as `async` and `await`.
+**R-16.23 (Both modes).** Threads behave the same in debug and release mode (R-12.5). C code may be called from any thread; R-15.16 applies to each call. How an implementation maps threads onto the system is up to it: it may run each thread as an operating system thread or as a lightweight thread (coroutine) with its own stack that a scheduler of the runtime places on fewer operating system threads, as long as R-16.18 and R-16.19 hold. With lightweight threads, waiting in `join()`, `send`, `receive`, at the end of `Thread::scope`, in `Thread::sleep` and in input and output lets other threads run; a thread that computes for a long time must not keep the others from running forever. This keeps the way open to many concurrent waits without new syntax such as `async` and `await`. In the first implementation both compilers use operating system threads: programs from `rppcc` run their threads in parallel; the `rppc` interpreter lets only one thread at a time run R++ code and hands over at waits and regularly at the cancellation points of R-16.6.
 
 ## 6. Example
 
@@ -190,6 +190,7 @@ With this chapter, the following places have changed (entered on 27.11.2026):
 | Place | Change |
 |---|---|
 | R-4.42, R-7.23 | the built-in constraint `Transferable` (V-16.5) |
+| R-7.28, R-10.18 | a type parameter that occurs only in the return type of a function parameter is derived from the lambda passed |
 | R-9.2 | new kind `ThreadError` (V-16.7) |
 | R-9.4 | classes derived from `Exception` must be transferable (V-16.6, R-16.10) |
 | R-12.4, R-12.6 | several permitted behaviors with threads; output calls are not interleaved (V-16.8) |
@@ -201,23 +202,23 @@ No change to `RPP.g4`: threads, scopes and channels are classes of the standard 
 
 ## 8. Conformance tests
 
-The runtime tests are written so that their output does not depend on the interleaving: either only one thread writes, or the order follows from R-16.18. The test run executes every runtime test of this chapter several times.
+The runtime tests are written so that their output does not depend on the interleaving: either only one thread writes, or the order follows from R-16.18. The test run executes every runtime test of this chapter three times in each mode.
 
 | Rules | Accepted or runtime | Rejected |
 |---|---|---|
-| R-16.1 to R-16.3 | `l01_spawn_join`, `l02_task_result` | `n01_new_thread`, `n02_copy_task` |
+| R-16.1 to R-16.3 | `l01_spawn_join`, `l02_task_result` | `n01_new_thread`, `n02_copy_task`, `n15_derive_thread` |
 | R-16.2, V-16.2 | `l03_spawn_with_input` | – |
 | R-16.3 | `l04_join_twice` (runtime: `ThreadError`) | – |
 | R-16.4 | `l05_release_waits`, `l06_release_with_exception` (runtime: `ThreadError`) | – |
 | R-16.5 | `l07_join_rethrows` | – |
 | R-16.6 | `l08_program_error_in_thread` (runtime: exit code 2; the destructors of the other thread run) | – |
-| R-16.7 to R-16.9 | `a01_transferable_generic` | `n03_capture_shared`, `n04_field_weak`, `n05_subclass_shared`, `n06_ordinary_lambda`, `n07_generic_without_constraint` |
+| R-16.7 to R-16.9 | `a01_transferable_generic` | `n03_capture_shared`, `n04_field_weak`, `n05_subclass_shared`, `n06_ordinary_lambda`, `n07_generic_without_constraint`, `n13_import_transferable` |
 | R-16.10 | – | `n08_exception_with_shared` |
-| R-16.11 to R-16.13 | `l09_scope_borrows`, `l10_scope_exception` | `n09_scope_mut_borrow`, `n10_scope_local_borrow`, `n11_scope_change_borrowed` |
+| R-16.11 to R-16.13 | `l09_scope_borrows`, `l10_scope_exception` | `n09_scope_mut_borrow`, `n10_scope_local_borrow`, `n11_scope_change_borrowed`, `n14_scope_spawn_outside` |
 | R-16.14 to R-16.17 | `l11_channel_order`, `l12_channel_closed`, `l13_receiver_gone`, `l14_clone_sender` | `n12_nullable_element` |
 | R-16.14 | `l15_capacity_zero` (runtime: `ThreadError`) | – |
 | R-16.18 | `l16_order_through_channel` | – |
 | R-16.19 | `l17_deadlock` (runtime: `ThreadError`) | – |
 | R-16.20 to R-16.22 | `l18_end_waits`, `l19_destructor_thread` | – |
 
-R-16.23 cannot be checked by individual programs; it is covered by running all runtime tests of this chapter in both modes.
+R-16.21 and R-16.23 cannot be checked by individual programs: R-16.21 repeats R-12.10 for every thread, and R-16.23 is covered by running all runtime tests of this chapter in both modes.

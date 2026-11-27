@@ -69,12 +69,32 @@ struct Frame {
     captures: Vec<LocalId>,
     /// Zugriffe auf erfasste Orte (Wurzel, veränderbar) für die Loan-Prüfung an der Erfassungsstelle
     capture_access: Vec<(LocalId, bool)>,
+    /// erste verändernde Zugriffe auf erfasste Orte (für R-16.12)
+    mut_spans: Vec<(LocalId, Span)>,
+    /// Lambda an `Thread::scope`: sein Scope-Parameter (R-16.12)
+    scope_param: Option<LocalId>,
+    /// Variablen, die Threads dieses Bereichs lesend leihen (R-16.12)
+    scope_shared: Vec<LocalId>,
 }
 
 impl Frame {
     fn new(ret: Option<Ret>, own_lambda: bool) -> Frame {
-        Frame { ret, inferred: Vec::new(), loops: 0, switches: 0, own_lambda, in_finally: 0, jumps: Vec::new(), tries: Vec::new(), captures: Vec::new(), capture_access: Vec::new() }
+        Frame {
+            ret, inferred: Vec::new(), loops: 0, switches: 0, own_lambda, in_finally: 0, jumps: Vec::new(), tries: Vec::new(), captures: Vec::new(), capture_access: Vec::new(),
+            mut_spans: Vec::new(), scope_param: None, scope_shared: Vec::new(),
+        }
     }
+}
+
+/// Rolle eines Lambdas als Argument von rpp.sync (Kapitel 16)
+#[derive(Clone, Copy, PartialEq)]
+enum SyncLambda {
+    /// Rumpf eines Threads: own-Lambda, erfasst nur Übertragbares (R-16.9)
+    Thread,
+    /// Rumpf von `Thread::scope`
+    ScopeBody,
+    /// gewöhnliches Lambda an `Scope.spawn`; der Rahmen des Bereichs (R-16.12)
+    ScopeThread(usize),
 }
 
 /// Wohin ein Name in einem Ausdruck zeigt, wenn er kein lokaler Name ist.
@@ -115,6 +135,10 @@ pub struct Checker<'p> {
     pending_recv: Option<Place>,
     /// Darf `this` verändert werden (`mut`-Methode, Konstruktor, Destruktor, copy)?
     this_mut: bool,
+    /// Rolle des nächsten geprüften Lambdas (Kapitel 16)
+    sync_next: Option<SyncLambda>,
+    /// Wurzel des Empfängers des gerade geprüften Aufrufs (für `Scope.spawn`)
+    sync_recv: Option<LocalId>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -163,6 +187,8 @@ impl<'p> Checker<'p> {
             call_seq: 0,
             call_moved: Vec::new(),
             place_quiet: 0,
+            sync_next: None,
+            sync_recv: None,
             pending_recv: None,
             this_mut: false,
         }
@@ -577,6 +603,9 @@ impl<'p> Checker<'p> {
             match acc.iter_mut().find(|(r, _)| *r == p.root) {
                 Some(e) => e.1 |= mutable,
                 None => acc.push((p.root, mutable)),
+            }
+            if mutable && !self.frames[f].mut_spans.iter().any(|(r, _)| *r == p.root) {
+                self.frames[f].mut_spans.push((p.root, span));
             }
         }
         let Some(l) = self.loans.iter().rev().find(|l| l.conflicts(mutable, p)).cloned() else { return };
@@ -1872,7 +1901,11 @@ impl<'p> Checker<'p> {
                         }
                         if !has {
                             let name = self.p.defs[*d].name.clone();
-                            self.err(e.span, "R-7.11", format!("{name} has no copy"));
+                            if self.p.is_sync_class(*d) {
+                                self.err_also(e.span, "R-16.1", vec!["R-7.11"], format!("{name} cannot be copied"));
+                            } else {
+                                self.err(e.span, "R-7.11", format!("{name} has no copy"));
+                            }
                         }
                         t.unformed().clone()
                     }
@@ -2934,7 +2967,7 @@ impl<'p> Checker<'p> {
         match &a.expr.kind {
             E::Lambda { params, .. } => {
                 let ps: Vec<PInfo> = self.probe(|c| params.iter().map(|p| c.param_info(p)).collect());
-                ArgShape::Lambda(ps)
+                ArgShape::Lambda(ps, None)
             }
             E::Literal(ast::Literal::Null) => ArgShape::Null,
             _ => match literal_info(&a.expr) {
@@ -2965,9 +2998,14 @@ impl<'p> Checker<'p> {
                 _ if pt.is_error() || matches!(pt, Ty::Param(_)) => 0,
                 _ => return None,
             },
-            ArgShape::Lambda(ps) => match &pt {
-                Ty::Func(fps, _) => {
-                    let ok = fps.len() == ps.len() && fps.iter().zip(ps).all(|(f, l)| f.mode == l.mode && (f.ty.unformed() == l.ty.unformed() || l.ty.is_error() || matches!(f.ty, Ty::Param(_))));
+            ArgShape::Lambda(ps, ret) => match &pt {
+                Ty::Func(fps, fr) => {
+                    // R-10.18: Ist der Rückgabetyp des Lambdas bekannt, muss void zu void passen.
+                    let ret_ok = match ret {
+                        Some(r) if !r.is_error() && !matches!(**fr, Ty::Param(_) | Ty::Error) => (**fr == Ty::Void) == (*r == Ty::Void),
+                        _ => true,
+                    };
+                    let ok = ret_ok && fps.len() == ps.len() && fps.iter().zip(ps).all(|(f, l)| f.mode == l.mode && (f.ty.unformed() == l.ty.unformed() || l.ty.is_error() || matches!(f.ty, Ty::Param(_))));
                     if ok {
                         0
                     } else {
@@ -3009,7 +3047,30 @@ impl<'p> Checker<'p> {
             Receiver::Static => None,
             _ => self.pending_recv.take(),
         };
-        let shapes: Vec<ArgShape> = args.iter().map(|a| self.arg_shape(a)).collect();
+        let mut shapes: Vec<ArgShape> = args.iter().map(|a| self.arg_shape(a)).collect();
+        // R-7.28: Steht ein Typ-Parameter der Methode nur im Rückgabetyp eines Funktionsparameters,
+        // wird er aus dem Rückgabetyp des übergebenen Lambdas abgeleitet (R-10.3, R-10.4).
+        for i in 0..shapes.len() {
+            if !matches!(shapes[i], ArgShape::Lambda(_, None)) {
+                continue;
+            }
+            let needed = cands.iter().any(|m| {
+                m.params.len() == args.len() && !m.tparams.is_empty()
+                    && matches!(m.params[i].ty.unformed().core(), Ty::Func(_, r) if ty_mentions(r, &m.tparams))
+            });
+            if !needed {
+                continue;
+            }
+            let t = self.probe(|c| {
+                c.as_argument = true;
+                let t = c.expr(&args[i].expr, None);
+                c.as_argument = false;
+                t
+            });
+            if let (Ty::Func(_, r), ArgShape::Lambda(_, ret)) = (t, &mut shapes[i]) {
+                *ret = Some(*r);
+            }
+        }
         let mut viable: Vec<(MethodInfo, Vec<u8>)> = Vec::new();
         for m in &cands {
             if m.params.len() != args.len() {
@@ -3070,6 +3131,7 @@ impl<'p> Checker<'p> {
                         ArgShape::Ty(t) => t.clone(),
                         ArgShape::Int(v) => Ty::Prim(default_int(*v)),
                         ArgShape::Float => Ty::Prim(P::F64),
+                        ArgShape::Lambda(ps, Some(r)) => lambda_type(ps, r),
                         _ => continue,
                     };
                     unify(self.p, &p.ty, &at, &orig.tparams, &mut map);
@@ -3121,7 +3183,9 @@ impl<'p> Checker<'p> {
             }
             self.push_loan(pl.clone(), chosen.mut_this, Until::Call(id), "R-5.10");
         }
+        self.sync_recv = recv_place.as_ref().filter(|pl| pl.path.is_empty()).map(|pl| pl.root);
         self.check_args(&chosen, args, id);
+        self.sync_recv = None;
         self.end_call(id);
         // R-5.24: Eine Borrow-Rückgabe gilt als Loan auf den Empfänger.
         if matches!(chosen.ret, Ret::Ref(..)) {
@@ -3159,10 +3223,18 @@ impl<'p> Checker<'p> {
     /// Argumente nach der Markierung der Parameter (R-5.8, R-5.9): `own` verschiebt,
     /// sonst wird der Ort für die Dauer des Aufrufs geliehen.
     fn check_args(&mut self, m: &MethodInfo, args: &[ast::Arg], call: usize) {
-        for (a, p) in args.iter().zip(&m.params) {
+        let sync = self.sync_body(m);
+        let sync_recv = self.sync_recv.take();
+        for (i, (a, p)) in args.iter().zip(&m.params).enumerate() {
+            if let Some((index, what)) = sync {
+                if i == index {
+                    self.sync_next = self.sync_role(what, &a.expr, sync_recv);
+                }
+            }
             self.as_argument = true;
             let at = self.expr(&a.expr, Some(&p.ty));
             self.as_argument = false;
+            self.sync_next = None;
             if !matches!(a.expr.kind, E::Lambda { .. }) {
                 self.require(&at, &p.ty, a.expr.span, Some(&a.expr));
             }
@@ -3204,11 +3276,13 @@ impl<'p> Checker<'p> {
                 ArgShape::Ty(t) => t.clone(),
                 ArgShape::Int(v) => Ty::Prim(default_int(*v)),
                 ArgShape::Float => Ty::Prim(P::F64),
+                ArgShape::Lambda(ps, Some(r)) => lambda_type(ps, r),
                 _ => continue,
             };
             unify(self.p, &p.ty, &at, &m.tparams, &mut map);
         }
-        if m.tparams.iter().any(|t| !map.contains_key(t)) {
+        // void ist kein Typargument (R-4.42)
+        if m.tparams.iter().any(|t| !map.contains_key(t)) || map.values().any(|t| *t == Ty::Void) {
             return None;
         }
         let mut c = m.clone();
@@ -3284,6 +3358,13 @@ impl<'p> Checker<'p> {
                     }
                     return Ty::Error;
                 }
+                if self.p.is_sync_class(*d) && self.ctx.class != Some(*d) {
+                    for a in args {
+                        self.probe(|c| c.expr(&a.expr, None));
+                    }
+                    self.err(span, "R-16.1", format!("{} cannot be created with new", def.name));
+                    return Ty::Error;
+                }
                 match def.kind {
                     DefKind::Class => {}
                     _ => {
@@ -3341,6 +3422,116 @@ impl<'p> Checker<'p> {
         }
     }
 
+    // ------------------------------------------------------------ Threads (Kapitel 16)
+
+    /// Ist `m` eine Methode aus rpp.sync, die einen Thread-Rumpf nimmt? (Index des Arguments, Methode)
+    fn sync_body(&self, m: &MethodInfo) -> Option<(usize, &'static str)> {
+        if m.owner == usize::MAX {
+            return None;
+        }
+        let def = &self.p.defs[m.owner];
+        if def.package != "rpp.sync" || !self.p.ws.projects[def.project].is_std {
+            return None;
+        }
+        match (def.name.as_str(), m.name.as_str()) {
+            ("Thread", "spawn") => Some((0, "spawn")),
+            ("Thread", "spawnWith") => Some((1, "spawnWith")),
+            ("Thread", "scope") => Some((0, "scope")),
+            ("Scope", "spawn") => Some((0, "Scope.spawn")),
+            _ => None,
+        }
+    }
+
+    /// Rolle des Arguments `e` als Rumpf (R-16.9, R-16.12); meldet eine falsche Form.
+    fn sync_role(&mut self, what: &str, e: &ast::Expr, recv: Option<LocalId>) -> Option<SyncLambda> {
+        let own = match &e.kind {
+            E::Lambda { own, .. } => Some(*own),
+            _ => None,
+        };
+        match what {
+            "scope" => own.map(|_| SyncLambda::ScopeBody),
+            "Scope.spawn" => match own {
+                Some(true) => Some(SyncLambda::Thread),
+                Some(false) => {
+                    let frame = recv.and_then(|r| (0..self.frames.len()).rev().find(|&f| self.frames[f].scope_param == Some(r)));
+                    if frame.is_none() {
+                        self.err(e.span, "R-16.12", "A thread of a scope can borrow only inside the lambda passed to Thread::scope, through its Scope parameter; use an own lambda here");
+                    }
+                    frame.map(SyncLambda::ScopeThread)
+                }
+                None => {
+                    self.err(e.span, "R-16.12", "The body of a thread must be a lambda expression at the call");
+                    None
+                }
+            },
+            _ => {
+                if own != Some(true) {
+                    self.err(e.span, "R-16.9", "The body of a thread must be an own lambda expression at the call");
+                    return None;
+                }
+                Some(SyncLambda::Thread)
+            }
+        }
+    }
+
+    /// Prüft die Erfassungen eines Thread-Rumpfs (R-16.9, R-16.12).
+    fn sync_captures(&mut self, role: SyncLambda, frame: &Frame, span: Span) {
+        match role {
+            SyncLambda::Thread => {
+                for id in &frame.captures {
+                    let Some(l) = self.local_by_id(*id).cloned() else { continue };
+                    if !self.p.transferable(&l.ty) {
+                        let msg = format!("{} has type {}, which cannot be transferred to another thread", l.name, self.show(&l.ty));
+                        self.err(span, "R-16.9", msg);
+                    }
+                }
+            }
+            SyncLambda::ScopeBody => {
+                for id in &frame.scope_shared {
+                    if let Some((_, at)) = frame.mut_spans.iter().find(|(r, _)| r == id) {
+                        let name = if *id == THIS { "this".to_string() } else { self.local_by_id(*id).map(|l| l.name.clone()).unwrap_or_default() };
+                        self.err(*at, "R-16.12", format!("{name} is borrowed by a thread of the scope and cannot be modified in the scope"));
+                    }
+                }
+            }
+            SyncLambda::ScopeThread(scope) => {
+                let mut ids: Vec<LocalId> = frame.captures.clone();
+                for (id, _) in &frame.capture_access {
+                    if !ids.contains(id) {
+                        ids.push(*id);
+                    }
+                }
+                for id in ids {
+                    let mutable = frame.capture_access.iter().any(|(r, m)| *r == id && *m);
+                    if id == THIS {
+                        let ok = self.self_ty().is_none_or(|t| self.p.transferable(&t));
+                        if !ok {
+                            self.err(span, "R-16.12", "this cannot be transferred to another thread");
+                        } else if mutable {
+                            self.err(span, "R-16.12", "A thread of a scope can borrow this only read-only");
+                        }
+                    } else {
+                        let Some(l) = self.local_by_id(id).cloned() else { continue };
+                        if l.frame > scope {
+                            self.err(span, "R-16.12", format!("{} is declared inside the scope; a thread of the scope can borrow only variables from outside (use an own lambda)", l.name));
+                            continue;
+                        }
+                        if mutable {
+                            self.err(span, "R-16.12", format!("A thread of a scope can borrow {} only read-only", l.name));
+                            continue;
+                        } else if !self.p.transferable(&l.ty) {
+                            let msg = format!("{} has type {}, which cannot be transferred to another thread", l.name, self.show(&l.ty));
+                            self.err(span, "R-16.12", msg);
+                        }
+                    }
+                    if scope < self.frames.len() && !self.frames[scope].scope_shared.contains(&id) {
+                        self.frames[scope].scope_shared.push(id);
+                    }
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------ Lambdas
 
     fn lambda(&mut self, own: bool, params: &[ast::Param], body: &ast::LambdaBody, expected: Option<&Ty>, as_arg: bool, span: Span) -> Ty {
@@ -3386,14 +3577,19 @@ impl<'p> Checker<'p> {
         // R-6.13: Das Lambda sieht die Fakten an seiner Stelle; sein Rumpf ändert den Stand außen nicht.
         let outer = self.flow.clone();
         let outer_loans = std::mem::take(&mut self.loans);
+        let sync = self.sync_next.take();
         self.frames.push(Frame::new(ret.clone(), own));
         self.push_scope();
-        for p in ps {
+        for (i, p) in ps.iter().enumerate() {
             let id = ast::Ident { name: p.name.clone(), span: Span::default() };
             if self.find_local(&p.name).is_some() {
                 self.err(id.span, "R-8.17", format!("{} shadows a visible variable", p.name));
             }
             self.new_local(&p.name, p.ty.clone(), LocalKind::Param(p.mode));
+            if i == 0 && sync == Some(SyncLambda::ScopeBody) {
+                let pid = self.find_local(&p.name).map(|l| l.id);
+                self.frame().scope_param = pid;
+            }
         }
         let result = match body {
             ast::LambdaBody::Expr(x) => {
@@ -3444,6 +3640,9 @@ impl<'p> Checker<'p> {
         };
         self.pop_scope();
         let frame = self.frames.pop().unwrap();
+        if let Some(role) = sync {
+            self.sync_captures(role, &frame, span);
+        }
         self.last_captures = frame.captures.iter().filter_map(|id| self.local_by_id(*id).map(|l| l.name.clone())).collect();
         if frame.capture_access.iter().any(|(id, _)| *id == THIS) {
             self.last_captures.push("this".into());
@@ -3689,7 +3888,23 @@ enum ArgShape {
     Int(i128),
     Float,
     Null,
-    Lambda(Vec<PInfo>),
+    /// Parameter des Lambdas und, wo eine Variante ihn braucht, sein Rückgabetyp
+    Lambda(Vec<PInfo>, Option<Ty>),
+}
+
+fn lambda_type(ps: &[PInfo], ret: &Ty) -> Ty {
+    Ty::Func(ps.iter().map(|p| FParam { ty: p.ty.clone(), mode: p.mode }).collect(), Box::new(ret.clone()))
+}
+
+/// Kommt in `t` einer der Typ-Parameter vor?
+fn ty_mentions(t: &Ty, tps: &[ParamId]) -> bool {
+    match t {
+        Ty::Param(p) => tps.contains(p),
+        Ty::Named(_, xs) | Ty::Tuple(xs) => xs.iter().any(|x| ty_mentions(x, tps)),
+        Ty::Vector(x) | Ty::Array(x, _) | Ty::Slice(x) | Ty::Nullable(x) | Ty::Formed(_, x) => ty_mentions(x, tps),
+        Ty::Func(ps, r) => ps.iter().any(|p| ty_mentions(&p.ty, tps)) || ty_mentions(r, tps),
+        _ => false,
+    }
 }
 
 enum Receiver {

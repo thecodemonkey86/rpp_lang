@@ -1,0 +1,11 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-7.26, R-16.8
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (ein Typ-Parameter ohne Transferable ist nicht übertragbar).
+package conformance.ch16;
+
+using rpp.sync.Task;
+
+class Pool<T> {
+public:
+    Task<T>? task;   // FEHLER
+}

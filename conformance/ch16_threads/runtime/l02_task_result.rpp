@@ -1,0 +1,37 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.1, R-16.2, R-16.3, R-16.9
+// Erwartet: Ausgabe "6765\nxy\n3 c"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Task;
+
+class Box {
+public:
+    i64 n;
+    string label;
+    constructor(i64 n, string label) {
+        this.n = n;
+        this.label = label;
+    }
+}
+
+class Work {
+public:
+    static i64 fib(i64 n) {
+        return n < 2 ? n : Work::fib(n - 1) + Work::fib(n - 2);
+    }
+}
+
+i32 main(string[] args) {
+    i64 n = 20;
+    string s = "x";
+    // erfasst wird per Wert (R-10.8); primitive Werte und Strings sind übertragbar
+    Task<i64> a = Thread::spawn(own () => Work::fib(n));
+    Task<string> b = Thread::spawn(own () => s + "y");
+    Task<Box> c = Thread::spawn(own () => new Box(3, "c"));
+    n = 0;
+    print(a.join().toString());
+    print(b.join());
+    Box box = c.join();
+    print(box.n.toString() + " " + box.label);
+    return 0;
+}

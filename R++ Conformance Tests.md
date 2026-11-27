@@ -119,3 +119,5 @@ These rules cannot be checked with a single test program (R-14.6). The test run 
 | R-13.2 | Concerns the versioning of the library, not a program |
 | R-15.16 | Boundary of the guarantees for C code; covered by comparing both modes in all runtime tests of chapter 15 |
 | R-15.17 | covered by R-14.7: each runtime test of chapter 15 applies to both modes |
+| R-16.21 | repeats R-12.10 for every thread; a stack overflow is not tested (R-12.10) |
+| R-16.23 | covered by R-14.7: each runtime test of chapter 16 applies to both modes |

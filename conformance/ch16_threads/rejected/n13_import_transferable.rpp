@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.8
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Transferable lässt sich nicht importieren).
+package conformance.ch16;
+
+using rpp.sync.Transferable;
+
+class Item {
+    import Transferable;   // FEHLER
+public:
+    i64 id = 0;
+}

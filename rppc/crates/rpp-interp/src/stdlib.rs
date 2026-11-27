@@ -15,6 +15,12 @@ use std::io::{BufRead, BufReader};
 /// Klassen und Methoden, die eingebaut sind.
 const NATIVE_CLASSES: &[(&str, &str)] = &[
     ("rpp.io", "Console"),
+    ("rpp.sync", "Thread"),
+    ("rpp.sync", "Task"),
+    ("rpp.sync", "Scope"),
+    ("rpp.sync", "Channel"),
+    ("rpp.sync", "Sender"),
+    ("rpp.sync", "Receiver"),
     ("rpp.io", "File"),
     ("rpp.io", "TextReader"),
     ("rpp.io", "SaveFile"),
@@ -132,7 +138,7 @@ impl Interp {
     }
 
     /// Objekt ohne Konstruktor anlegen (für eingebaute Rückgabewerte).
-    fn raw_object(&mut self, d: DefId, slots: Vec<Value>) -> ORef {
+    pub(crate) fn raw_object(&mut self, d: DefId, slots: Vec<Value>) -> ORef {
         let o = Rc::new(Obj { class: Some(d), slots: RefCell::new(slots), rc: Cell::new(0), alive: Cell::new(true), dying: Cell::new(false), lock: Cell::new(0), targs: RefCell::new(Vec::new()), index: Default::default() });
         self.register(&o);
         o
@@ -299,18 +305,21 @@ impl Interp {
         if let Some(method) = name.strip_prefix("rpp.text.StringView.") {
             return self.string_view(method, m.owner, &o.unwrap(), args);
         }
+        if let Some(method) = name.strip_prefix("rpp.sync.") {
+            return self.native_sync(method, m, o, args);
+        }
         match name {
             // ---------------------------------------------------------------- rpp.io
             "rpp.io.Console.write" => {
-                self.console.write_stdout(&text(args, 0));
+                self.w.st().console.write_stdout(&text(args, 0));
                 Ok(Value::Void)
             }
             "rpp.io.Console.error" => {
-                self.console.write_stderr(&format!("{}\n", text(args, 0)));
+                self.w.st().console.write_stderr(&format!("{}\n", text(args, 0)));
                 Ok(Value::Void)
             }
             "rpp.io.Console.readLine" => {
-                Ok(self.console.read_line().map_or(Value::Null, str_value))
+                Ok(self.read_line_threads()?.map_or(Value::Null, str_value))
             }
             "rpp.io.File.open" => {
                 let path = text(args, 0);
@@ -334,16 +343,16 @@ impl Interp {
                 }
                 let Some(class) = self.p.std_def("rpp.io.TextReader") else { return Err(self.internal("TextReader fehlt")) };
                 let object = self.raw_object(class, vec![str_value(&path)]);
-                self.text_readers.insert(Rc::as_ptr(&object), BufReader::new(file));
+                self.w.st().text_readers.insert(Rc::as_ptr(&object), BufReader::new(file));
                 Ok(Value::Obj(object, Form::Own))
             }
             "rpp.io.TextReader.close" => {
-                self.text_readers.remove(&Rc::as_ptr(&o.unwrap()));
+                self.w.st().text_readers.remove(&Rc::as_ptr(&o.unwrap()));
                 Ok(Value::Void)
             }
             "rpp.io.TextReader.readLine" => {
                 let object = o.unwrap();
-                let Some(reader) = self.text_readers.get_mut(&Rc::as_ptr(&object)) else {
+                let Some(reader) = self.w.st().text_readers.get_mut(&Rc::as_ptr(&object)) else {
                     return Err(self.internal("TextReader ohne Datei"));
                 };
                 let mut line = Vec::new();
@@ -440,7 +449,7 @@ impl Interp {
                 match save_file::SaveFile::open(std::path::Path::new(&path)) {
                     Ok(save) => {
                         let object = self.raw_object(m.owner, vec![str_value(&path)]);
-                        self.save_files.insert(Rc::as_ptr(&object), save);
+                        self.w.st().save_files.insert(Rc::as_ptr(&object), save);
                         Ok(Value::Obj(object, Form::Own))
                     }
                     Err(e) => self.io_error(format!("{path}: {e}"), &path),
@@ -450,19 +459,19 @@ impl Interp {
                 let object = o.unwrap();
                 let key = Rc::as_ptr(&object);
                 if name.ends_with(".cancel") {
-                    self.save_files.remove(&key);
+                    self.w.st().save_files.remove(&key);
                     return Ok(Value::Void);
                 }
                 let path = Self::sb_text(&object);
                 let result = if name.ends_with(".commit") {
-                    self.save_files.remove(&key).map(|save| save.commit())
+                    self.w.st().save_files.remove(&key).map(|save| save.commit())
                 } else {
-                    self.save_files.get_mut(&key).map(|save| save.write(&file_data(&args[0])))
+                    self.w.st().save_files.get_mut(&key).map(|save| save.write(&file_data(&args[0])))
                 };
                 match result {
                     Some(Ok(())) => Ok(Value::Void),
                     Some(Err(e)) => {
-                        self.save_files.remove(&key);
+                        self.w.st().save_files.remove(&key);
                         self.io_error(format!("{path}: {e}"), &path)
                     }
                     None => self.io_error(format!("{path}: Schreibvorgang ist beendet"), &path),

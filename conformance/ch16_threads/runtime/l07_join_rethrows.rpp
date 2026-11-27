@@ -1,0 +1,40 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.5, R-16.10
+// Erwartet: Ausgabe "caught 7 oops\nvalue 4\nend"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Task;
+
+class Oops : Exception {
+public:
+    i32 code;
+    constructor(i32 code) : base("oops") {
+        this.code = code;
+    }
+}
+
+class Work {
+public:
+    static i32 half(i32 x) {
+        if (x % 2 != 0) {
+            throw new Oops(x);
+        }
+        return x / 2;
+    }
+
+    static void run(i32 x) {
+        Task<i32> t = Thread::spawn(own () => Work::half(x));
+        try {
+            i32 v = t.join();
+            print("value " + v.toString());
+        } catch (Oops e) {
+            print("caught " + e.code.toString() + " " + e.message);
+        }
+    }
+}
+
+i32 main(string[] args) {
+    Work::run(7);
+    Work::run(8);
+    print("end");
+    return 0;
+}

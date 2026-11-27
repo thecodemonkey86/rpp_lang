@@ -1,0 +1,44 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.17, R-16.16
+// Erwartet: Ausgabe "10 values, each sender in order"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+class Producer {
+public:
+    static own Thread start(own Sender<i64> tx, i64 id) {
+        return Thread::spawnWith(tx, own (own Sender<i64> s) => {
+            for (i64 k = 0; k < 5; k++) {
+                discard s.send(id * 100 + k);
+            }
+        });
+    }
+}
+
+i32 main(string[] args) {
+    (Sender<i64> tx, Receiver<i64> rx) = Channel<i64>::open(3);
+    Sender<i64> second = tx.clone();
+    Thread a = Producer::start(tx, 1);
+    Thread b = Producer::start(second, 2);
+    i64 count = 0;
+    i64 next1 = 0;
+    i64 next2 = 0;
+    bool ordered = true;
+    // null kommt erst, wenn beide Sender freigegeben sind
+    i64? v = rx.receive();
+    while (v != null) {
+        count++;
+        if (v / 100 == 1) {
+            ordered = ordered && v % 100 == next1;
+            next1++;
+        } else {
+            ordered = ordered && v % 100 == next2;
+            next2++;
+        }
+        v = rx.receive();
+    }
+    print(count.toString() + " values, " + (ordered ? "each sender in order" : "out of order"));
+    return 0;
+}

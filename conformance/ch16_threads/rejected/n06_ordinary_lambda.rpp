@@ -1,0 +1,15 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.9
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (der Rumpf eines Threads muss ein own-Lambda sein).
+package conformance.ch16;
+
+using rpp.sync.Thread;
+
+class Use {
+public:
+    static void run() {
+        i64 n = 1;
+        Thread t = Thread::spawn(() => { print(n.toString()); });   // FEHLER
+        t.join();
+    }
+}

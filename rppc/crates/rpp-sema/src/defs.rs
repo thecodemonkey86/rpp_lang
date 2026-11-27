@@ -437,6 +437,9 @@ impl Program {
                 let name = self.defs[*d].name.clone();
                 self.error(file, span, "R-15.2", format!("The extern class {name} cannot be used as a type"));
             }
+            Ty::Named(d, _) if self.is_transferable_mixin(*d) => {
+                self.error(file, span, "R-16.8", "Transferable is a built-in constraint, not a type of values");
+            }
             Ty::Formed(form, x) => {
                 if let Ty::Named(d, _) = x.as_ref() {
                     if self.defs[*d].is_handle() {
@@ -588,6 +591,8 @@ impl Program {
                 if let Ty::Named(bd, _) = &t {
                     if self.defs[*bd].kind != DefKind::Class {
                         self.error(file, b.name.span(), "R-7.12", format!("{} is not a class", self.defs[*bd].name));
+                    } else if self.is_sync_class(*bd) {
+                        self.error(file, b.name.span(), "R-16.1", format!("{} cannot be a base class", self.defs[*bd].name));
                     } else {
                         self.defs[def].base = Some(t);
                     }
@@ -599,6 +604,10 @@ impl Program {
                     if let Ty::Named(md, _) = &t {
                         if self.defs[*md].kind != DefKind::Mixin {
                             self.error(file, tn.name.span(), "R-7.20", format!("{} is not a mixin", self.defs[*md].name));
+                            continue;
+                        }
+                        if self.is_transferable_mixin(*md) {
+                            self.error(file, tn.name.span(), "R-16.8", "Transferable is a built-in constraint and cannot be imported");
                             continue;
                         }
                         self.defs[def].imports.push((t, tn.name.span()));
@@ -792,6 +801,9 @@ impl Program {
         if t.is_error() {
             return true;
         }
+        if mname == "rpp.sync.Transferable" {
+            return self.transferable(t);
+        }
         match t.unformed() {
             Ty::Prim(p) => {
                 let self_arg = margs.first().is_none_or(|a| a.is_error() || a == &Ty::Prim(*p));
@@ -810,6 +822,94 @@ impl Program {
             Ty::Named(..) => self.upcasts(t, m),
             _ => false,
         }
+    }
+
+    /// Die eingebaute Einschränkung `rpp.sync.Transferable` (R-16.8)
+    pub fn is_transferable_mixin(&self, d: DefId) -> bool {
+        let def = &self.defs[d];
+        def.kind == DefKind::Mixin && def.name == "Transferable" && def.package == "rpp.sync"
+    }
+
+    /// Klasse aus rpp.sync (R-16.1): nicht mit `new` zu erzeugen, nicht ableitbar, nicht kopierbar
+    pub fn is_sync_class(&self, d: DefId) -> bool {
+        let def = &self.defs[d];
+        def.kind == DefKind::Class && def.package == "rpp.sync" && self.ws.projects[def.project].is_std
+    }
+
+    /// R-16.7: Darf ein Wert dieses Typs in einen anderen Thread gelangen?
+    pub fn transferable(&self, t: &Ty) -> bool {
+        self.transferable_in(t, &mut Vec::new())
+    }
+
+    fn transferable_in(&self, t: &Ty, seen: &mut Vec<Ty>) -> bool {
+        match t {
+            Ty::Error | Ty::Null | Ty::Prim(_) => true,
+            Ty::Void | Ty::Func(..) => false,
+            Ty::Formed(Form::Shared | Form::Weak, _) => false,
+            Ty::Formed(_, x) | Ty::Nullable(x) | Ty::Vector(x) | Ty::Array(x, _) | Ty::Slice(x) => self.transferable_in(x, seen),
+            Ty::Tuple(xs) => xs.iter().all(|x| self.transferable_in(x, seen)),
+            Ty::Param(p) => self.tparams[*p].constraints.iter().any(|c| matches!(c, Ty::Named(d, _) if self.is_transferable_mixin(*d))),
+            Ty::Named(d, args) => {
+                if seen.contains(t) {
+                    return true;
+                }
+                seen.push(t.clone());
+                let def = &self.defs[*d];
+                if def.package == "rpp.sync" && self.ws.projects[def.project].is_std {
+                    return matches!(def.name.as_str(), "Thread" | "Task" | "Sender" | "Receiver");
+                }
+                if def.ext.is_some() {
+                    return true;
+                }
+                match def.kind {
+                    DefKind::Enum => {
+                        let map = self.subst_map(*d, args);
+                        def.variants.iter().all(|v| v.fields.iter().all(|f| self.transferable_in(&f.ty.subst(&map), seen)))
+                    }
+                    DefKind::Class => {
+                        if !self.fields_transferable(t, seen) {
+                            return false;
+                        }
+                        // jede Unterklasse im Programm: Der Wert kann zur Laufzeit eine sein
+                        (0..self.defs.len()).all(|s| {
+                            s == *d || self.defs[s].kind != DefKind::Class || !self.is_subclass(s, *d) || {
+                                let st = Ty::Named(s, self.defs[s].tparams.iter().map(|&p| Ty::Param(p)).collect());
+                                self.own_fields_transferable(&st, seen)
+                            }
+                        })
+                    }
+                    DefKind::Mixin => (0..self.defs.len()).all(|c| {
+                        if self.defs[c].kind != DefKind::Class {
+                            return true;
+                        }
+                        let ct = Ty::Named(c, self.defs[c].tparams.iter().map(|&p| Ty::Param(p)).collect());
+                        !self.supertypes(&ct).iter().any(|s| matches!(s, Ty::Named(m, _) if m == d)) || self.fields_transferable(&ct, seen)
+                    }),
+                }
+            }
+        }
+    }
+
+    /// Felder der Klasse selbst (mit eingesetzten Typargumenten)
+    fn own_fields_transferable(&self, t: &Ty, seen: &mut Vec<Ty>) -> bool {
+        let Ty::Named(d, args) = t else { return true };
+        let map = self.subst_map(*d, args);
+        self.defs[*d].fields.iter().filter(|f| !f.is_static).all(|f| self.transferable_in(&f.ty.subst(&map), seen))
+    }
+
+    /// Felder der Klasse und ihrer Basisklassen
+    fn fields_transferable(&self, t: &Ty, seen: &mut Vec<Ty>) -> bool {
+        let mut cur = Some(t.clone());
+        while let Some(c) = cur {
+            if !self.own_fields_transferable(&c, seen) {
+                return false;
+            }
+            cur = match &c {
+                Ty::Named(d, args) => self.defs[*d].base.as_ref().map(|b| b.subst(&self.subst_map(*d, args))),
+                _ => None,
+            };
+        }
+        true
     }
 
     /// Bringt das Mixin `a` (mit seinen Importen) das Mixin `b` mit?
@@ -876,6 +976,12 @@ impl Program {
         for p in pending {
             let tps = self.defs[p.def].tparams.clone();
             let map = self.subst_map(p.def, &p.args);
+            // R-16.14: Der Elementtyp eines Kanals ist nicht nullbar (null heißt: Kanal geschlossen).
+            let def = &self.defs[p.def];
+            if def.package == "rpp.sync" && matches!(def.name.as_str(), "Channel" | "Sender" | "Receiver") && matches!(p.args.first(), Some(Ty::Nullable(_))) {
+                let name = def.name.clone();
+                self.error(p.file, p.span, "R-16.14", format!("The element type of {name} cannot be nullable"));
+            }
             for (i, tp) in tps.iter().enumerate() {
                 let arg = &p.args[i];
                 if arg.is_error() || matches!(arg, Ty::Param(_)) && self.tparams[*tp].constraints.is_empty() {
@@ -1251,6 +1357,20 @@ impl Program {
             if let Some(fs) = d.fields.iter().find(|f| f.name == m.name) {
                 let at = if fs.span > m.span { fs.span } else { m.span };
                 self.error(file, at, "R-7.1", format!("A field and a method share the name {}", m.name));
+            }
+        }
+
+        // R-16.10: Eine Exception kann mit join() in einen anderen Thread gelangen.
+        if d.kind == DefKind::Class {
+            if let Some(ex) = self.std_def("rpp.core.Exception") {
+                if self.is_subclass(def, ex) {
+                    for f in d.fields.iter().filter(|f| !f.is_static) {
+                        if !self.transferable(&f.ty) {
+                            let msg = format!("Field {} of the exception class {} is not transferable to another thread (no shared, weak or function values)", f.name, d.name);
+                            self.error(file, f.span, "R-16.10", msg);
+                        }
+                    }
+                }
             }
         }
 

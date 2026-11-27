@@ -1,0 +1,20 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-7.26, R-16.7, R-16.9
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (eine Klasse mit weak-Feld ist nicht übertragbar).
+package conformance.ch16;
+
+using rpp.sync.Thread;
+
+class Node {
+public:
+    i64 value = 0;
+    weak Node? parent;
+}
+
+class Use {
+public:
+    static void run(own Node n) {
+        Thread t = Thread::spawnWith(n, own (own Node x) => { });   // FEHLER
+        t.join();
+    }
+}

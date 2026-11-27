@@ -1,0 +1,24 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.4, R-16.18
+// Erwartet: Ausgabe "start\nthread done\nafter block"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Task;
+
+class Run {
+public:
+    static void block() {
+        Thread t = Thread::spawn(own () => {
+            Thread::sleep(30);
+            print("thread done");
+        });
+        Task<i32[]> unused = Thread::spawn(own () => [1, 2, 3]);
+        // Blockende: die Freigabe der Handles wartet auf die Threads
+    }
+}
+
+i32 main(string[] args) {
+    print("start");
+    Run::block();
+    print("after block");
+    return 0;
+}

@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.1
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Thread lässt sich nicht mit new erzeugen).
+package conformance.ch16;
+
+using rpp.sync.Thread;
+
+class Use {
+public:
+    static void run() {
+        Thread t = new Thread();   // FEHLER
+        t.join();
+    }
+}

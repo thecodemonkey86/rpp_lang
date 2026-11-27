@@ -65,7 +65,7 @@ Spätere Änderungen an der Variable sieht das Lambda nicht.
 
 **R-10.17 (Aufruf).** Ein Funktionswert wird mit `f(a₁, …, aₙ)` aufgerufen, auch als Feld (`this.handler(x)`) oder Parameter. Die Argumente folgen den Regeln für Methodenaufrufe (Kapitel 5 und 8). Ein Aufruf liest den Funktionswert nur und ist über jeden Borrow möglich. Liefert er einen Wert, gilt R-8.13 (unbenutztes Ergebnis ist ein Fehler, `discard` verwirft).
 
-**R-10.18 (Überladen).** Ein Lambda-Argument passt bei der Auflösung überladener Methoden mit Rang „genau“, wenn es nach R-10.14 zum Parametertyp passt; sonst kommt die Variante nicht in Frage (Kapitel 7, R-7.17).
+**R-10.18 (Überladen).** Ein Lambda-Argument passt bei der Auflösung überladener Methoden mit Rang „genau“, wenn es nach R-10.14 zum Parametertyp passt; sonst kommt die Variante nicht in Frage (Kapitel 7, R-7.17). Leitet eine Variante einen Typ-Parameter aus dem Rückgabetyp des Lambdas ab (R-7.28), passt ein Lambda mit Rückgabewert nicht zu einem Funktionstyp mit `void` und umgekehrt.
 
 ## 5. Beispiel
 

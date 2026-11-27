@@ -1,0 +1,30 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-7.26, R-16.7
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (eine Unterklasse mit shared-Feld macht die Basisklasse nicht übertragbar).
+package conformance.ch16;
+
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+class Counter {
+public:
+    i64 n = 0;
+}
+
+class Shape {
+public:
+    i64 id = 0;
+}
+
+class Counted : Shape {
+public:
+    shared Counter? counter;
+}
+
+class Use {
+public:
+    static void run(own Sender<i64> other) {
+        discard Channel<Shape>::open(1);   // FEHLER
+    }
+}

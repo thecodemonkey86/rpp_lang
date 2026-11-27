@@ -1,0 +1,34 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.2, R-16.9
+// Erwartet: Ausgabe "1 2 3 9\ncounter 2\ndone"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Task;
+
+class Counter {
+public:
+    i64 n = 0;
+}
+
+i32 main(string[] args) {
+    // V-16.2: Der Rumpf besitzt seine Arbeitsdaten und darf sie ändern.
+    i64[] data = [3, 1, 2];
+    Task<i64[]> t = Thread::spawnWith(data, own (own i64[] d) => {
+        d.sort();
+        d.push(9);
+        return d;
+    });
+    i64[] sorted = t.join();
+    string line = "";
+    for (i64 v : sorted) {
+        line = line.length == 0 ? v.toString() : line + " " + v.toString();
+    }
+    print(line);
+    Counter c = new Counter();
+    Thread w = Thread::spawnWith(c, own (own Counter k) => {
+        k.n += 2;
+        print("counter " + k.n.toString());
+    });
+    w.join();
+    print("done");
+    return 0;
+}

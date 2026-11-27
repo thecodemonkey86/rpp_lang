@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.1, R-16.2, R-16.3, R-16.18
+// Erwartet: Ausgabe "before\nin thread\nafter"; Exit-Code 0
+using rpp.sync.Thread;
+
+i32 main(string[] args) {
+    print("before");
+    Thread t = Thread::spawn(own () => { print("in thread"); });
+    t.join();
+    print("after");
+    return 0;
+}

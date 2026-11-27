@@ -144,6 +144,19 @@ The parts: `src/compiler/project/Registry.rpp` (versions, checksums, form of `rp
 
 Outside Windows the runtime uses `dlopen`, so every program links `-ldl`. C functions must not use names starting with `rt_` or `rpp_`, which belong to the runtime. `rppcc test` compiles the test library `conformance/ch15_c_interop/native/rpptest.c` like `rppc test` does (`Toolchain.sharedLib`).
 
+## Threads (M11)
+
+`rpp.sync` (chapter 16) is checked in `Program.rpp` (`transferable`, the constraint `Transferable`) and `Checker.rpp` (`syncBody`, `syncRole`, `syncCaptures`) like in `rppc`. The methods of `Thread`, `Task`, `Scope`, `Channel`, `Sender` and `Receiver` are built into the runtime (`native_sync` in `rpp_rt.c`).
+
+Programs run their threads in parallel as operating system threads (Win32 threads or pthreads):
+
+- Thread-local: current exception, program error, frames, temporaries and the free lists of the allocator. A block may be freed in another thread; a finished thread hands its lists to the next new one.
+- Shared values are immutable and counted: strings, tuples, enum values with data, function values. Their counters are atomic as soon as a second thread exists (`rt_mt`), plain before, so programs without threads pay only for the thread-local state.
+- Threads, scopes and channels are in one registry with one lock and one condition. `join`, `send`, `receive`, the end of a scope and the release of a handle wait there; a detected deadlock is a `ThreadError` (R-16.19).
+- A program error records itself as the first one and sets `rt_cancel`. `rt_enter` (every call) and every loop iteration are cancellation points; a cancelled thread unwinds like after a program error of its own (R-16.6). `main` waits for all threads before it ends.
+
+C functions called from several threads must be thread-safe themselves (R-15.16).
+
 ## Bootstrap without Rust
 
 `bootstrap/rppcc.c` is the C code of the compiler itself, generated with `rppcc c --release rppc/std rpp-compiler bootstrap/rppcc.c` (start point, checked in without line conversion).

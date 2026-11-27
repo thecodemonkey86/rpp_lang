@@ -111,7 +111,7 @@ Examples:
 
 **R-7.27 (Static Members).** Static methods and constants of a generic class are addressed with type arguments: `List<Foo>::create()` A static constant must not depend on a type parameter.
 
-**R-7.28 (Generic methods).** Type arguments of a generic method are only derived from the arguments, never written out, and if a type parameter cannot be clearly derived, this is an error.
+**R-7.28 (Generic methods).** Type arguments of a generic method are only derived from the arguments, never written out, and if a type parameter cannot be clearly derived, this is an error. A lambda passed as an argument contributes its parameter types and, where a type parameter of the method occurs in the return type of the function parameter, its return type (R-10.3); `void` is never derived as a type argument (R-4.42).
 
 ## 8. Conformance tests
 

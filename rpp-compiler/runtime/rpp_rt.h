@@ -20,6 +20,29 @@
 #define RPP_SSE2 1
 #endif
 
+/* ---------------------------------------------------------------- Threads (Kapitel 16)
+ * Jeder R++-Thread ist ein Thread des Betriebssystems. Was ein Thread allein benutzt (laufende
+ * Exception, Programmfehler, Rahmen, Zwischenwerte, Speicherlisten), ist threadlokal. Geteilt
+ * werden nur unveränderliche Werte mit Zähler (Strings, Tupel, Enum-Werte, Funktionswerte);
+ * ihre Zähler sind atomar, sobald es mehr als einen Thread gibt (rt_mt). */
+#if defined(_MSC_VER)
+#include <intrin.h>
+#define RT_TLS __declspec(thread)
+#define RT_AINC(p) _InterlockedIncrement64((volatile __int64*)(p))
+#define RT_ADEC(p) _InterlockedDecrement64((volatile __int64*)(p))
+#else
+#define RT_TLS __thread
+#define RT_AINC(p) __atomic_add_fetch((p), 1, __ATOMIC_SEQ_CST)
+#define RT_ADEC(p) __atomic_sub_fetch((p), 1, __ATOMIC_SEQ_CST)
+#endif
+extern int rt_mt;                   /* es gab je mehr als einen Thread */
+extern volatile int rt_cancel;      /* ein Programmfehler bricht alle Threads ab (R-16.6) */
+extern int rt_depth_limit;          /* RT_MAX_DEPTH; 0, sobald rt_cancel gesetzt ist */
+int rt_cancel_point(void);          /* Abbruchstelle: ST_FATAL, wenn dieser Thread abgebrochen wird */
+/* Zähler eines geteilten Werts erhöhen bzw. senken (liefert den neuen Stand) */
+#define RT_RC_INC(p) do { if (rt_mt) (void)RT_AINC(p); else ++*(p); } while (0)
+#define RT_RC_DEC(p) (rt_mt ? (int64_t)RT_ADEC(p) : --*(p))
+
 /* ---------------------------------------------------------------- Status */
 #define ST_OK 0
 #define ST_THROW 1
@@ -162,14 +185,14 @@ extern int rt_std_new(rv* out, const char* full, int nargs, rv* args); /* Except
 
 /* ---------------------------------------------------------------- Zustand */
 extern int rt_release;          /* Releasemodus */
-extern rv rt_exc;               /* laufende Exception */
-extern int rt_fatals;
+extern RT_TLS rv rt_exc;        /* laufende Exception */
+extern RT_TLS int rt_fatals;
 
 typedef struct RTrace {
     int32_t n;
     const char** labels;
 } RTrace;
-extern RTrace rt_exc_trace;
+extern RT_TLS RTrace rt_exc_trace;
 
 /* ---------------------------------------------------------------- Werte bauen */
 #if defined(_MSC_VER)
@@ -257,8 +280,12 @@ rv rt_text(rv v);                               /* to_text: Text eines Werts (ow
 
 /* ---------------------------------------------------------------- Besitz */
 /* Die häufigen Fälle (Grundwerte, nichts freizugeben) stehen inline hier; der Rest in rpp_rt.c. */
-extern int64_t rt_ntemps;
+extern RT_TLS int64_t rt_ntemps;
 int rt_drop_slow(rv v);
+/* weiterer Verweis auf einen String (unvergängliche zählen nicht) */
+static inline void rt_str_ref(RStr* s) {
+    if (s->rc >= 0) RT_RC_INC(&s->rc);
+}
 rv rt_temp_push(rv v);
 int rt_trelease_slow(int64_t mark, int st);
 rv rt_promote_slow(rv v);
@@ -293,8 +320,14 @@ static inline int rt_drop(rv v) {
         /* M7: nur das Freigeben (Zähler 1 -> 0) geht an rt_drop_slow */
         if (v.form != F_OWN) return ST_OK;
         RStr* s = (RStr*)v.v.p;
-        if (s->rc > 1) { s->rc--; return ST_OK; }
-        if (s->rc <= 0) return ST_OK;
+        if (!rt_mt) {
+            if (s->rc > 1) { s->rc--; return ST_OK; }
+            if (s->rc <= 0) return ST_OK;
+        } else {
+            if (s->rc < 0) return ST_OK;
+            if (RT_ADEC(&s->rc) > 0) return ST_OK;
+            s->rc = 1;      /* der letzte Verweis: rt_drop_slow gibt frei */
+        }
     } else if (v.tag == RT_OBJ) {
         /* M7: Borrows geben nichts frei; shared nur zählen, solange andere Verweise bleiben */
         if (v.form == F_BORROW || v.form == F_WEAKB) return ST_OK;
@@ -321,8 +354,7 @@ static inline rv rt_promote(rv v) {
     if (v.tag == RT_STR) {
         /* M7: wie rt_promote_slow, inline */
         if (v.form == F_BORROW) {
-            RStr* s = (RStr*)v.v.p;
-            if (s->rc >= 0) s->rc++;
+            rt_str_ref((RStr*)v.v.p);
             v = rv_with_form(v, F_OWN);
         }
         return v;
@@ -361,8 +393,7 @@ static inline rv rt_transfer_var(rv* cell) {
         if (rt_enums[cur.x]->plain) return cur;
     } else if (cur.tag == RT_STR) {
         /* wie share: der Text wird geteilt, die Variable behält ihren Verweis */
-        RStr* s = (RStr*)cur.v.p;
-        if (s->rc >= 0) s->rc++;
+        rt_str_ref((RStr*)cur.v.p);
         return rv_with_form(cur, F_OWN);
     }
     return rt_transfer_var_slow(cell);
@@ -464,11 +495,12 @@ int rt_capture_own(rv* cell, rv* out);          /* own-Lambda: Erfassung per Wer
 
 /* Rahmen: Stapel der Namen für den Stacktrace (inline, M7) */
 #define RT_MAX_DEPTH 12000
-extern const char* rt_frames[];
-extern int rt_fdepth;
-int rt_enter_overflow(void);
+extern RT_TLS const char* rt_frames[];
+extern RT_TLS int rt_fdepth;
+int rt_enter_slow(const char* label);
+/* Jeder Aufruf ist auch eine Abbruchstelle (R-16.6): rt_depth_limit ist dann 0. */
 static inline int rt_enter(const char* label) {
-    if (rt_fdepth >= RT_MAX_DEPTH) return rt_enter_overflow();
+    if (rt_fdepth >= rt_depth_limit) return rt_enter_slow(label);
     rt_frames[rt_fdepth++] = label;
     return ST_OK;
 }
@@ -739,6 +771,7 @@ extern int (*rt_native_load)(void);              /* Debugmodus: lädt die Biblio
 void* rt_native_open(const char* lib, const char* file, const char* const* dirs, int ndirs);
 void* rt_native_sym(void* h, const char* lib, const char* name);
 void rt_native_flush(void);
+void rt_native_done(void);
 int rt_native_str(const char** out, rv v, const char* param, const char* fn);
 int rt_native_ret_str(rv* out, const char* s, int nullable, const char* fn);
 uint8_t* rt_native_bytes(rv v, size_t* len);

@@ -1,0 +1,21 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.12
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (geliehen wird nur im Lambda, das an Thread::scope übergeben ist).
+package conformance.ch16;
+
+using rpp.sync.Thread;
+using rpp.sync.Scope;
+
+class Use {
+public:
+    static void helper(mut Scope s, i64[] data) {
+        s.spawn(() => { print(data.length.toString()); });   // FEHLER
+    }
+
+    static void run() {
+        i64[] data = [1, 2, 3];
+        Thread::scope((mut Scope s) => {
+            Use::helper(mut s, data);
+        });
+    }
+}

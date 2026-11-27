@@ -79,6 +79,14 @@ public:
     // Zugriffe auf erfasste Orte (Wurzel, veränderbar)
     i64[] capIds = [];
     bool[] capMut = [];
+    // erste verändernde Zugriffe auf erfasste Orte (für R-16.12)
+    i64[] mutIds = [];
+    i32[] mutLines = [];
+    i32[] mutCols = [];
+    // Lambda an Thread::scope: sein Scope-Parameter (R-16.12); -2: keiner
+    i64 scopeParam = -2;
+    // Variablen, die Threads dieses Bereichs lesend leihen (R-16.12)
+    i64[] scopeShared = [];
 
     constructor(own Ret? ret, bool ownLambda) {
         this.ret = ret;
@@ -149,6 +157,8 @@ public:
     bool neg = false;
     ui64 mag = 0;
     PInfo[] lparams = [];
+    // Lambda: sein Rückgabetyp, wo eine Variante ihn braucht (R-7.28)
+    shared Ty? lret = null;
     constructor(i32 kind, shared Ty ty) {
         this.kind = kind;
         this.ty = ty;
@@ -179,6 +189,12 @@ private:
     i32 retFacts = 0;
     // Steht der gerade geprüfte Ausdruck direkt als Argument eines Aufrufs?
     bool asArgument = false;
+    // Rolle des nächsten geprüften Lambdas (Kapitel 16): 0 keine, 1 Rumpf eines Threads,
+    // 2 Rumpf von Thread::scope, 3 gewöhnliches Lambda an Scope.spawn (syncScope: Rahmen des Bereichs)
+    i32 syncNext = 0;
+    i64 syncScope = -1;
+    // Wurzel des Empfängers des gerade geprüften Aufrufs (für Scope.spawn); -2: keine
+    i64 syncRecv = -2;
     i64 quiet = 0;
     // Aufrufe, deren Methode einen Borrow zurückgibt (R-5.24), als Position zeile * 1000000 + spalte
     i64[] refCalls = [];
@@ -1073,6 +1089,11 @@ private:
             } else {
                 frames[f].capIds.push(pl.root);
                 frames[f].capMut.push(mutable);
+            }
+            if (mutable && Program::indexOfInt(frames[f].mutIds, pl.root) < 0) {
+                frames[f].mutIds.push(pl.root);
+                frames[f].mutLines.push(line);
+                frames[f].mutCols.push(col);
             }
         }
         i64 k = -1;
@@ -2830,7 +2851,12 @@ private:
             }
             if (!has) {
                 string nm = p.defs[c.id].name;
-                err(e.line, e.col, "R-7.11", nm + " has no copy");
+                if (p.isSyncClass(c.id)) {
+                    string[] also = ["R-7.11"];
+                    errAlso(e.line, e.col, "R-16.1", also, nm + " cannot be copied");
+                } else {
+                    err(e.line, e.col, "R-7.11", nm + " has no copy");
+                }
             }
         }
         return Ty::unformed(t);
@@ -4190,6 +4216,14 @@ private:
         } else if (a.kind == 4) {
             if (pt.kind == TK::Func) {
                 bool ok = pt.modes.length == a.lparams.length;
+                // R-10.18: Ist der Rückgabetyp des Lambdas bekannt, muss void zu void passen.
+                shared Ty? lr = a.lret;
+                if (lr != null && !lr.isError()) {
+                    shared Ty fr = pt.args[pt.args.length - 1];
+                    if (fr.kind != TK::Param && fr.kind != TK::Error && (fr.kind == TK::Void) != (lr.kind == TK::Void)) {
+                        ok = false;
+                    }
+                }
                 for (i64 i = 0; ok && i < pt.modes.length; i++) {
                     ref PInfo l = a.lparams[i];
                     shared Ty fty = pt.args[i];
@@ -4249,6 +4283,34 @@ private:
             shapes.push(argShape(a));
         }
         i64 n = args.kids.length;
+        // R-7.28: Steht ein Typ-Parameter der Methode nur im Rückgabetyp eines Funktionsparameters,
+        // wird er aus dem Rückgabetyp des übergebenen Lambdas abgeleitet (R-10.3, R-10.4).
+        for (i64 i = 0; i < shapes.length; i++) {
+            if (shapes[i].kind != 4) {
+                continue;
+            }
+            bool needed = false;
+            for (MethodInfo m0 : cands) {
+                if (m0.params.length != n || m0.tparams.length == 0) {
+                    continue;
+                }
+                shared Ty pc = Tys::core(m0.params[i].ty);
+                if (pc.kind == TK::Func && mentions(pc.args[pc.args.length - 1], m0.tparams)) {
+                    needed = true;
+                }
+            }
+            if (!needed) {
+                continue;
+            }
+            ProbeState st = beginProbe();
+            asArgument = true;
+            shared Ty lt = expr(args.kids[i].kids[0], null);
+            asArgument = false;
+            endProbe(mut st);
+            if (lt.kind == TK::Func) {
+                shapes[i].lret = lt.args[lt.args.length - 1];
+            }
+        }
         MethodInfo[] viable = [];
         RankList[] ranks = [];
         for (MethodInfo m0 : cands) {
@@ -4359,6 +4421,8 @@ private:
                         at = Ty::ofPrim(Num::defaultInt(shapes[i].neg, shapes[i].mag));
                     } else if (shapes[i].kind == 2) {
                         at = Ty::ofPrim("f64");
+                    } else if (shapes[i].kind == 4) {
+                        at = lambdaType(shapes[i]);
                     }
                     if (at != null) {
                         unify(orig.params[i].ty, at, orig.tparams, mut map);
@@ -4396,7 +4460,12 @@ private:
             }
             pushLoan(recvPlace.dup(), chosen.mutThis, UntilKind::Call, id, "R-5.10");
         }
+        syncRecv = -2;
+        if (recvPlace != null && recvPlace.path.length == 0) {
+            syncRecv = recvPlace.root;
+        }
         checkArgs(chosen, args, id);
+        syncRecv = -2;
         endCall(id);
         // R-5.24: Eine Borrow-Rückgabe gilt als Loan auf den Empfänger.
         if (chosen.ret.kind == RetKind::Ref) {
@@ -4453,15 +4522,22 @@ private:
 
     // Argumente nach der Markierung der Parameter (R-5.8, R-5.9)
     void checkArgs(MethodInfo m, Node args, i64 callId) mut {
+        i32 sync = syncBody(m);
+        i64 recvRoot = syncRecv;
+        syncRecv = -2;
         for (i64 k = 0; k < args.kids.length && k < m.params.length; k++) {
             ref Node a = args.kids[k];
             ref Node x = a.kids[0];
             shared Ty pty = m.params[k].ty;
             Mode pm = m.params[k].mode;
             string pn = m.params[k].name;
+            if (sync != 0 && k == (sync == 2 ? 1 : 0)) {
+                syncRole(sync, x, recvRoot);
+            }
             asArgument = true;
             shared Ty at = expr(x, pty);
             asArgument = false;
+            syncNext = 0;
             bool isLambda = x.kind == "lambda";
             if (!isLambda) {
                 discard requireE(at, pty, x);
@@ -4508,6 +4584,8 @@ private:
                 at = Ty::ofPrim(Num::defaultInt(shapes[i].neg, shapes[i].mag));
             } else if (shapes[i].kind == 2) {
                 at = Ty::ofPrim("f64");
+            } else if (shapes[i].kind == 4) {
+                at = lambdaType(shapes[i]);
             }
             if (at != null) {
                 unify(m.params[i].ty, at, m.tparams, mut map);
@@ -4518,11 +4596,190 @@ private:
                 return (false, m.substituted(new Subst()));
             }
         }
+        // void ist kein Typargument (R-4.42)
+        for (shared Ty v : map.vals) {
+            if (v.kind == TK::Void) {
+                return (false, m.substituted(new Subst()));
+            }
+        }
         MethodInfo r = m.substituted(map);
         for (i64 t : m.tparams) {
             r.targs.push(map.vals[Program::indexOfInt(map.keys, t)]);
         }
         return (true, r);
+    }
+
+    // Funktionstyp eines Lambda-Arguments, dessen Rückgabetyp bekannt ist; sonst null
+    static shared Ty? lambdaType(ArgShape s) {
+        shared Ty? lr = s.lret;
+        if (lr == null) {
+            return null;
+        }
+        shared Ty[] pts = [];
+        Mode[] modes = [];
+        for (PInfo x : s.lparams) {
+            pts.push(x.ty);
+            modes.push(x.mode);
+        }
+        return Ty::func(pts, modes, lr);
+    }
+
+    // Kommt in t einer der Typ-Parameter vor?
+    static bool mentions(shared Ty t, i64[] tps) {
+        if (t.kind == TK::Param) {
+            return Program::indexOfInt(tps, t.id) >= 0;
+        }
+        for (shared Ty x : t.args) {
+            if (mentions(x, tps)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------------ Threads (Kapitel 16)
+
+    // Nimmt m aus rpp.sync einen Thread-Rumpf? 0: nein, 1: Thread::spawn, 2: Thread::spawnWith
+    // (zweites Argument), 3: Thread::scope, 4: Scope.spawn
+    i32 syncBody(MethodInfo m) {
+        if (m.owner < 0 || !p.inSync(m.owner)) {
+            return 0;
+        }
+        string dn = p.defs[m.owner].name;
+        if (dn == "Thread" && m.name == "spawn") {
+            return 1;
+        }
+        if (dn == "Thread" && m.name == "spawnWith") {
+            return 2;
+        }
+        if (dn == "Thread" && m.name == "scope") {
+            return 3;
+        }
+        if (dn == "Scope" && m.name == "spawn") {
+            return 4;
+        }
+        return 0;
+    }
+
+    // Rolle des Arguments e als Rumpf (R-16.9, R-16.12); meldet eine falsche Form
+    void syncRole(i32 what, Node e, i64 recv) mut {
+        bool isLambda = e.kind == "lambda";
+        bool isOwn = isLambda && e.text == "own";
+        if (what == 3) {
+            if (isLambda) {
+                syncNext = 2;
+            }
+            return;
+        }
+        if (what == 4) {
+            if (isOwn) {
+                syncNext = 1;
+                return;
+            }
+            if (!isLambda) {
+                err(e.line, e.col, "R-16.12", "The body of a thread must be a lambda expression at the call");
+                return;
+            }
+            i64 frame = -1;
+            if (recv != -2) {
+                for (i64 f = frames.length - 1; f >= 0; f--) {
+                    if (frames[f].scopeParam == recv) {
+                        frame = f;
+                        break;
+                    }
+                }
+            }
+            if (frame < 0) {
+                err(e.line, e.col, "R-16.12", "A thread of a scope can borrow only inside the lambda passed to Thread::scope, through its Scope parameter; use an own lambda here");
+                return;
+            }
+            syncNext = 3;
+            syncScope = frame;
+            return;
+        }
+        if (!isOwn) {
+            err(e.line, e.col, "R-16.9", "The body of a thread must be an own lambda expression at the call");
+            return;
+        }
+        syncNext = 1;
+    }
+
+    // Prüft die Erfassungen eines Thread-Rumpfs (R-16.9, R-16.12)
+    void syncCaptures(i32 role, i64 scope, Frame frame, i32 line, i32 col) mut {
+        if (role == 1) {
+            for (i64 id : frame.captures) {
+                i64 li = localById(id);
+                if (li < 0) {
+                    continue;
+                }
+                shared Ty lt = locals[li].ty;
+                if (!p.transferable(lt)) {
+                    string msg = locals[li].name + " has type " + show(lt) + ", which cannot be transferred to another thread";
+                    err(line, col, "R-16.9", msg);
+                }
+            }
+            return;
+        }
+        if (role == 2) {
+            for (i64 id : frame.scopeShared) {
+                i64 k = Program::indexOfInt(frame.mutIds, id);
+                if (k < 0) {
+                    continue;
+                }
+                string nm = "this";
+                if (id != -1) {
+                    i64 li = localById(id);
+                    nm = "";
+                    if (li >= 0) {
+                        nm = locals[li].name;
+                    }
+                }
+                err(frame.mutLines[k], frame.mutCols[k], "R-16.12", nm + " is borrowed by a thread of the scope and cannot be modified in the scope");
+            }
+            return;
+        }
+        i64[] ids = [];
+        for (i64 id : frame.captures) {
+            ids.push(id);
+        }
+        for (i64 id : frame.capIds) {
+            if (Program::indexOfInt(ids, id) < 0) {
+                ids.push(id);
+            }
+        }
+        for (i64 id : ids) {
+            i64 ck = Program::indexOfInt(frame.capIds, id);
+            bool mutable = ck >= 0 && frame.capMut[ck];
+            if (id == -1) {
+                bool ok = cls < 0 || p.transferable(p.selfType(cls));
+                if (!ok) {
+                    err(line, col, "R-16.12", "this cannot be transferred to another thread");
+                } else if (mutable) {
+                    err(line, col, "R-16.12", "A thread of a scope can borrow this only read-only");
+                }
+            } else {
+                i64 li = localById(id);
+                if (li < 0) {
+                    continue;
+                }
+                string nm = locals[li].name;
+                shared Ty lt = locals[li].ty;
+                if (locals[li].frame > scope) {
+                    err(line, col, "R-16.12", nm + " is declared inside the scope; a thread of the scope can borrow only variables from outside (use an own lambda)");
+                    continue;
+                }
+                if (mutable) {
+                    err(line, col, "R-16.12", "A thread of a scope can borrow " + nm + " only read-only");
+                    continue;
+                } else if (!p.transferable(lt)) {
+                    string msg = nm + " has type " + show(lt) + ", which cannot be transferred to another thread";
+                    err(line, col, "R-16.12", msg);
+                }
+            }
+            if (scope < frames.length && Program::indexOfInt(frames[scope].scopeShared, id) < 0) {
+                frames[scope].scopeShared.push(id);
+            }
+        }
     }
 
     // Bindet Typ-Parameter einer generischen Methode an die Typen der Argumente
@@ -4660,6 +4917,11 @@ private:
             }
             return Ty::error();
         }
+        if (p.isSyncClass(d) && cls != d) {
+            probeArgs(args);
+            err(line, col, "R-16.1", dn + " cannot be created with new");
+            return Ty::error();
+        }
         if (p.defs[d].kind != DefKind::Class) {
             err(line, col, "R-7.5", dn + " is not a class");
             return Ty::error();
@@ -4785,13 +5047,24 @@ private:
         bool hasRet = ret != null;
         RetKind rk = ret?.kind ?? RetKind::Void;
         shared Ty rty = ret?.ty ?? Ty::simple(TK::Void);
+        i32 sync = syncNext;
+        i64 syncFrame = syncScope;
+        syncNext = 0;
         frames.push(new Frame(ret, isOwn));
         pushScope();
+        bool firstParam = true;
         for (PInfo x : ps) {
             if (findLocal(x.name) >= 0) {
                 err(0, 0, "R-8.17", x.name + " shadows a visible variable");
             }
             discard newLocal(x.name, x.ty, LK::Param, x.mode, false);
+            if (firstParam && sync == 2) {
+                i64 pli = findLocal(x.name);
+                if (pli >= 0) {
+                    frames[top()].scopeParam = locals[pli].id;
+                }
+            }
+            firstParam = false;
         }
         shared Ty result = Ty::simple(TK::Void);
         if (body.kind != "block") {
@@ -4839,6 +5112,9 @@ private:
         }
         popScope();
         Frame frame = frames.pop();
+        if (sync != 0) {
+            syncCaptures(sync, syncFrame, frame, line, col);
+        }
         lastCaptures = [];
         for (i64 id : frame.captures) {
             i64 li = localById(id);

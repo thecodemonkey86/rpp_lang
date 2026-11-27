@@ -1,0 +1,17 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.12
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (eine Variable des Bereichs lässt sich nicht leihen).
+package conformance.ch16;
+
+using rpp.sync.Thread;
+using rpp.sync.Scope;
+
+class Use {
+public:
+    static void run() {
+        Thread::scope((mut Scope s) => {
+            i64[] local = [1, 2, 3];
+            s.spawn(() => { print(local.length.toString()); });   // FEHLER
+        });
+    }
+}

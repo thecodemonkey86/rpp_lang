@@ -19,7 +19,9 @@ pub mod ffi;
 mod literals;
 mod stdlib;
 mod save_file;
+mod sync;
 pub mod value;
+mod world;
 
 use console::Console;
 use literals::{FileLiterals, PreparedLiteral};
@@ -73,10 +75,14 @@ fn run_with_console(p: &'static Program, release: bool, check: bool, args: Vec<S
     let h = std::thread::Builder::new()
         .stack_size(2 << 30)
         .spawn(move || {
-            let mut it = Interp::new(p, release, console);
+            let w = world::World::new(console, literals::prepare(p));
+            w.acquire();
+            let mut it = Interp::new(p, release, w, 0);
             it.check = check;
             let exit = it.main(&args);
-            let (stdout, stderr) = it.console.into_output();
+            let (stdout, stderr) = std::mem::replace(&mut w.st().console, Console::Stdio).into_output();
+            drop(it);
+            w.release();
             Outcome { stdout, stderr, exit }
         })
         .expect("Thread für den Interpreter");
@@ -187,14 +193,14 @@ struct Ctor {
 }
 
 struct Interp {
-    save_files: HashMap<*const Obj, save_file::SaveFile>,
-    text_readers: HashMap<*const Obj, std::io::BufReader<std::fs::File>>,
-    /// geladene C-Bibliotheken (Kapitel 15)
-    natives: Option<Rc<ffi::Natives>>,
+    /// gemeinsamer Zustand aller Threads (Kapitel 16): Konsole, Dateien, C-Bibliotheken, Kanäle
+    w: &'static world::World,
+    /// Nummer dieses Threads (0: main)
+    tid: i64,
+    /// Abbruchstellen seit der letzten Abgabe der Sperre
+    ticks: u32,
     p: &'static Program,
-    literals: Vec<FileLiterals>,
     release: bool,
-    console: Console,
     frames: Vec<Frame>,
     scopes: Vec<Scope>,
     spare_scopes: Vec<Scope>,
@@ -342,15 +348,15 @@ fn to_text(v: &Value) -> String {
 }
 
 impl Interp {
-    fn new(p: &'static Program, release: bool, console: Console) -> Interp {
+    fn new(p: &'static Program, release: bool, w: &'static world::World, tid: i64) -> Interp {
         Interp {
-            p, literals: literals::prepare(p), release, console, frames: Vec::new(), scopes: Vec::new(), spare_scopes: Vec::new(),
+            w, tid, ticks: 0,
+            p, release, frames: Vec::new(), scopes: Vec::new(), spare_scopes: Vec::new(),
             spare_bindings: Vec::new(), temps: Vec::new(), layouts: HashMap::new(),
             fields_by_site: vec![Vec::new(); p.ws.files.len()], other_field_indices: HashMap::new(),
             virtual_methods: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0),
             binding: Cell::new(false), locked_args: Vec::new(), check: false,
             pending_targs: Vec::new(), heap: Vec::new(), shared_used: false,
-            save_files: HashMap::new(), text_readers: HashMap::new(), natives: None,
         }
     }
 
@@ -381,7 +387,46 @@ impl Interp {
 
     fn fatal(&self, name: &'static str, msg: impl Into<String>) -> Flow {
         self.fatals.set(self.fatals.get() + 1);
-        Flow::Fatal(Fatal { name, msg: msg.into(), trace: self.trace() })
+        let f = Fatal { name, msg: msg.into(), trace: self.trace() };
+        // R-16.6: Der erste Programmfehler bricht alle anderen Threads ab.
+        let st = self.w.st();
+        if st.first_fatal.is_none() {
+            st.first_fatal = Some(world::FirstFatal { tid: self.tid, name, msg: f.msg.clone(), trace: f.trace.clone() });
+        }
+        if self.w.is_active() {
+            self.w.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.w.bump();
+        }
+        Flow::Fatal(f)
+    }
+
+    /// Abbruchstelle (R-16.6): nach einem Programmfehler in einem anderen Thread wird dieser
+    /// abgewickelt; sonst gibt er regelmäßig die Sperre ab (R-16.23).
+    #[inline]
+    fn tick(&mut self) -> R<()> {
+        if self.w.is_active() {
+            self.tick_slow()
+        } else {
+            Ok(())
+        }
+    }
+
+    fn tick_slow(&mut self) -> R<()> {
+        if self.w.cancelled() && self.fatals.get() == 0 {
+            return Err(self.cancelled());
+        }
+        self.ticks += 1;
+        if self.ticks >= 128 {
+            self.ticks = 0;
+            self.w.yield_now();
+        }
+        Ok(())
+    }
+
+    /// Dieser Thread wird wegen eines Programmfehlers in einem anderen abgewickelt (R-16.6).
+    fn cancelled(&self) -> Flow {
+        self.fatals.set(self.fatals.get() + 1);
+        Flow::Fatal(Fatal { name: "Cancelled", msg: String::new(), trace: Vec::new() })
     }
 
     /// Ergebnis eines Blocks und seines Aufräumens zusammenführen: Ein Programmfehler beim
@@ -640,7 +685,7 @@ impl Interp {
                     _ => 0,
                 };
                 if ptr != 0 {
-                    if let Some(n) = self.natives.clone() {
+                    if let Some(n) = self.w.st().natives.clone() {
                         n.free(d, ptr);
                     }
                 }
@@ -659,7 +704,7 @@ impl Interp {
     /// Aufruf einer Methode einer extern-Klasse (R-15.11).
     fn call_c(&mut self, m: &MethodInfo, args: &mut [Value]) -> R<Value> {
         use ffi::{CRet, CResult, CVal};
-        let Some(natives) = self.natives.clone() else { return Err(self.internal("C-Bibliotheken nicht geladen")) };
+        let Some(natives) = self.w.st().natives.clone() else { return Err(self.internal("C-Bibliotheken nicht geladen")) };
         let Some(addr) = natives.func(m.owner, &m.name) else { return Err(self.internal(format!("Symbol {} nicht geladen", m.name))) };
         // 2. Argumente nach C umwandeln (R-15.6 bis R-15.10)
         let mut cargs: Vec<CVal> = Vec::new();
@@ -752,7 +797,19 @@ impl Interp {
         // 4. Aufruf
         // SAFETY: Die Signatur folgt aus der geprüften Deklaration (R-15.6); dass C sich daran
         // hält, ist die Bedingung aus R-15.16.
+        // Mit mehreren Threads ist die Sperre während des Aufrufs abgegeben; der Thread gilt
+        // solange als außerhalb von R++ (R-16.6).
+        let threads = self.w.is_active();
+        if threads {
+            self.w.st().external.insert(self.tid);
+            self.w.bump();
+            self.w.release();
+        }
         let r = unsafe { ffi::call(addr, &cargs, cret) };
+        if threads {
+            self.w.acquire();
+            self.w.st().external.remove(&self.tid);
+        }
         // Ergebnis umwandeln, Leihen beenden
         for (bytes, target) in &buffers {
             if let Some(o) = target {
@@ -859,6 +916,7 @@ impl Interp {
     }
 
     fn enter(&mut self, f: Frame) -> R<()> {
+        self.tick()?;
         if self.frames.len() >= MAX_DEPTH {
             return Err(self.fatal("StackOverflowError", format!("More than {MAX_DEPTH} nested calls")));
         }
@@ -903,15 +961,15 @@ impl Interp {
             })
         });
         let Some((file, m)) = main else {
-            self.console.write_stderr("Missing main");
+            self.w.st().console.write_stderr("Missing main");
             return 2;
         };
         // R-15.12: alle C-Bibliotheken vor main laden und alle Symbole auflösen
         if self.p.defs.iter().any(|d| d.ext.is_some()) {
             match ffi::load(self.p) {
-                Ok(n) => self.natives = Some(Rc::new(n)),
+                Ok(n) => self.w.st().natives = Some(Rc::new(n)),
                 Err((msg, _)) => {
-                    self.console.write_stderr(&format!("NativeError: {msg}\n"));
+                    self.w.st().console.write_stderr(&format!("NativeError: {msg}\n"));
                     return 2;
                 }
             }
@@ -924,7 +982,12 @@ impl Interp {
         self.declare(&m.args.name, Value::Obj(vec, Form::Own));
         let r = self.block(&m.body);
         let mut r = self.leave(r);
-        if self.check && r.is_ok() && !self.shared_used {
+        if self.w.is_active() {
+            if let Some(code) = self.end_threads(&r) {
+                return code;
+            }
+        }
+        if self.check && r.is_ok() && !self.shared_used && !self.w.st().sync_used {
             let left = self.heap.iter().filter(|o| o.alive.get()).count();
             if left > 0 {
                 r = Err(self.fatal("InvariantViolation", format!("Leak without shared ownership: {left} objects remain live after main returns")));
@@ -935,24 +998,24 @@ impl Interp {
             Err(Flow::Throw(ex, trace)) => {
                 let msg = self.describe(&ex);
                 let name = ex.obj().and_then(|o| o.class).map(|d| self.p.defs[d].name.clone()).unwrap_or_default();
-                self.console.write_stderr(&format!("{name}: {msg}\n"));
+                self.w.st().console.write_stderr(&format!("{name}: {msg}\n"));
                 if !self.release {
                     for t in trace {
-                        self.console.write_stderr(&format!("    at {t}\n"));
+                        self.w.st().console.write_stderr(&format!("    at {t}\n"));
                     }
                 }
                 let _ = self.drop_value(ex);
                 1
             }
             Err(Flow::Fatal(f)) if f.name == "InvariantViolation" => {
-                self.console.write_stderr(&format!("Internal error (invariant checking): {}\n", f.msg));
+                self.w.st().console.write_stderr(&format!("Internal error (invariant checking): {}\n", f.msg));
                 3
             }
             Err(Flow::Fatal(f)) => {
-                self.console.write_stderr(&format!("{}: {}\n", f.name, f.msg));
+                self.w.st().console.write_stderr(&format!("{}: {}\n", f.name, f.msg));
                 if !self.release {
                     for t in f.trace {
-                        self.console.write_stderr(&format!("    at {t}\n"));
+                        self.w.st().console.write_stderr(&format!("    at {t}\n"));
                     }
                 }
                 2
@@ -981,7 +1044,10 @@ impl Interp {
             for s in &b.stmts {
                 it.stmt(s)?;
                 if it.check && it.frames.len() == 1 && it.scopes.len() == 2 {
-                    it.check_invariants()?;
+                    // Werte in Kanälen und anderen Threads sieht die Prüfung nicht.
+                    if !it.w.st().sync_used {
+                        it.check_invariants()?;
+                    }
                 }
             }
             Ok(())
@@ -1088,6 +1154,7 @@ impl Interp {
     }
 
     fn sub_stmt(&mut self, s: &'static ast::Stmt) -> R<()> {
+        self.tick()?;
         self.with_scope(|it| it.stmt(s))
     }
 
@@ -1426,7 +1493,7 @@ impl Interp {
     fn matches(&mut self, pat: &'static ast::Pattern, v: &Value) -> R<Option<Vec<(String, Value)>>> {
         match pat {
             ast::Pattern::Literal { id, .. } => {
-                let equal = match FileLiterals::get(&self.literals, (self.file(), *id)) {
+                let equal = match FileLiterals::get(&self.w.st().literals, (self.file(), *id)) {
                     PreparedLiteral::PatternInt(n) => v.as_i128() == Some(*n),
                     PreparedLiteral::Value(value) => {
                         let value = value.clone();
@@ -1793,7 +1860,7 @@ impl Interp {
 
     fn eval(&mut self, e: &'static ast::Expr) -> R<Value> {
         match &e.kind {
-            E::Literal(_) => Ok(FileLiterals::expression(&self.literals, self.key(e))),
+            E::Literal(_) => Ok(FileLiterals::expression(&self.w.st().literals, self.key(e))),
             E::Name(n) => {
                 if let Some(c) = self.lookup(&n.name) {
                     let v = c.borrow().view();
@@ -2035,7 +2102,7 @@ impl Interp {
             U::Not => Ok(Value::Bool(!self.eval(x)?.as_bool())),
             U::Neg => {
                 if matches!(&x.kind, E::Literal(ast::Literal::Int(_) | ast::Literal::Float(_))) {
-                    return Ok(FileLiterals::expression(&self.literals, self.key(e)));
+                    return Ok(FileLiterals::expression(&self.w.st().literals, self.key(e)));
                 }
                 let v = self.eval(x)?;
                 match v {
@@ -2771,7 +2838,7 @@ impl Interp {
         match name {
             "print" => {
                 let v = self.eval(&args[0].expr)?;
-                self.console.write_stdout(&format!("{}\n", to_text(&v)));
+                self.w.st().console.write_stdout(&format!("{}\n", to_text(&v)));
                 Ok(Value::Void)
             }
             "assert" => {

@@ -115,7 +115,12 @@ PROBES = load_cases("parse_probes")
 # Lesarten, bei denen eine Mehrdeutigkeit erwartet und per Regel aufgelöst ist.
 EXPECTED_AMBIGUITY = {
     "else gehört zum inneren if": "else bindet an das nächste if (wie in C, Java, C#)",
+    "Tupel-Deklaration mit generischen Typen": "die Deklaration geht vor (Typ gefolgt von Name, wie bei a < b > c;)",
 }
+
+# `(A<B> x, C<D> y) = e;` ließe sich auch als Zuweisung an ein Tupel aus Vergleichen lesen; die
+# Deklaration geht vor. In den Konformitätstests gilt diese Mehrdeutigkeit als bekannt.
+GENERIC_TUPLE = re.compile(r"Rule statement, line \d+: '\(\w[\w.]*<")
 
 
 def first_statement_rule(tree):
@@ -295,7 +300,13 @@ def main():
             lines.extend(f"         {e}" for e in problems)
         else:
             lines.append(f"  ok    {label}")
-        ambiguities.extend(f"{label}: {a}" for a in found)
+        for a in found:
+            if GENERIC_TUPLE.search(a):
+                entry = "Tupel-Deklaration mit generischen Typen: " + EXPECTED_AMBIGUITY["Tupel-Deklaration mit generischen Typen"]
+                if entry not in known:
+                    known.append(entry)
+            else:
+                ambiguities.append(f"{label}: {a}")
 
     lines.append("")
     lines.append("== Ambiguities reported by ANTLR ==")

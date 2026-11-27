@@ -1,0 +1,11 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.1
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (von Thread lässt sich nicht ableiten).
+package conformance.ch16;
+
+using rpp.sync.Thread;
+
+class Mine : Thread {   // FEHLER
+public:
+    i64 id2 = 0;
+}

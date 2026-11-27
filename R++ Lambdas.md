@@ -65,7 +65,7 @@ Later assignments to the original variable do not affect the captured value.
 
 **R-10.17 (Calling a function value).** Use `f(a₁, …, aₙ)` for a variable or parameter, or call a field such as `this.handler(x)`. Arguments follow the method-call rules (Chapters 5 and 8). R-8.13 requires a result to be used or explicitly discarded with `discard`.
 
-**R-10.18 (Overloading).** A lambda argument is an exact match for an overload if it matches the parameter type under R-10.14. Otherwise the candidate is inapplicable (R-7.17).
+**R-10.18 (Overloading).** A lambda argument is an exact match for an overload if it matches the parameter type under R-10.14. Otherwise the candidate is inapplicable (R-7.17). Where an overload derives a type parameter from the return type of the lambda (R-7.28), a lambda that returns a value does not match a function type that returns `void`, and vice versa.
 
 ## 5. Example
 

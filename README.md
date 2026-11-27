@@ -101,6 +101,41 @@ public:
 
 Both modes behave the same: debug mode loads the library at start, release mode links it when building. A dependency that brings C code needs `allowNative: true` in the dependency entry of the project that uses it, and `rpp.lock` marks it with `native: true`. C code runs outside the guarantees of R++. [C interop rules](R%2B%2B%20C%20Interop.md), [example with a handle](conformance/ch15_c_interop/runtime/l02_handle_release)
 
+### Run code in threads
+
+`rpp.sync` starts threads and connects them with channels. A thread gets its data by `own`: `Thread::spawn` takes an `own` lambda, `spawnWith` hands it working data, and `join()` returns the result. Values with `shared` or `weak` references cannot cross to another thread, so there are no data races. Threads of a `Thread::scope` may borrow variables of the enclosing block read-only; the scope ends when all of them have ended.
+
+```cpp
+using rpp.sync.Thread;
+using rpp.sync.Task;
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+i32 main(string[] args) {
+    (Sender<i64> tx, Receiver<i64> rx) = Channel<i64>::open(4);
+    Task<i64> total = Thread::spawnWith(rx, own (own Receiver<i64> r) => {
+        i64 sum = 0;
+        i64? v = r.receive();
+        while (v != null) {
+            sum += v;
+            v = r.receive();
+        }
+        return sum;
+    });
+    Thread producer = Thread::spawnWith(tx, own (own Sender<i64> s) => {
+        for (i64 i = 1; i <= 10; i++) {
+            discard s.send(i * i);
+        }
+    });
+    producer.join();
+    print(total.join().toString());     // 385
+    return 0;
+}
+```
+
+An exception that leaves a thread is thrown again by `join()`. A program error in any thread ends the program after all threads have unwound, and a deadlock is reported as `ThreadError`. Programs built with `rppcc` run their threads in parallel; the `rppc` interpreter runs one thread at a time. [Thread rules](R%2B%2B%20Threads.md), [example with a scope](conformance/ch16_threads/runtime/l09_scope_borrows.rpp)
+
 ## Build a native executable
 
 `rppcc` builds native executables through C. You do not need Rust for this: the repository contains the compiler's own generated C code as a seed in [`rpp-compiler/bootstrap/rppcc.c`](rpp-compiler/bootstrap/). The bootstrap script compiles the seed with a C17 toolchain, lets the result compile `rppcc` from source twice, and checks that both generations produce the same C code.

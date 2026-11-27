@@ -1,0 +1,19 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.20, R-16.4, R-16.18
+// Erwartet: Ausgabe "main done\nlate"; Exit-Code 3
+using rpp.sync.Thread;
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+i32 main(string[] args) {
+    (Sender<i64> tx, Receiver<i64> rx) = Channel<i64>::open(1);
+    Thread t = Thread::spawnWith(rx, own (own Receiver<i64> r) => {
+        discard r.receive();
+        print("late");
+    });
+    print("main done");
+    discard tx.send(1);
+    // die Freigabe von t am Ende von main wartet auf den Thread; erst dann endet das Programm
+    return 3;
+}

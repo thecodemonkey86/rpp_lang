@@ -1,0 +1,33 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.6, R-9.14
+// Erwartet: Ausgabe "started\nreleased main"; Exit-Code 2; Fehlerausgabe enthält "IndexError"
+using rpp.sync.Thread;
+
+class Guard {
+public:
+    string name;
+    constructor(string name) {
+        this.name = name;
+    }
+    destructor() {
+        print("released " + this.name);
+    }
+}
+
+i32 main(string[] args) {
+    Guard g = new Guard("main");
+    print("started");
+    Thread t = Thread::spawn(own () => {
+        Thread::sleep(20);
+        i32[] a = [1];
+        i32 i = 5;
+        print(a[i].toString());
+    });
+    // Der Programmfehler im anderen Thread bricht main an einer Abbruchstelle ab; main wird
+    // abgewickelt (der Destruktor von g läuft), dann endet das Programm.
+    for (i64 k = 0; k < 500; k++) {
+        Thread::sleep(10);
+    }
+    print("not cancelled");
+    return 0;
+}

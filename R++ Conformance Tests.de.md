@@ -119,3 +119,5 @@ Diese Regeln lassen sich nicht mit einem einzelnen Testprogramm prüfen (R-14.6)
 | R-13.2 | betrifft die Versionierung der Bibliothek, nicht ein Programm |
 | R-15.16 | Grenze der Zusagen für C-Code; abgedeckt durch den Vergleich beider Modi in allen Laufzeittests von Kapitel 15 |
 | R-15.17 | durch R-14.7 abgedeckt: jeder Laufzeittest von Kapitel 15 gilt für beide Modi |
+| R-16.21 | wiederholt R-12.10 für jeden Thread; ein Stapelüberlauf wird nicht getestet (R-12.10) |
+| R-16.23 | durch R-14.7 abgedeckt: jeder Laufzeittest von Kapitel 16 gilt für beide Modi |

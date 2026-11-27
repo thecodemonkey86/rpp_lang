@@ -393,7 +393,10 @@ fn runtime_header(header: &Path) -> ([Option<Expect>; 2], Vec<String>, String) {
 /// Führt einen Laufzeittest in beiden Modi aus (R-14.7).
 fn run_runtime(u: &Unit) -> Outcome {
     let (exp, args, input) = runtime_header(&u.header);
-    for (mode, e) in exp.iter().enumerate() {
+    // Kapitel 16: Ein Test mit Threads muss bei jedem Lauf dasselbe liefern; er läuft dreimal je Modus.
+    let threads = u.files.iter().any(|f| fs::read_to_string(f).is_ok_and(|s| s.contains("rpp.sync")));
+    let rounds = if threads { 3 } else { 1 };
+    for (mode, e) in exp.iter().enumerate().flat_map(|x| std::iter::repeat(x).take(rounds)) {
         let Some(e) = e else { continue };
         let name = if mode == 0 { "debug" } else { "release" };
         // V-14.3: jeder Lauf in einem frischen, leeren Arbeitsverzeichnis, das danach gelöscht wird

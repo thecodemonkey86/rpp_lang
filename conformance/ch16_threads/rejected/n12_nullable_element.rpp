@@ -1,0 +1,12 @@
+// Konformitätstest Kapitel 16 – muss abgelehnt werden.
+// Regel: R-16.14
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (der Elementtyp eines Kanals ist nicht nullbar).
+package conformance.ch16;
+
+using rpp.sync.Receiver;
+
+class Use {
+public:
+    static void run(Receiver<i64?> rx) {   // FEHLER
+    }
+}

@@ -1,0 +1,55 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.11, R-16.12, R-16.9
+// Erwartet: Ausgabe "sum 21\nextra 3\nstill 6"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Scope;
+using rpp.sync.Channel;
+using rpp.sync.Sender;
+using rpp.sync.Receiver;
+
+class Sums {
+public:
+    static i64 range(Slice<i64> data, i64 from, i64 to) {
+        i64 sum = 0;
+        for (i64 i = from; i < to; i++) {
+            sum += data[i];
+        }
+        return sum;
+    }
+}
+
+i32 main(string[] args) {
+    i64[] data = [1, 2, 3, 4, 5, 6];
+    string label = "sum";
+    (Sender<i64> tx, Receiver<i64> rx) = Channel<i64>::open(8);
+    Thread::scope((mut Scope s) => {
+        // beide Threads leihen data, label und tx lesend
+        s.spawn(() => { discard tx.send(Sums::range(data, 0, 3)); });
+        s.spawn(() => { discard tx.send(Sums::range(data, 3, 6)); });
+    });
+    i64? a = rx.receive();
+    i64? b = rx.receive();
+    if (a != null && b != null) {
+        print(label + " " + (a + b).toString());
+    }
+    Thread::scope((mut Scope s) => {
+        // ein own-Lambda erfasst per Wert, auch Variablen des Bereichs
+        for (i64 i = 0; i < 3; i++) {
+            Sender<i64> c = tx.clone();
+            s.spawn(own () => { discard c.send(i); });
+        }
+    });
+    i64 extra = 0;
+    for (i64 i = 0; i < 3; i++) {
+        i64? v = rx.receive();
+        if (v != null) {
+            extra += v;
+        }
+    }
+    print("extra " + extra.toString());
+    // nach dem Bereich ist data wieder veränderbar
+    discard data.pop();
+    data.push(6);
+    print("still " + data.length.toString());
+    return 0;
+}

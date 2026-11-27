@@ -144,6 +144,19 @@ Die Teile: `src/compiler/project/Registry.rpp` (Versionen, Prüfsummen, Form von
 
 Außerhalb von Windows nutzt die Laufzeit `dlopen`; jedes Programm bindet deshalb `-ldl`. C-Funktionen dürfen nicht mit `rt_` oder `rpp_` beginnen; diese Namen gehören der Laufzeit. `rppcc test` übersetzt die Testbibliothek `conformance/ch15_c_interop/native/rpptest.c` wie `rppc test` (`Toolchain.sharedLib`).
 
+## Threads (M11)
+
+`rpp.sync` (Kapitel 16) prüfen `Program.rpp` (`transferable`, die Einschränkung `Transferable`) und `Checker.rpp` (`syncBody`, `syncRole`, `syncCaptures`) wie `rppc`. Die Methoden von `Thread`, `Task`, `Scope`, `Channel`, `Sender` und `Receiver` sind in die Laufzeit eingebaut (`native_sync` in `rpp_rt.c`).
+
+Programme führen ihre Threads parallel als Threads des Betriebssystems aus (Win32-Threads oder pthreads):
+
+- Threadlokal: laufende Exception, Programmfehler, Rahmen, Zwischenwerte und die Freilisten des Speicherverwalters. Ein Block darf in einem anderen Thread freigegeben werden; ein beendeter Thread gibt seine Listen an den nächsten neuen.
+- Geteilte Werte sind unveränderlich und gezählt: Strings, Tupel, Enum-Werte mit Daten, Funktionswerte. Ihre Zähler sind atomar, sobald es einen zweiten Thread gibt (`rt_mt`), vorher einfach; Programme ohne Threads zahlen nur für den threadlokalen Zustand.
+- Threads, Bereiche und Kanäle stehen in einem Register mit einer Sperre und einer Bedingung. `join`, `send`, `receive`, das Bereichsende und die Freigabe eines Handles warten dort; eine erkannte Verklemmung ist ein `ThreadError` (R-16.19).
+- Ein Programmfehler trägt sich als erster ein und setzt `rt_cancel`. `rt_enter` (jeder Aufruf) und jeder Schleifendurchlauf sind Abbruchstellen; ein abgebrochener Thread wird abgewickelt wie nach einem eigenen Programmfehler (R-16.6). `main` wartet auf alle Threads, bevor es endet.
+
+C-Funktionen, die aus mehreren Threads gerufen werden, müssen selbst threadfest sein (R-15.16).
+
 ## Bootstrap ohne Rust
 
 `bootstrap/rppcc.c` ist der C-Code des Compilers selbst, erzeugt mit `rppcc c --release rppc/std rpp-compiler bootstrap/rppcc.c` (Startpunkt, ohne Zeilenumwandlung eingecheckt). Die Skripte bauen daraus den Compiler:

@@ -1,0 +1,33 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.13, R-16.11
+// Erwartet: Ausgabe "third ran\ncaught first\nbody failed"; Exit-Code 0
+using rpp.sync.Thread;
+using rpp.sync.Scope;
+
+i32 main(string[] args) {
+    try {
+        Thread::scope((mut Scope s) => {
+            s.spawn(own () => {
+                Thread::sleep(40);
+                throw new Exception("first");
+            });
+            s.spawn(own () => { throw new Exception("second"); });
+            // die anderen Threads laufen zu Ende
+            s.spawn(own () => { print("third ran"); });
+        });
+        print("not reached");
+    } catch (Exception e) {
+        // die Exception des ersten Threads in Startreihenfolge
+        print("caught " + e.message);
+    }
+    try {
+        Thread::scope((mut Scope s) => {
+            s.spawn(own () => { throw new Exception("thread"); });
+            throw new Exception("body failed");
+        });
+    } catch (Exception e) {
+        // die Exception des Rumpfs geht vor
+        print(e.message);
+    }
+    return 0;
+}

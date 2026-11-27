@@ -125,7 +125,7 @@ Vorrang von schwach nach stark bindend:
 
 ### 3.3 Geprüfte Lesarten
 
-Die im Entwurf vermuteten Mehrdeutigkeiten sind wie folgt aufgelöst. ANTLR meldet nur für die letzte Zeile der Tabelle eine Mehrdeutigkeit.
+Die im Entwurf vermuteten Mehrdeutigkeiten sind wie folgt aufgelöst. ANTLR meldet nur für die Tupel-Deklaration mit generischen Typen und für die letzte Zeile der Tabelle eine Mehrdeutigkeit.
 
 | Eingabe | Lesart | Grund |
 |---|---|---|
@@ -135,6 +135,7 @@ Die im Entwurf vermuteten Mehrdeutigkeiten sind wie folgt aufgelöst. ANTLR meld
 | `Foo? f = flag ? a : b;` | Deklaration mit Bedingungsausdruck | `Foo? f` ist kein Ausdruck |
 | `a?.b();` | Aufruf mit Null-Prüfung | `?.` ist ein eigenes Token; `.5` ist kein Literal |
 | `(i32 a, i32 b) = f();` | Tupel-Deklaration | Typ gefolgt von Name |
+| `(Box<Foo> a, Box<Bar> b) = f();` | Tupel-Deklaration | Typ gefolgt von Name; ANTLR meldet die Lesart als Zuweisung an ein Tupel aus Vergleichen als Mehrdeutigkeit, die Deklaration geht vor |
 | `(i32, i32) t = f();` | Variable mit Tupel-Typ | |
 | `(a, b) = f();` | Zuweisung an vorhandene Variablen | |
 | `f((i32 x) => x + 1, y);` | Lambda mit Rumpf `x + 1`, dann zweites Argument | Lambda auf Ausdrucksebene |

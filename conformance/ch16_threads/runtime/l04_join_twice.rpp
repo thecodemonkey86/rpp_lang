@@ -1,0 +1,13 @@
+// Konformitätstest Kapitel 16 – Laufzeit.
+// Regel: R-16.3, R-9.2
+// Erwartet: Ausgabe "once"; Exit-Code 2; Fehlerausgabe enthält "ThreadError"
+using rpp.sync.Thread;
+
+i32 main(string[] args) {
+    Thread t = Thread::spawn(own () => { });
+    t.join();
+    print("once");
+    t.join();
+    print("twice");
+    return 0;
+}
