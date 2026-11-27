@@ -575,3 +575,14 @@ Stand (26.11.2026, lokal unter Windows mit MSVC):
 - Linux (WSL/Ubuntu 24.04, gcc 13.3): Bootstrap mit `--check-seed` erreicht den Fixpunkt mit demselben Startpunkt, `rppcc test` 332 bestanden, `check.py registry` bestanden.
 
 Offen: der grüne CI-Lauf unter Ubuntu und Windows nach dem nächsten Push. Nicht Teil von M9: das Verzeichnis als Netzwerkdienst, Signaturen und ein öffentliches Protokoll der Prüfsummen.
+
+**Offene Kandidaten aus M7 umgesetzt (27.11.2026).** Die vier am Ende von M7 genannten weiteren Optimierungen sind in `rppcc` erledigt:
+
+| Kandidat | Umsetzung |
+|---|---|
+| Token-Arten als Zahl | Neues Enum `Sym` (Schlüsselwörter und Satzzeichen, `Syms::texts` für den Text); der Lexer gibt jedem solchen Token sein `Sym`, der Parser vergleicht einen Enum-Wert statt Art und Text (`isP`, `eatK`, `binaryOp`, `startsExpression` und andere). Einfache Typen als Tabelle nach `Sym`. Die Meldung des weitesten Fehlschlags entsteht erst in `error()`. |
+| Versuche ohne Exceptions | Vor einer Ausdrucksanweisung (und in der Initialisierung von `for`) wird `localVarDecl` nur versucht, wo es gelingen kann (ein Name, nach dem qualifizierten Namen gefolgt von einem Namen, `<`, `?` oder `[`, oder `const`, `var`, `own`, `shared`, `weak`, ein einfacher Typ, `(`); sonst wird derselbe Fehlschlag direkt festgehalten. In einer Klasse teilen Feld und Methode Typ und Namen; `fieldDecl` wird nicht mehr vor jeder Methode versucht. Die gemeldeten Syntaxfehler bleiben gleich (`compare.py`, Teil `ast`). |
+| Tupel als Rückgabewert | `callInner`, `methodCall`, `staticCall` und `invoke` geben den Typ zurück und hinterlassen die Fakten in einem Feld; aus `capturingFrames` wurde `captureFrom` (das Ende ist immer `frames.length`); `literalKind` liefert die Art eines Literals ohne Tupel. |
+| `methodsOf`, `fieldOf` | Index je Typ (`MemberIndex`, nach `resolveMembers` gebaut): erste Methode bzw. erstes Feld je Name, die nächste Methode gleichen Namens, die Namen des Typs und aller Obertypen, die Obertypen eines Typs ohne Typargumente. Ein Name, den es nicht gibt, beendet die Suche sofort. |
+
+Stand (27.11.2026): `diagnose rppc/std rpp-compiler` 0,415 s gegen vorher 0,44 s (Median aus 15 Läufen, derselbe Rechner; `rppc` 0,47 s), gleiche Ausgabe. Fixpunkt und Startpunkt (`--check-seed`) aktuell; `rppcc test` 332 bestanden, 0 fehlgeschlagen; `compare.py --exe` 659/1332/1310/828/106/581/863 gleich, 0 verschieden; `compare_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 328 gleich, 0 verschieden. Laut Profil bleiben die Hilfen des Parsers (`isP`, `eatP`, `eatK`) der größte Posten im Parser; ihre Kosten sind jetzt der Aufruf selbst (Rahmen je Aufruf).

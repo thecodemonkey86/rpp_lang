@@ -13,17 +13,56 @@ export enum Kind {
     Eof,
 }
 
+// Schlüsselwörter und Satzzeichen als Zahl (M7-Nachtrag): der Parser vergleicht ein Token
+// mit einem Vergleich statt Art und Text. None bei allen übrigen Tokens; die Reihenfolge
+// entspricht Syms::texts.
+export enum Sym {
+    None,
+    Abstract, As, Base, Bool, Break, Byte, Case, Cast, Catch, Char,
+    Class, Const, Constructor, Continue, Copy, Default, Destructor, Discard, Do, Else,
+    Enum, Export, F32, F64, False, Finally, For, I8, I16, I32,
+    I64, If, Import, Mixin, Mut, New, Nodiscard, Null, Override, Own,
+    Package, Private, Protected, Public, Ref, Return, Shared, Static, String, Switch,
+    This, Throw, True, Try, Ui8, Ui16, Ui32, Ui64, Using, Var,
+    Virtual, Void, Weak, While, SafeDot, Coalesce, ColonColon, DotDot, PlusPlus, MinusMinus,
+    AndAnd, OrOr, EqEq, NotEq, LtEq, GtEq, PlusEq, MinusEq, StarEq, SlashEq,
+    PercentEq, Arrow, LBrace, RBrace, LParen, RParen, LBracket, RBracket, Semi, Comma,
+    Dot, Question, Colon, Assign, Lt, Gt, Plus, Minus, Star, Slash,
+    Percent, Bang, Tilde, Amp, Pipe, Caret,
+}
+
+export class Syms {
+public:
+    // Text je Sym (Index cast<i64>(sym)); "" für None
+    static string[] texts() {
+        return [
+            "", "abstract", "as", "base", "bool", "break", "byte", "case", "cast", "catch", "char", "class",
+            "const", "constructor", "continue", "copy", "default", "destructor", "discard", "do", "else", "enum", "export", "f32",
+            "f64", "false", "finally", "for", "i8", "i16", "i32", "i64", "if", "import", "mixin", "mut",
+            "new", "nodiscard", "null", "override", "own", "package", "private", "protected", "public", "ref", "return", "shared",
+            "static", "string", "switch", "this", "throw", "true", "try", "ui8", "ui16", "ui32", "ui64", "using",
+            "var", "virtual", "void", "weak", "while", "?.", "??", "::", "..", "++", "--", "&&",
+            "||", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "=>", "{",
+            "}", "(", ")", "[", "]", ";", ",", ".", "?", ":", "=", "<",
+            ">", "+", "-", "*", "/", "%", "!", "~", "&", "|", "^"
+        ];
+    }
+}
+
 export class Token {
 public:
     Kind kind;
+    // Schlüsselwort oder Satzzeichen, sonst Sym::None
+    Sym sym;
     // Text des Tokens; bei Strings und Zeichen der Inhalt ohne Anführungszeichen, bei Fehlern die Meldung
     string text;
     i32 line;
     i32 col;
 
-    constructor(Kind kind, string text, i32 line, i32 col) {
+    constructor(Kind kind, string text, Sym sym, i32 line, i32 col) {
         this.kind = kind;
         this.text = text;
+        this.sym = sym;
         this.line = line;
         this.col = col;
     }

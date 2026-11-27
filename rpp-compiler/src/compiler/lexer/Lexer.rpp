@@ -14,11 +14,11 @@ private:
     i64 pos = 0;
     i32 line = 1;
     i32 col = 0;
-    // Reservierte Wörter und Satzzeichen, jeweils auf denselben Text als Literal: Tokens dieser
-    // Arten tragen das Literal, sodass der Parser sie ohne Zeichenvergleich erkennt (die
-    // Laufzeit hält je Literaltext genau ein Objekt).
-    Map<string, string> keywords = new Map<string, string>();
-    Map<string, string> puncts = new Map<string, string>();
+    // Reservierte Wörter und Satzzeichen, jeweils auf ihr Sym; Tokens dieser Arten tragen das
+    // Sym und als Text das Literal aus texts (die Laufzeit hält je Literaltext genau ein Objekt).
+    Map<string, Sym> keywords = new Map<string, Sym>();
+    Map<string, Sym> puncts = new Map<string, Sym>();
+    string[] texts = Syms::texts();
     // Zeichen an pos + offset; hinter dem Ende '\0' (dann ist inside(offset) falsch)
     char at(i64 offset) {
         i64 i = pos + offset;
@@ -103,7 +103,7 @@ private:
                 advance();
                 while (true) {
                     if (!inside(0)) {
-                        return new Token(Kind::Error, "unterminated block comment", l, k);
+                        return new Token(Kind::Error, "unterminated block comment", Sym::None, l, k);
                     }
                     if (at(0) == '*' && at(1) == '/') {
                         advance();
@@ -143,7 +143,7 @@ private:
         if (at(0) == '0' && at(1) == 'x') {
             i64 hex = digitsLen(2, true);
             if (hex > 0) {
-                return new Token(Kind::Int, take(2 + hex), l, k);
+                return new Token(Kind::Int, take(2 + hex), Sym::None, l, k);
             }
         }
         i64 n = digitsLen(0, false);
@@ -162,10 +162,10 @@ private:
                         m = m + 1 + sign + exp;
                     }
                 }
-                return new Token(Kind::Float, take(m), l, k);
+                return new Token(Kind::Float, take(m), Sym::None, l, k);
             }
         }
-        return new Token(Kind::Int, take(n), l, k);
+        return new Token(Kind::Int, take(n), Sym::None, l, k);
     }
 
     // Länge eines Elements eines String- oder Zeichenliterals ab n; 0, wenn keins folgt
@@ -202,15 +202,15 @@ private:
             } else {
                 advance();
                 string what = many ? "string" : "character";
-                return new Token(Kind::Error, "invalid " + what + " literal", l, k);
+                return new Token(Kind::Error, "invalid " + what + " literal", Sym::None, l, k);
             }
         }
         string text = take(n + 1);
         string inner = text.substring(1, n);
         if (many) {
-            return new Token(Kind::Str, inner, l, k);
+            return new Token(Kind::Str, inner, Sym::None, l, k);
         }
-        return new Token(Kind::Char, inner, l, k);
+        return new Token(Kind::Char, inner, Sym::None, l, k);
     }
 
     // Länge des Satzzeichens ab pos (längster Treffer); 0, wenn keins beginnt
@@ -248,11 +248,11 @@ private:
             }
             i64 len = end - pos;
             string text = take(len);
-            string? word = keywords.get(text);
+            Sym? word = keywords.get(text);
             if (word != null) {
-                return new Token(Kind::Keyword, word, l, k);
+                return new Token(Kind::Keyword, texts[cast<i64>(word)], word, l, k);
             }
-            return new Token(Kind::Ident, text, l, k);
+            return new Token(Kind::Ident, text, Sym::None, l, k);
         }
         if (c >= '0' && c <= '9') {
             return number(l, k);
@@ -266,10 +266,14 @@ private:
         i64 len = punctLength();
         if (len > 0) {
             string p = take(len);
-            return new Token(Kind::Punct, puncts.get(p) ?? p, l, k);
+            Sym? s = puncts.get(p);
+            if (s != null) {
+                return new Token(Kind::Punct, texts[cast<i64>(s)], s, l, k);
+            }
+            return new Token(Kind::Punct, p, Sym::None, l, k);
         }
         advance();
-        return new Token(Kind::Error, "unexpected character '" + c.toString() + "'", l, k);
+        return new Token(Kind::Error, "unexpected character '" + c.toString() + "'", Sym::None, l, k);
     }
 
 public:
@@ -277,27 +281,15 @@ public:
         for (char c : source) {
             chars.push(c);
         }
-        // reservierte Wörter; main ist keines (Gerüst, Abschnitt 2)
-        string[] words = [
-            "abstract", "as", "base", "bool", "break", "byte", "case", "cast", "catch", "char",
-            "class", "const", "constructor", "continue", "copy", "default", "destructor", "discard",
-            "do", "else", "enum", "export", "f32", "f64", "false", "finally", "for", "i8", "i16", "i32",
-            "i64", "if", "import", "mixin", "mut", "new", "nodiscard", "null", "override", "own",
-            "package", "private", "protected", "public", "ref", "return", "shared", "static", "string",
-            "switch", "this", "throw", "true", "try", "ui8", "ui16", "ui32", "ui64", "using", "var",
-            "virtual", "void", "weak", "while"
-        ];
-        for (string w : words) {
-            keywords.put(w, w);
-        }
-        string[] signs = [
-            "?.", "??", "::", "..", "++", "--", "&&", "||", "==", "!=", "<=", ">=",
-            "+=", "-=", "*=", "/=", "%=", "=>",
-            "{", "}", "(", ")", "[", "]", ";", ",", ".", "?", ":", "=", "<", ">",
-            "+", "-", "*", "/", "%", "!", "~", "&", "|", "^"
-        ];
-        for (string x : signs) {
-            puncts.put(x, x);
+        // reservierte Wörter (main ist keines, Gerüst, Abschnitt 2), dann die Satzzeichen; in
+        // texts stehen sie in dieser Reihenfolge ab Sym::Abstract
+        i64 firstPunct = cast<i64>(Sym::SafeDot);
+        for (i64 i = 1; i < texts.length; i++) {
+            if (i < firstPunct) {
+                keywords.put(texts[i], cast<Sym>(i));
+            } else {
+                puncts.put(texts[i], cast<Sym>(i));
+            }
         }
     }
 
@@ -318,7 +310,7 @@ public:
             i32 l = line;
             i32 k = col;
             if (!inside(0)) {
-                tokens.push(new Token(Kind::Eof, "", l, k));
+                tokens.push(new Token(Kind::Eof, "", Sym::None, l, k));
                 return tokens;
             }
             Token t = next(l, k);

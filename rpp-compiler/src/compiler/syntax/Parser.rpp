@@ -5,9 +5,10 @@
 // Gemeldet wird der Fehler, der am weitesten im Quelltext liegt.
 package compiler.syntax;
 
-using rpp.collections.Set;
 using compiler.lexer.Token;
 using compiler.lexer.Kind;
+using compiler.lexer.Sym;
+using compiler.lexer.Syms;
 
 export class ParseFail : Exception {
 public:
@@ -18,10 +19,13 @@ export class Parser {
 private:
     Token[] toks;
     i64 pos = 0;
-    // weitester Fehler: Position (Token) und Meldung; -1 solange keiner
+    // weitester Fehler: Position (Token) und was dort erwartet wurde; -1 solange keiner. Die
+    // Meldung entsteht erst in error() (sie hängt nur vom Token an farPos ab).
     i64 farPos = -1;
-    string farMsg = "";
-    Set<string> prims = new Set<string>();
+    string farExpected = "";
+    // Text je Sym (für Meldungen) und welche Syms einfache Typen sind
+    string[] symTexts = Syms::texts();
+    bool[] primSyms = [];
 
     // ------------------------------------------------------------ Hilfen
 
@@ -43,28 +47,30 @@ private:
 
     // pos liegt immer in toks (bump hält vor dem letzten Token an); die Abfragen an der
     // aktuellen Stelle greifen deshalb direkt zu, ohne idx.
-    bool isPAt(i64 offset, string p) {
+    // Schlüsselwörter und Satzzeichen tragen ein Sym (M7-Nachtrag): ein Vergleich statt Art
+    // und Text. isP und isK unterscheiden sich nur im Namen.
+    bool isPAt(i64 offset, Sym p) {
         i64 i = pos + offset;
         if (i >= toks.length) {
             i = toks.length - 1;
         }
-        return toks[i].kind == Kind::Punct && toks[i].text == p;
+        return toks[i].sym == p;
     }
 
-    bool isP(string p) {
-        return toks[pos].kind == Kind::Punct && toks[pos].text == p;
+    bool isP(Sym p) {
+        return toks[pos].sym == p;
     }
 
-    bool isKAt(i64 offset, string k) {
+    bool isKAt(i64 offset, Sym k) {
         i64 i = pos + offset;
         if (i >= toks.length) {
             i = toks.length - 1;
         }
-        return toks[i].kind == Kind::Keyword && toks[i].text == k;
+        return toks[i].sym == k;
     }
 
-    bool isK(string k) {
-        return toks[pos].kind == Kind::Keyword && toks[pos].text == k;
+    bool isK(Sym k) {
+        return toks[pos].sym == k;
     }
 
     bool isIdent(i64 offset) {
@@ -77,7 +83,7 @@ private:
 
     bool isPrim(i64 offset) {
         i64 i = idx(offset);
-        return toks[i].kind == Kind::Keyword && prims.contains(toks[i].text);
+        return primSyms[cast<i64>(toks[i].sym)];
     }
 
     bool atEof() {
@@ -90,8 +96,8 @@ private:
         }
     }
 
-    bool eatP(string p) mut {
-        if (toks[pos].kind == Kind::Punct && toks[pos].text == p) {
+    bool eatP(Sym p) mut {
+        if (toks[pos].sym == p) {
             if (pos < toks.length - 1) {
                 pos++;
             }
@@ -100,8 +106,8 @@ private:
         return false;
     }
 
-    bool eatK(string k) mut {
-        if (toks[pos].kind == Kind::Keyword && toks[pos].text == k) {
+    bool eatK(Sym k) mut {
+        if (toks[pos].sym == k) {
             if (pos < toks.length - 1) {
                 pos++;
             }
@@ -110,8 +116,8 @@ private:
         return false;
     }
 
-    string shown() {
-        ref Token t = toks[pos];
+    string shownAt(i64 at) {
+        ref Token t = toks[at];
         switch (t.kind) {
             case Str: return "'\"" + t.text + "\"'";
             case Char: return "''" + t.text + "''";
@@ -129,24 +135,22 @@ private:
     // Hält einen Fehlschlag an der aktuellen Stelle fest (wie failure, ohne Exception)
     void noteFailure(string expected) mut {
         if (farPos < pos) {
-            string found = "found " + shown();
-            if (toks[pos].kind == Kind::Error) {
-                found = toks[pos].text;
-            }
             farPos = pos;
-            farMsg = "Expected " + expected + ", " + found;
+            farExpected = expected;
         }
     }
 
-    void expectP(string p) mut {
+    void expectP(Sym p) mut {
         if (!eatP(p)) {
-            throw failure("'" + p + "'");
+            string what = "'" + symTexts[cast<i64>(p)] + "'";
+            throw failure(what);
         }
     }
 
-    void expectK(string k) mut {
+    void expectK(Sym k) mut {
         if (!eatK(k)) {
-            throw failure("'" + k + "'");
+            string what = "'" + symTexts[cast<i64>(k)] + "'";
+            throw failure(what);
         }
     }
 
@@ -177,7 +181,7 @@ private:
     Node qualifiedName() mut {
         Node q = node("qname", "");
         q.add(ident());
-        while (isP(".") && isIdent(1)) {
+        while (isP(Sym::Dot) && isIdent(1)) {
             bump();
             q.add(ident());
         }
@@ -188,68 +192,68 @@ private:
 
     Node mainDecl() mut {
         Node m = new Node("main", "", line(), col());
-        expectK("i32");
+        expectK(Sym::I32);
         if (!isIdent(0) || toks[pos].text != "main") {
             throw failure("'main'");
         }
         bump();
-        expectP("(");
-        expectK("string");
-        expectP("[");
-        expectP("]");
+        expectP(Sym::LParen);
+        expectK(Sym::String);
+        expectP(Sym::LBracket);
+        expectP(Sym::RBracket);
         m.add(ident());
-        expectP(")");
+        expectP(Sym::RParen);
         m.add(block());
         return m;
     }
 
     Node typeDecl() mut {
-        bool exp = eatK("export");
+        bool exp = eatK(Sym::Export);
         i32 l = line();
         i32 c = col();
-        if (isK("abstract") || isK("class")) {
-            bool abs = eatK("abstract");
-            expectK("class");
+        if (isK(Sym::Abstract) || isK(Sym::Class)) {
+            bool abs = eatK(Sym::Abstract);
+            expectK(Sym::Class);
             Node n = new Node("class", flag(flag("", exp, "export"), abs, "abstract"), l, c);
             n.add(ident());
             n.add(typeParamsOpt());
-            if (eatP(":")) {
+            if (eatP(Sym::Colon)) {
                 Node b = node("base", "");
                 b.add(typeName(false));
                 n.add(b);
             }
-            expectP("{");
+            expectP(Sym::LBrace);
             Node ms = node("members", "");
-            while (!eatP("}")) {
+            while (!eatP(Sym::RBrace)) {
                 ms.add(classMember());
             }
             n.add(ms);
             return n;
         }
-        if (eatK("mixin")) {
+        if (eatK(Sym::Mixin)) {
             Node n = new Node("mixin", flag("", exp, "export"), l, c);
             n.add(ident());
             n.add(typeParamsOpt());
-            expectP("{");
+            expectP(Sym::LBrace);
             Node ms = node("members", "");
-            while (!eatP("}")) {
+            while (!eatP(Sym::RBrace)) {
                 ms.add(mixinMember());
             }
             n.add(ms);
             return n;
         }
-        if (eatK("enum")) {
+        if (eatK(Sym::Enum)) {
             Node n = new Node("enum", flag("", exp, "export"), l, c);
             n.add(ident());
-            expectP("{");
+            expectP(Sym::LBrace);
             Node vs = node("variants", "");
             vs.add(enumVariant());
             while (true) {
-                if (eatP("}")) {
+                if (eatP(Sym::RBrace)) {
                     break;
                 }
-                expectP(",");
-                if (eatP("}")) {
+                expectP(Sym::Comma);
+                if (eatP(Sym::RBrace)) {
                     break;
                 }
                 vs.add(enumVariant());
@@ -262,16 +266,16 @@ private:
 
     Node enumVariant() mut {
         Node name = ident();
-        if (eatP("(")) {
+        if (eatP(Sym::LParen)) {
             Node ps = paramList();
-            expectP(")");
+            expectP(Sym::RParen);
             Node v = node("variant", "");
             v.add(name);
             v.add(ps);
             return v;
         }
-        if (eatP("=")) {
-            bool neg = eatP("-");
+        if (eatP(Sym::Assign)) {
+            bool neg = eatP(Sym::Minus);
             i64 i = pos;
             if (toks[i].kind != Kind::Int) {
                 throw failure("integer");
@@ -292,30 +296,30 @@ private:
 
     Node typeParamsOpt() mut {
         Node ps = node("tparams", "");
-        if (eatP("<")) {
+        if (eatP(Sym::Lt)) {
             while (true) {
                 Node p = node("tparam", "");
                 p.add(ident());
-                if (eatP(":")) {
+                if (eatP(Sym::Colon)) {
                     while (true) {
-                        if (eatK("new")) {
-                            expectP("(");
-                            expectP(")");
+                        if (eatK(Sym::New)) {
+                            expectP(Sym::LParen);
+                            expectP(Sym::RParen);
                             p.add(node("new", ""));
                         } else {
                             p.add(typeName(false));
                         }
-                        if (!eatP("&")) {
+                        if (!eatP(Sym::Amp)) {
                             break;
                         }
                     }
                 }
                 ps.add(p);
-                if (!eatP(",")) {
+                if (!eatP(Sym::Comma)) {
                     break;
                 }
             }
-            expectP(">");
+            expectP(Sym::Gt);
         }
         return ps;
     }
@@ -325,17 +329,17 @@ private:
     Node classMember() mut {
         i32 l = line();
         i32 c = col();
-        if (isK("public") || isK("private") || isK("protected")) {
+        if (isK(Sym::Public) || isK(Sym::Private) || isK(Sym::Protected)) {
             string word = toks[pos].text;
             bump();
-            expectP(":");
+            expectP(Sym::Colon);
             return new Node("access", word, l, c);
         }
-        if (eatK("constructor")) {
+        if (eatK(Sym::Constructor)) {
             Node n = new Node("ctor", "", l, c);
             n.add(params());
-            if (eatP(":")) {
-                expectK("base");
+            if (eatP(Sym::Colon)) {
+                expectK(Sym::Base);
                 Node b = node("baseargs", "");
                 b.add(args());
                 n.add(b);
@@ -343,42 +347,76 @@ private:
             n.add(block());
             return n;
         }
-        if (eatK("destructor")) {
-            expectP("(");
-            expectP(")");
+        if (eatK(Sym::Destructor)) {
+            expectP(Sym::LParen);
+            expectP(Sym::RParen);
             Node n = new Node("dtor", "", l, c);
             n.add(block());
             return n;
         }
-        if (eatK("copy")) {
-            expectP("(");
+        if (eatK(Sym::Copy)) {
+            expectP(Sym::LParen);
             Node p = param();
-            expectP(")");
+            expectP(Sym::RParen);
             Node n = new Node("copy", "", l, c);
             n.add(p);
             n.add(block());
             return n;
         }
-        if (eatK("import")) {
+        if (eatK(Sym::Import)) {
             Node n = node("import", "");
             n.add(typeName(false));
-            expectP(";");
+            expectP(Sym::Semi);
             return n;
         }
+        // fieldDecl, sonst methodDecl. Ohne den Versuch per Exception (M7-Nachtrag): wo fieldDecl
+        // sicher scheitert, wird derselbe Fehlschlag festgehalten und gleich methodDecl gelesen.
         i64 save = pos;
-        try {
-            return fieldDecl();
-        } catch (ParseFail e) {
-            pos = save;
+        if (isK(Sym::Const) || (isK(Sym::Static) && isKAt(1, Sym::Const))) {
+            try {
+                return fieldDecl();
+            } catch (ParseFail e) {
+                pos = save;
+            }
+            return methodDecl(false);
         }
+        if (isK(Sym::Static)) {
+            // fieldDecl verlangt nach static const
+            bump();
+            noteFailure("'const'");
+            pos = save;
+            return methodDecl(false);
+        }
+        if (isK(Sym::Nodiscard) || isK(Sym::Abstract) || isK(Sym::Virtual) || isK(Sym::Override)
+            || isK(Sym::Void) || isK(Sym::Ref)) {
+            // kein Typ: fieldDecl scheitert hier
+            noteFailure("type");
+            return methodDecl(false);
+        }
+        // Feld und Methode beginnen beide mit Typ und Name; scheitert einer davon, dann in
+        // beiden Alternativen an derselben Stelle mit derselben Meldung.
+        Node t = ty(false);
+        Node name = ident();
+        if (isP(Sym::Assign) || isP(Sym::Semi)) {
+            Node f = node("field", "");
+            f.add(t);
+            f.add(name);
+            if (eatP(Sym::Assign)) {
+                f.add(expression());
+            }
+            expectP(Sym::Semi);
+            return f;
+        }
+        noteFailure("';'");
+        pos = save;
         return methodDecl(false);
     }
 
     Node mixinMember() mut {
-        if (eatK("import")) {
+        if (eatK(Sym::Import)) {
             Node n = node("import", "");
             n.add(typeName(false));
-            expectP(";");
+            expectP(Sym::Semi);
             return n;
         }
         return methodDecl(true);
@@ -387,48 +425,48 @@ private:
     Node fieldDecl() mut {
         bool isStatic = false;
         bool isConst = false;
-        if (eatK("static")) {
+        if (eatK(Sym::Static)) {
             isStatic = true;
-            expectK("const");
+            expectK(Sym::Const);
             isConst = true;
-        } else if (eatK("const")) {
+        } else if (eatK(Sym::Const)) {
             isConst = true;
         }
         Node f = node("field", flag(flag("", isStatic, "static"), isConst, "const"));
         f.add(ty(false));
         f.add(ident());
-        if (eatP("=")) {
+        if (eatP(Sym::Assign)) {
             f.add(expression());
         }
-        expectP(";");
+        expectP(Sym::Semi);
         return f;
     }
 
     // methodDecl und abstractMethodDecl, im Mixin auch requirement
     Node methodDecl(bool inMixin) mut {
-        bool nd = eatK("nodiscard");
+        bool nd = eatK(Sym::Nodiscard);
         string modifier = "";
-        if (!inMixin && eatK("abstract")) {
+        if (!inMixin && eatK(Sym::Abstract)) {
             modifier = "abstract";
-        } else if (eatK("static")) {
+        } else if (eatK(Sym::Static)) {
             modifier = "static";
-        } else if (eatK("virtual")) {
+        } else if (eatK(Sym::Virtual)) {
             modifier = "virtual";
-        } else if (eatK("override")) {
+        } else if (eatK(Sym::Override)) {
             modifier = "override";
         }
         Node ret = returnType();
         Node name = ident();
         Node tps = typeParamsOpt();
         Node ps = params();
-        bool mutThis = eatK("mut");
+        bool mutThis = eatK(Sym::Mut);
         bool without = modifier == "abstract" || (inMixin && modifier.length == 0);
         Node m = node("method", flag(flag(flag("", nd, "nodiscard"), modifier.length > 0, modifier), mutThis, "mut"));
         m.add(ret);
         m.add(name);
         m.add(tps);
         m.add(ps);
-        bool noBody = without && eatP(";");
+        bool noBody = without && eatP(Sym::Semi);
         if (!noBody) {
             if (modifier == "abstract") {
                 throw failure("';'");
@@ -439,26 +477,26 @@ private:
     }
 
     Node params() mut {
-        expectP("(");
-        if (eatP(")")) {
+        expectP(Sym::LParen);
+        if (eatP(Sym::RParen)) {
             return node("params", "");
         }
         Node ps = paramList();
-        expectP(")");
+        expectP(Sym::RParen);
         return ps;
     }
 
     Node paramList() mut {
         Node ps = node("params", "");
         ps.add(param());
-        while (eatP(",")) {
+        while (eatP(Sym::Comma)) {
             ps.add(param());
         }
         return ps;
     }
 
     Node param() mut {
-        bool mutable = eatK("mut");
+        bool mutable = eatK(Sym::Mut);
         Node t = ty(false);
         Node p = node("param", flag("", mutable, "mut"));
         p.add(t);
@@ -469,11 +507,11 @@ private:
     // ------------------------------------------------------------ Typen
 
     Node returnType() mut {
-        if (eatK("void")) {
+        if (eatK(Sym::Void)) {
             return node("void", "");
         }
-        if (eatK("ref")) {
-            bool mutable = eatK("mut");
+        if (eatK(Sym::Ref)) {
+            bool mutable = eatK(Sym::Mut);
             Node t = new Node("type", "", line(), col());
             t.add(baseType(false));
             typeSuffixes(mut t, false);
@@ -486,11 +524,11 @@ private:
 
     Node ty(bool afterAs) mut {
         Node t = new Node("type", "", line(), col());
-        if (eatK("own")) {
+        if (eatK(Sym::Own)) {
             t.text = "own";
-        } else if (eatK("shared")) {
+        } else if (eatK(Sym::Shared)) {
             t.text = "shared";
-        } else if (eatK("weak")) {
+        } else if (eatK(Sym::Weak)) {
             t.text = "weak";
         }
         t.add(baseType(afterAs));
@@ -504,15 +542,15 @@ private:
             bump();
             return p;
         }
-        if (eatP("(")) {
+        if (eatP(Sym::LParen)) {
             Node tu = node("tuple", "");
             tu.add(ty(false));
-            expectP(",");
+            expectP(Sym::Comma);
             tu.add(ty(false));
-            while (eatP(",")) {
+            while (eatP(Sym::Comma)) {
                 tu.add(ty(false));
             }
-            expectP(")");
+            expectP(Sym::RParen);
             return tu;
         }
         if (isIdent(0)) {
@@ -524,7 +562,7 @@ private:
     Node typeName(bool afterAs) mut {
         Node n = node("typename", "");
         n.add(qualifiedName());
-        if (!isP("<")) {
+        if (!isP(Sym::Lt)) {
             n.add(node("targs", ""));
         } else if (afterAs) {
             i64 save = pos;
@@ -541,42 +579,42 @@ private:
     }
 
     Node typeArgs() mut {
-        expectP("<");
+        expectP(Sym::Lt);
         Node a = node("targs", "");
         while (true) {
-            if (eatK("void")) {
+            if (eatK(Sym::Void)) {
                 a.add(node("void", ""));
             } else {
-                bool mutable = eatK("mut");
+                bool mutable = eatK(Sym::Mut);
                 Node t = ty(false);
                 Node x = node("targ", flag("", mutable, "mut"));
                 x.add(t);
                 a.add(x);
             }
-            if (!eatP(",")) {
+            if (!eatP(Sym::Comma)) {
                 break;
             }
         }
-        expectP(">");
+        expectP(Sym::Gt);
         return a;
     }
 
     void typeSuffixes(mut Node t, bool afterAs) mut {
         while (true) {
-            if (isP("?")) {
+            if (isP(Sym::Question)) {
                 // Nach as gehört ? zum Bedingungsausdruck, wenn danach ein Ausdruck beginnt.
                 if (afterAs && startsExpression(1)) {
                     break;
                 }
                 bump();
                 t.add(node("nullable", ""));
-            } else if (eatP("[")) {
-                if (eatP("]")) {
+            } else if (eatP(Sym::LBracket)) {
+                if (eatP(Sym::RBracket)) {
                     t.add(node("vector", ""));
                     continue;
                 }
                 Node size = arraySize();
-                expectP("]");
+                expectP(Sym::RBracket);
                 Node a = node("array", "");
                 a.add(size);
                 t.add(a);
@@ -613,13 +651,14 @@ private:
             case Str: return true;
             case Char: return true;
             case Keyword: {
-                string w = t.text;
-                return w == "this" || w == "base" || w == "new" || w == "cast" || w == "copy" || w == "true"
-                    || w == "false" || w == "null" || w == "own" || prims.contains(w);
+                Sym w = t.sym;
+                return w == Sym::This || w == Sym::Base || w == Sym::New || w == Sym::Cast || w == Sym::Copy
+                    || w == Sym::True || w == Sym::False || w == Sym::Null || w == Sym::Own || primSyms[cast<i64>(w)];
             }
             case Punct: {
-                string p = t.text;
-                return p == "(" || p == "[" || p == "!" || p == "~" || p == "-" || p == "++" || p == "--";
+                Sym p = t.sym;
+                return p == Sym::LParen || p == Sym::LBracket || p == Sym::Bang || p == Sym::Tilde || p == Sym::Minus
+                    || p == Sym::PlusPlus || p == Sym::MinusMinus;
             }
             default: return false;
         }
@@ -629,8 +668,8 @@ private:
 
     Node block() mut {
         Node b = new Node("block", "", line(), col());
-        expectP("{");
-        while (!isP("}")) {
+        expectP(Sym::LBrace);
+        while (!isP(Sym::RBrace)) {
             b.add(statement());
         }
         b.text = "end=" + line().toString() + ":" + col().toString();
@@ -641,92 +680,94 @@ private:
     Node statement() mut {
         i32 l = line();
         i32 c = col();
-        if (isP("{")) {
+        if (isP(Sym::LBrace)) {
             return block();
         }
-        if (eatK("if")) {
+        if (eatK(Sym::If)) {
             Node n = new Node("if", "", l, c);
             n.add(parenExpr());
             n.add(statement());
-            if (eatK("else")) {
+            if (eatK(Sym::Else)) {
                 n.add(statement());
             }
             return n;
         }
-        if (eatK("while")) {
+        if (eatK(Sym::While)) {
             Node n = new Node("while", "", l, c);
             n.add(parenExpr());
             n.add(statement());
             return n;
         }
-        if (eatK("do")) {
+        if (eatK(Sym::Do)) {
             Node n = new Node("dowhile", "", l, c);
             n.add(statement());
-            expectK("while");
+            expectK(Sym::While);
             n.add(parenExpr());
-            expectP(";");
+            expectP(Sym::Semi);
             return n;
         }
-        if (isK("for")) {
+        if (isK(Sym::For)) {
             return forStmt(l, c);
         }
-        if (isK("switch")) {
+        if (isK(Sym::Switch)) {
             return switchStmt(l, c);
         }
-        if (eatK("return")) {
+        if (eatK(Sym::Return)) {
             Node n = new Node("return", "", l, c);
-            if (eatP(";")) {
+            if (eatP(Sym::Semi)) {
                 return n;
             }
-            if (eatK("mut")) {
+            if (eatK(Sym::Mut)) {
                 n.text = "mut";
             }
             n.add(expression());
-            expectP(";");
+            expectP(Sym::Semi);
             return n;
         }
-        if (eatK("break")) {
-            expectP(";");
+        if (eatK(Sym::Break)) {
+            expectP(Sym::Semi);
             return new Node("break", "", l, c);
         }
-        if (eatK("continue")) {
-            expectP(";");
+        if (eatK(Sym::Continue)) {
+            expectP(Sym::Semi);
             return new Node("continue", "", l, c);
         }
-        if (eatK("throw")) {
+        if (eatK(Sym::Throw)) {
             Node n = new Node("throw", "", l, c);
             n.add(expression());
-            expectP(";");
+            expectP(Sym::Semi);
             return n;
         }
-        if (isK("try")) {
+        if (isK(Sym::Try)) {
             return tryStmt(l, c);
         }
-        if (eatK("discard")) {
+        if (eatK(Sym::Discard)) {
             Node n = new Node("discard", "", l, c);
             n.add(expression());
-            expectP(";");
+            expectP(Sym::Semi);
             return n;
         }
-        if (isK("ref")) {
+        if (isK(Sym::Ref)) {
             Node n = refDecl(l, c);
-            expectP(";");
+            expectP(Sym::Semi);
             return n;
         }
         // localVarDecl, tupleDecl und exprStatement: die erste Alternative, die die
         // ganze Anweisung liest, gewinnt.
         i64 save = pos;
-        try {
-            Node d = localVarDecl(l, c);
-            expectP(";");
-            return d;
-        } catch (ParseFail e) {
-            pos = save;
+        if (mayBeLocalDecl()) {
+            try {
+                Node d = localVarDecl(l, c);
+                expectP(Sym::Semi);
+                return d;
+            } catch (ParseFail e) {
+                pos = save;
+            }
         }
-        if (isP("(")) {
+        if (isP(Sym::LParen)) {
             try {
                 Node d = tupleDecl(l, c);
-                expectP(";");
+                expectP(Sym::Semi);
                 return d;
             } catch (ParseFail e) {
                 pos = save;
@@ -734,44 +775,72 @@ private:
         }
         Node s = new Node("exprstmt", "", l, c);
         s.add(exprStatement());
-        expectP(";");
+        expectP(Sym::Semi);
         return s;
     }
 
+    // Kann localVarDecl an pos gelingen? Wenn der Versuch sicher früh scheitert, wird der
+    // Fehlschlag festgehalten, den er hinterließe, ohne ihn zu machen (M7-Nachtrag: sonst eine
+    // Exception vor fast jeder Ausdrucksanweisung); dann false. true: der Versuch ist nötig.
+    bool mayBeLocalDecl() mut {
+        if (isIdent(0)) {
+            // Typname: qualifizierter Name, dann Typargumente oder Suffixe, dann der Name
+            i64 after = 1;
+            while (isPAt(after, Sym::Dot) && isIdent(after + 1)) {
+                after = after + 2;
+            }
+            if (isIdent(after) || isPAt(after, Sym::Lt) || isPAt(after, Sym::Question) || isPAt(after, Sym::LBracket)) {
+                return true;
+            }
+            i64 save = pos;
+            pos = save + after;
+            noteFailure("name");
+            pos = save;
+            return false;
+        }
+        Sym w = toks[pos].sym;
+        if (w == Sym::Const || w == Sym::Var || w == Sym::Own || w == Sym::Shared || w == Sym::Weak
+            || w == Sym::LParen || primSyms[cast<i64>(w)]) {
+            return true;
+        }
+        noteFailure("type");
+        return false;
+    }
+
     Node parenExpr() mut {
-        expectP("(");
+        expectP(Sym::LParen);
         Node e = expression();
-        expectP(")");
+        expectP(Sym::RParen);
         return e;
     }
 
     Node localVarDecl(i32 l, i32 c) mut {
         Node d = new Node("local", "", l, c);
-        if (eatK("const")) {
+        if (eatK(Sym::Const)) {
             d.text = "const";
         }
-        if (eatK("var")) {
+        if (eatK(Sym::Var)) {
             d.add(node("var", ""));
         } else {
             d.add(ty(false));
         }
         d.add(ident());
-        if (eatP("=")) {
+        if (eatP(Sym::Assign)) {
             d.add(expression());
         }
         return d;
     }
 
     Node refDecl(i32 l, i32 c) mut {
-        expectK("ref");
-        bool mutable = eatK("mut");
+        expectK(Sym::Ref);
+        bool mutable = eatK(Sym::Mut);
         Node t = new Node("type", "", line(), col());
         t.add(baseType(false));
         typeSuffixes(mut t, false);
         Node name = ident();
-        expectP("=");
+        expectP(Sym::Assign);
         if (mutable) {
-            expectK("mut");
+            expectK(Sym::Mut);
         }
         Node r = new Node("ref", flag("", mutable, "mut"), l, c);
         r.add(t);
@@ -781,22 +850,22 @@ private:
     }
 
     Node tupleDecl(i32 l, i32 c) mut {
-        expectP("(");
+        expectP(Sym::LParen);
         Node vars = node("vars", "");
         while (true) {
             Node v = node("tvar", "");
             v.add(ty(false));
             v.add(ident());
             vars.add(v);
-            if (!eatP(",")) {
+            if (!eatP(Sym::Comma)) {
                 break;
             }
         }
         if (vars.kids.length < 2) {
             throw failure("','");
         }
-        expectP(")");
-        expectP("=");
+        expectP(Sym::RParen);
+        expectP(Sym::Assign);
         Node d = new Node("tupledecl", "", l, c);
         d.add(vars);
         d.add(expression());
@@ -804,12 +873,10 @@ private:
     }
 
     string assignOp() {
-        if (toks[pos].kind != Kind::Punct) {
-            return "";
-        }
-        string p = toks[pos].text;
-        if (p == "=" || p == "+=" || p == "-=" || p == "*=" || p == "/=" || p == "%=") {
-            return p;
+        Sym p = toks[pos].sym;
+        if (p == Sym::Assign || p == Sym::PlusEq || p == Sym::MinusEq || p == Sym::StarEq || p == Sym::SlashEq
+            || p == Sym::PercentEq) {
+            return toks[pos].text;
         }
         return "";
     }
@@ -838,16 +905,16 @@ private:
         i64 save = pos;
         try {
             Node f = new Node("foreach", "", l, c);
-            if (eatK("mut")) {
+            if (eatK(Sym::Mut)) {
                 f.text = "mut";
             }
-            if (eatK("var")) {
+            if (eatK(Sym::Var)) {
                 f.add(node("var", ""));
             } else {
                 f.add(ty(false));
             }
             f.add(ident());
-            expectP(":");
+            expectP(Sym::Colon);
             return f;
         } catch (ParseFail e) {
             pos = save;
@@ -856,55 +923,62 @@ private:
     }
 
     Node forStmt(i32 l, i32 c) mut {
-        expectK("for");
-        expectP("(");
+        expectK(Sym::For);
+        expectP(Sym::LParen);
         Node? head = forEachHead(l, c);
         if (head != null) {
             bool mutable = head.text == "mut";
-            bool borrow = eatK("mut");
+            bool borrow = eatK(Sym::Mut);
             head.text = flag(flag("", mutable, "mut"), borrow, "borrow");
             head.add(expression());
-            expectP(")");
+            expectP(Sym::RParen);
             head.add(statement());
             return head;
         }
         Node f = new Node("for", "", l, c);
-        if (isP(";")) {
+        if (isP(Sym::Semi)) {
             f.add(node("noinit", ""));
         } else {
             f.add(forInit());
         }
-        expectP(";");
-        if (isP(";")) {
+        expectP(Sym::Semi);
+        if (isP(Sym::Semi)) {
             f.add(node("nocond", ""));
         } else {
             f.add(expression());
         }
-        expectP(";");
-        if (isP(")")) {
+        expectP(Sym::Semi);
+        if (isP(Sym::RParen)) {
             f.add(node("exprs", ""));
         } else {
             f.add(exprStatementList());
         }
-        expectP(")");
+        expectP(Sym::RParen);
         f.add(statement());
         return f;
     }
 
     Node forInit() mut {
         i64 save = pos;
-        try {
-            Node d = localVarDecl(0, 0);
-            if (!isP(";")) {
-                throw failure("';'");
+        if (mayBeLocalDecl()) {
+            try {
+                Node d = localVarDecl(0, 0);
+                if (!isP(Sym::Semi)) {
+                    throw failure("';'");
+                }
+                return d;
+            } catch (ParseFail e) {
+                pos = save;
             }
-            return d;
-        } catch (ParseFail e) {
-            pos = save;
+        }
+        if (!isP(Sym::LParen)) {
+            // tupleDecl scheitert am ersten Token
+            noteFailure("'('");
+            return exprStatementList();
         }
         try {
             Node d = tupleDecl(0, 0);
-            if (!isP(";")) {
+            if (!isP(Sym::Semi)) {
                 throw failure("';'");
             }
             return d;
@@ -917,32 +991,32 @@ private:
     Node exprStatementList() mut {
         Node list = node("exprs", "");
         list.add(exprStatement());
-        while (eatP(",")) {
+        while (eatP(Sym::Comma)) {
             list.add(exprStatement());
         }
         return list;
     }
 
     Node switchStmt(i32 l, i32 c) mut {
-        expectK("switch");
+        expectK(Sym::Switch);
         Node s = new Node("switch", "", l, c);
         s.add(parenExpr());
-        expectP("{");
-        while (!eatP("}")) {
+        expectP(Sym::LBrace);
+        while (!eatP(Sym::RBrace)) {
             Node cl = new Node("case", "", line(), col());
             Node pats = node("patterns", "");
-            if (eatK("default")) {
+            if (eatK(Sym::Default)) {
                 cl.text = "default";
             } else {
-                expectK("case");
+                expectK(Sym::Case);
                 pats.add(pattern());
-                while (eatP(",")) {
+                while (eatP(Sym::Comma)) {
                     pats.add(pattern());
                 }
             }
-            expectP(":");
+            expectP(Sym::Colon);
             Node body = node("body", "");
-            while (!(isK("case") || isK("default") || isP("}"))) {
+            while (!(isK(Sym::Case) || isK(Sym::Default) || isP(Sym::RBrace))) {
                 body.add(statement());
             }
             cl.add(pats);
@@ -961,10 +1035,10 @@ private:
             case Str: return node("str", t.text);
             case Char: return node("char", t.text);
             case Keyword: {
-                if (t.text == "true" || t.text == "false") {
+                if (t.sym == Sym::True || t.sym == Sym::False) {
                     return node("bool", t.text);
                 }
-                if (t.text == "null") {
+                if (t.sym == Sym::Null) {
                     return node("null", "");
                 }
                 return null;
@@ -974,7 +1048,7 @@ private:
     }
 
     Node pattern() mut {
-        bool negative = isP("-");
+        bool negative = isP(Sym::Minus);
         i64 litAt = 0;
         if (negative) {
             litAt = 1;
@@ -1001,34 +1075,34 @@ private:
             pos = save;
             p.add(ident());
         }
-        if (eatP("(")) {
+        if (eatP(Sym::LParen)) {
             Node bs = node("bindings", "");
             bs.add(ident());
-            while (eatP(",")) {
+            while (eatP(Sym::Comma)) {
                 bs.add(ident());
             }
-            expectP(")");
+            expectP(Sym::RParen);
             p.add(bs);
         }
         return p;
     }
 
     Node tryStmt(i32 l, i32 c) mut {
-        expectK("try");
+        expectK(Sym::Try);
         Node t = new Node("try", "", l, c);
         t.add(block());
         i32 catches = 0;
-        while (eatK("catch")) {
-            expectP("(");
+        while (eatK(Sym::Catch)) {
+            expectP(Sym::LParen);
             Node cl = node("catch", "");
             cl.add(ty(false));
             cl.add(ident());
-            expectP(")");
+            expectP(Sym::RParen);
             cl.add(block());
             t.add(cl);
             catches++;
         }
-        if (eatK("finally")) {
+        if (eatK(Sym::Finally)) {
             Node f = node("finally", "");
             f.add(block());
             t.add(f);
@@ -1042,10 +1116,10 @@ private:
 
     // expression : lambda | conditionalExpr
     Node expression() mut {
-        if (isK("own") || isP("(")) {
+        if (isK(Sym::Own) || isP(Sym::LParen)) {
             Node? lambda = lambdaHead(line(), col());
             if (lambda != null) {
-                if (isP("{")) {
+                if (isP(Sym::LBrace)) {
                     lambda.add(block());
                 } else {
                     lambda.add(expression());
@@ -1060,9 +1134,9 @@ private:
     Node? lambdaHead(i32 l, i32 c) mut {
         i64 save = pos;
         try {
-            bool isOwn = eatK("own");
+            bool isOwn = eatK(Sym::Own);
             Node ps = params();
-            expectP("=>");
+            expectP(Sym::Arrow);
             Node n = new Node("lambda", flag("", isOwn, "own"), l, c);
             n.add(ps);
             return n;
@@ -1074,12 +1148,12 @@ private:
 
     Node conditional() mut {
         Node c = coalesce();
-        if (isP("?")) {
+        if (isP(Sym::Question)) {
             Node n = new Node("cond", "", c.line, c.col);
             bump();
             n.add(c);
             n.add(expression());
-            expectP(":");
+            expectP(Sym::Colon);
             n.add(expression());
             return n;
         }
@@ -1088,7 +1162,7 @@ private:
 
     Node coalesce() mut {
         Node left = binary(0);
-        if (eatP("??")) {
+        if (eatP(Sym::Coalesce)) {
             Node n = new Node("coalesce", "", left.line, left.col);
             n.add(left);
             n.add(coalesce());
@@ -1100,42 +1174,39 @@ private:
     // Nächster zweistelliger Operator: (Operator, Anzahl Tokens, Vorrang × 2); "" wenn keiner.
     // as hat Stufe 10a, also 21.
     (string, i64, i32) binaryOp() {
-        if (isK("as")) {
+        if (isK(Sym::As)) {
             return ("as", 1, 21);
         }
-        if (isP("<") && isPAt(1, "<")) {
+        if (isP(Sym::Lt) && isPAt(1, Sym::Lt)) {
             return ("<<", 2, 22);
         }
-        if (isP(">") && isPAt(1, ">")) {
+        if (isP(Sym::Gt) && isPAt(1, Sym::Gt)) {
             return (">>", 2, 22);
         }
-        if (toks[pos].kind != Kind::Punct) {
-            return ("", 0, 0);
-        }
-        string p = toks[pos].text;
+        Sym p = toks[pos].sym;
         i32 prec = 0;
-        if (p == "*" || p == "/" || p == "%") {
+        if (p == Sym::Star || p == Sym::Slash || p == Sym::Percent) {
             prec = 26;
-        } else if (p == "+" || p == "-") {
+        } else if (p == Sym::Plus || p == Sym::Minus) {
             prec = 24;
-        } else if (p == "<" || p == ">" || p == "<=" || p == ">=") {
+        } else if (p == Sym::Lt || p == Sym::Gt || p == Sym::LtEq || p == Sym::GtEq) {
             prec = 20;
-        } else if (p == "==" || p == "!=") {
+        } else if (p == Sym::EqEq || p == Sym::NotEq) {
             prec = 18;
-        } else if (p == "&") {
+        } else if (p == Sym::Amp) {
             prec = 16;
-        } else if (p == "^") {
+        } else if (p == Sym::Caret) {
             prec = 14;
-        } else if (p == "|") {
+        } else if (p == Sym::Pipe) {
             prec = 12;
-        } else if (p == "&&") {
+        } else if (p == Sym::AndAnd) {
             prec = 10;
-        } else if (p == "||") {
+        } else if (p == Sym::OrOr) {
             prec = 8;
         } else {
             return ("", 0, 0);
         }
-        return (p, 1, prec);
+        return (toks[pos].text, 1, prec);
     }
 
     Node binary(i32 minPrec) mut {
@@ -1169,7 +1240,7 @@ private:
         i32 l = line();
         i32 c = col();
         string op = "";
-        if (isP("!") || isP("~") || isP("-") || isP("++") || isP("--")) {
+        if (isP(Sym::Bang) || isP(Sym::Tilde) || isP(Sym::Minus) || isP(Sym::PlusPlus) || isP(Sym::MinusMinus)) {
             op = toks[pos].text;
         } else {
             return postfix();
@@ -1185,46 +1256,46 @@ private:
         while (true) {
             i32 l = e.line;
             i32 c = e.col;
-            if (isP(".") || isP("?.")) {
-                bool safe = isP("?.");
+            if (isP(Sym::Dot) || isP(Sym::SafeDot)) {
+                bool safe = isP(Sym::SafeDot);
                 bump();
                 Node n = new Node("member", flag("", safe, "safe"), l, c);
                 n.add(e);
                 n.add(ident());
                 e = n;
-            } else if (isP("(")) {
+            } else if (isP(Sym::LParen)) {
                 Node n = new Node("call", "", l, c);
                 n.add(e);
                 n.add(args());
                 e = n;
-            } else if (eatP("[")) {
+            } else if (eatP(Sym::LBracket)) {
                 Node? from = null;
-                if (!isP("..")) {
+                if (!isP(Sym::DotDot)) {
                     from = expression();
                 }
-                if (eatP("..")) {
+                if (eatP(Sym::DotDot)) {
                     Node? to = null;
-                    if (!isP("]")) {
+                    if (!isP(Sym::RBracket)) {
                         to = expression();
                     }
-                    expectP("]");
+                    expectP(Sym::RBracket);
                     Node n = new Node("slice", "", l, c);
                     n.add(e);
                     n.add(from ?? node("none", ""));
                     n.add(to ?? node("none", ""));
                     e = n;
                 } else {
-                    expectP("]");
+                    expectP(Sym::RBracket);
                     Node n = new Node("index", "", l, c);
                     n.add(e);
                     n.add(from ?? node("none", ""));
                     e = n;
                 }
-            } else if (eatP("++")) {
+            } else if (eatP(Sym::PlusPlus)) {
                 Node n = new Node("postinc", "", l, c);
                 n.add(e);
                 e = n;
-            } else if (eatP("--")) {
+            } else if (eatP(Sym::MinusMinus)) {
                 Node n = new Node("postdec", "", l, c);
                 n.add(e);
                 e = n;
@@ -1235,21 +1306,21 @@ private:
     }
 
     Node args() mut {
-        expectP("(");
+        expectP(Sym::LParen);
         Node a = node("args", "");
-        if (eatP(")")) {
+        if (eatP(Sym::RParen)) {
             return a;
         }
         while (true) {
-            bool mutable = eatK("mut");
+            bool mutable = eatK(Sym::Mut);
             Node x = node("arg", flag("", mutable, "mut"));
             x.add(expression());
             a.add(x);
-            if (!eatP(",")) {
+            if (!eatP(Sym::Comma)) {
                 break;
             }
         }
-        expectP(")");
+        expectP(Sym::RParen);
         return a;
     }
 
@@ -1262,7 +1333,7 @@ private:
         } else {
             Node owner = node("typename", "");
             owner.add(qualifiedName());
-            if (isP("<")) {
+            if (isP(Sym::Lt)) {
                 i64 save = pos;
                 try {
                     owner.add(typeArgs());
@@ -1275,7 +1346,7 @@ private:
             }
             s.add(owner);
         }
-        expectP("::");
+        expectP(Sym::ColonColon);
         s.add(ident());
         return s;
     }
@@ -1290,56 +1361,56 @@ private:
             bump();
             return lit;
         }
-        if (eatK("this")) {
+        if (eatK(Sym::This)) {
             return new Node("this", "", l, c);
         }
-        if (eatK("base")) {
+        if (eatK(Sym::Base)) {
             return new Node("base", "", l, c);
         }
-        if (eatP("(")) {
+        if (eatP(Sym::LParen)) {
             Node first = expression();
-            if (eatP(",")) {
+            if (eatP(Sym::Comma)) {
                 Node t = new Node("tuple", "", l, c);
                 t.add(first);
                 t.add(expression());
-                while (eatP(",")) {
+                while (eatP(Sym::Comma)) {
                     t.add(expression());
                 }
-                expectP(")");
+                expectP(Sym::RParen);
                 return t;
             }
-            expectP(")");
+            expectP(Sym::RParen);
             Node p = new Node("paren", "", l, c);
             p.add(first);
             return p;
         }
-        if (eatP("[")) {
+        if (eatP(Sym::LBracket)) {
             Node a = new Node("array", "", l, c);
-            if (!eatP("]")) {
+            if (!eatP(Sym::RBracket)) {
                 a.add(expression());
-                while (eatP(",")) {
+                while (eatP(Sym::Comma)) {
                     a.add(expression());
                 }
-                expectP("]");
+                expectP(Sym::RBracket);
             }
             return a;
         }
-        if (eatK("new")) {
+        if (eatK(Sym::New)) {
             Node n = new Node("new", "", l, c);
             n.add(typeName(false));
             n.add(args());
             return n;
         }
-        if (eatK("cast")) {
-            expectP("<");
+        if (eatK(Sym::Cast)) {
+            expectP(Sym::Lt);
             Node t = ty(false);
-            expectP(">");
+            expectP(Sym::Gt);
             Node n = new Node("cast", "", l, c);
             n.add(t);
             n.add(parenExpr());
             return n;
         }
-        if (eatK("copy")) {
+        if (eatK(Sym::Copy)) {
             Node n = new Node("copy", "", l, c);
             n.add(parenExpr());
             return n;
@@ -1351,10 +1422,10 @@ private:
             // dieser Stelle mit "Expected '::'"; das wird festgehalten, ohne den Versuch zu
             // machen (M7: sonst eine Exception für fast jeden Namen in einem Ausdruck).
             i64 after = 1;
-            while (isPAt(after, ".") && isIdent(after + 1)) {
+            while (isPAt(after, Sym::Dot) && isIdent(after + 1)) {
                 after = after + 2;
             }
-            if (isPAt(after, "::") || isPAt(after, "<")) {
+            if (isPAt(after, Sym::ColonColon) || isPAt(after, Sym::Lt)) {
                 try {
                     Node s = new Node("static", "", l, c);
                     s.add(staticRef());
@@ -1381,36 +1452,39 @@ private:
 public:
     constructor(own Token[] toks) {
         this.toks = toks;
-        string[] words = ["bool", "char", "byte", "string", "i8", "i16", "i32", "i64",
-            "ui8", "ui16", "ui32", "ui64", "f32", "f64"];
-        for (string w : words) {
-            prims.add(w);
+        for (i64 i = 0; i < symTexts.length; i++) {
+            primSyms.push(false);
+        }
+        Sym[] words = [Sym::Bool, Sym::Char, Sym::Byte, Sym::String, Sym::I8, Sym::I16, Sym::I32, Sym::I64,
+            Sym::Ui8, Sym::Ui16, Sym::Ui32, Sym::Ui64, Sym::F32, Sym::F64];
+        for (Sym w : words) {
+            primSyms[cast<i64>(w)] = true;
         }
     }
 
     // compilationUnit; wirft ParseFail, die Meldung liefert errorText()
     Node compilationUnit() mut {
         Node unit = node("unit", "");
-        if (eatK("package")) {
+        if (eatK(Sym::Package)) {
             Node p = node("package", "");
             p.add(qualifiedName());
-            expectP(";");
+            expectP(Sym::Semi);
             unit.add(p);
         }
-        while (isK("using")) {
+        while (isK(Sym::Using)) {
             Node u = new Node("using", "", line(), col());
             bump();
-            if (isIdent(0) && isPAt(1, "=")) {
+            if (isIdent(0) && isPAt(1, Sym::Assign)) {
                 u.text = "alias";
                 u.add(ident());
                 bump();
             }
             u.add(qualifiedName());
-            expectP(";");
+            expectP(Sym::Semi);
             unit.add(u);
         }
         while (!atEof()) {
-            if (isK("i32")) {
+            if (isK(Sym::I32)) {
                 unit.add(mainDecl());
             } else {
                 unit.add(typeDecl());
@@ -1425,7 +1499,11 @@ public:
         string msg = "Syntax error";
         if (farPos >= 0) {
             p = farPos;
-            msg = farMsg;
+            string found = "found " + shownAt(farPos);
+            if (toks[farPos].kind == Kind::Error) {
+                found = toks[farPos].text;
+            }
+            msg = "Expected " + farExpected + ", " + found;
         }
         if (p > toks.length - 1) {
             p = toks.length - 1;

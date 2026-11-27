@@ -32,6 +32,9 @@ private:
     // volle Namen, die mehr als ein Projekt deklariert (lookupOwn)
     Set<string> sharedFull = new Set<string>();
     Pending[] pending = [];
+    // je Typ die Nachschlagetabellen für methodsOf und fieldOf (M7-Nachtrag); leer, bis die
+    // Membertabellen fertig sind (nach resolveMembers ändern sie sich nicht mehr)
+    MemberIndex[] memberIndex = [];
 
 public:
     static Program build(Workspace ws) {
@@ -71,6 +74,7 @@ public:
         p.collect(ws);
         p.resolveHeaders(ws);
         p.resolveMembers(ws);
+        p.buildMemberIndex();
         p.checkPending();
         p.checkFiles(ws);
         p.checkDefs(ws);
@@ -182,28 +186,60 @@ public:
 
     // Feld eines Typs (eigenes oder geerbtes) mit eingesetzten Typargumenten
     FieldInfo? fieldOf(shared Ty t, string name) {
-        shared Ty[] types = [];
-        types.push(t);
-        for (shared Ty s : supertypes(t)) {
-            types.push(s);
+        if (t.kind != TK::Named) {
+            return null;
         }
+        // Mit dem Index (M7-Nachtrag): ohne Feld dieses Namens in Typ und Obertypen sofort
+        // fertig; je Typ nur das erste Feld des Namens statt aller Felder.
+        bool indexed = t.id < memberIndex.length;
+        if (indexed && !memberIndex[t.id].fieldNames.contains(name)) {
+            return null;
+        }
+        shared Ty[] types = typeAndSupertypes(t);
         for (shared Ty ty : types) {
             if (ty.kind != TK::Named) {
                 continue;
             }
-            Subst map = substMap(ty.id, ty.args);
-            for (FieldInfo f : defs[ty.id].fields) {
-                if (f.name == name) {
-                    FieldInfo c = new FieldInfo(f.name, Ty::subst(f.ty, map), f.access, f.line, f.col);
-                    c.isStatic = f.isStatic;
-                    c.isConst = f.isConst;
-                    c.hasInit = f.hasInit;
-                    c.owner = ty.id;
-                    return c;
+            i64 k = -1;
+            if (indexed) {
+                k = memberIndex[ty.id].firstField.get(name) ?? -1;
+            } else {
+                for (i64 i = 0; i < defs[ty.id].fields.length; i++) {
+                    if (defs[ty.id].fields[i].name == name) {
+                        k = i;
+                        break;
+                    }
                 }
             }
+            if (k < 0) {
+                continue;
+            }
+            Subst map = substMap(ty.id, ty.args);
+            ref FieldInfo f = defs[ty.id].fields[k];
+            FieldInfo c = new FieldInfo(f.name, Ty::subst(f.ty, map), f.access, f.line, f.col);
+            c.isStatic = f.isStatic;
+            c.isConst = f.isConst;
+            c.hasInit = f.hasInit;
+            c.owner = ty.id;
+            return c;
         }
         return null;
+    }
+
+    // [t] und seine Obertypen; für einen Typ ohne Typargumente aus dem Index
+    shared Ty[] typeAndSupertypes(shared Ty t) {
+        shared Ty[] types = [];
+        types.push(t);
+        if (t.kind == TK::Named && t.args.length == 0 && t.id < memberIndex.length) {
+            for (shared Ty s : memberIndex[t.id].supers) {
+                types.push(s);
+            }
+            return types;
+        }
+        for (shared Ty s : supertypes(t)) {
+            types.push(s);
+        }
+        return types;
     }
 
     bool isSubclass(i64 sub, i64 sup) {
@@ -1228,21 +1264,35 @@ public:
     // (überschriebene nur einmal), mit eingesetzten Typargumenten
     MethodInfo[] methodsOf(shared Ty t, string name) {
         MethodInfo[] out = [];
-        shared Ty[] types = [];
-        types.push(t);
-        for (shared Ty s : supertypes(t)) {
-            types.push(s);
+        if (t.kind != TK::Named) {
+            return out;
         }
+        // Mit dem Index (M7-Nachtrag): ohne Methode dieses Namens in Typ und Obertypen sofort
+        // fertig; je Typ nur die Methoden des Namens statt aller Methoden.
+        bool indexed = t.id < memberIndex.length;
+        if (indexed && !memberIndex[t.id].methodNames.contains(name)) {
+            return out;
+        }
+        shared Ty[] types = typeAndSupertypes(t);
         for (shared Ty ty : types) {
             if (ty.kind != TK::Named) {
                 continue;
             }
-            Subst map = substMap(ty.id, ty.args);
-            for (MethodInfo m0 : defs[ty.id].methods) {
-                if (m0.name != name) {
-                    continue;
+            i64 mi = -1;
+            if (indexed) {
+                mi = memberIndex[ty.id].firstMethod.get(name) ?? -1;
+            } else {
+                mi = nextMethod(ty.id, -1, name, false);
+                if (mi == defs[ty.id].methods.length) {
+                    mi = -1;
                 }
-                MethodInfo m = m0.substituted(map);
+            }
+            if (mi < 0) {
+                continue;
+            }
+            Subst map = substMap(ty.id, ty.args);
+            for (; mi < defs[ty.id].methods.length; mi = nextMethod(ty.id, mi, name, indexed)) {
+                MethodInfo m = defs[ty.id].methods[mi].substituted(map);
                 i64 k = -1;
                 for (i64 j = 0; j < out.length; j++) {
                     if (sameParams(out[j].params, m.params)) {
@@ -1264,6 +1314,70 @@ public:
             }
         }
         return out;
+    }
+
+    // Nächste Methode von def mit diesem Namen nach Nummer k (k = -1: die erste); die Anzahl der
+    // Methoden, wenn keine mehr kommt
+    i64 nextMethod(i64 def, i64 k, string name, bool indexed) {
+        if (indexed) {
+            return memberIndex[def].nextMethod[k];
+        }
+        i64 i = k + 1;
+        while (i < defs[def].methods.length && defs[def].methods[i].name != name) {
+            i++;
+        }
+        return i;
+    }
+
+    // Baut memberIndex, wenn die Membertabellen fertig sind (M7-Nachtrag)
+    void buildMemberIndex() mut {
+        MemberIndex[] index = [];
+        shared Ty[] none = [];
+        for (i64 def = 0; def < defs.length; def++) {
+            MemberIndex ix = new MemberIndex();
+            ref TypeDef d = defs[def];
+            i64 n = d.methods.length;
+            for (i64 i = 0; i < n; i++) {
+                ix.nextMethod.push(n);
+            }
+            for (i64 i = n - 1; i >= 0; i--) {
+                string nm = d.methods[i].name;
+                i64? later = ix.firstMethod.get(nm);
+                if (later != null) {
+                    ix.nextMethod[i] = later;
+                }
+                ix.firstMethod.put(nm, i);
+            }
+            for (i64 i = d.fields.length - 1; i >= 0; i--) {
+                ix.firstField.put(d.fields[i].name, i);
+            }
+            ix.supers = supertypes(Ty::named(def, none));
+            index.push(ix);
+        }
+        // Namen aus Typ und Obertypen (welche Obertypen erreicht werden, hängt nicht von den
+        // Typargumenten ab)
+        for (i64 def = 0; def < defs.length; def++) {
+            Set<string> ms = new Set<string>();
+            Set<string> fs = new Set<string>();
+            addMemberNames(mut ms, mut fs, def);
+            for (shared Ty s : index[def].supers) {
+                if (s.kind == TK::Named) {
+                    addMemberNames(mut ms, mut fs, s.id);
+                }
+            }
+            index[def].methodNames = ms;
+            index[def].fieldNames = fs;
+        }
+        memberIndex = index;
+    }
+
+    void addMemberNames(mut Set<string> ms, mut Set<string> fs, i64 def) {
+        for (MethodInfo m : defs[def].methods) {
+            ms.add(m.name);
+        }
+        for (FieldInfo f : defs[def].fields) {
+            fs.add(f.name);
+        }
     }
 
 private:
@@ -1673,4 +1787,19 @@ public:
 export class ProjDeps {
 public:
     i64[] deps = [];
+}
+
+// Nachschlagetabellen eines Typs für methodsOf und fieldOf (M7-Nachtrag)
+export class MemberIndex {
+public:
+    // erste eigene Methode je Name; je Methode die nächste gleichen Namens (sonst die Anzahl)
+    Map<string, i64> firstMethod = new Map<string, i64>();
+    i64[] nextMethod = [];
+    // erstes eigenes Feld je Name
+    Map<string, i64> firstField = new Map<string, i64>();
+    // Namen der Methoden und Felder des Typs und aller Obertypen
+    Set<string> methodNames = new Set<string>();
+    Set<string> fieldNames = new Set<string>();
+    // supertypes des Typs ohne Typargumente
+    shared Ty[] supers = [];
 }

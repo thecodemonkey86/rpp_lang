@@ -575,3 +575,14 @@ Status (26.11.2026, locally on Windows with MSVC):
 - Linux (WSL/Ubuntu 24.04, gcc 13.3): bootstrap with `--check-seed` reaches the fixed point with the same seed, `rppcc test` 332 passed, `check.py registry` passed.
 
 Open: the green CI run on Ubuntu and Windows after the next push. Not part of M9: the registry as a network service, signatures and a public log of checksums.
+
+**Open M7 candidates implemented (27.11.2026).** The four further optimizations named at the end of M7 are done in `rppcc`:
+
+| Candidate | Implementation |
+|---|---|
+| Token kinds as a number | New enum `Sym` (keywords and punctuation, `Syms::texts` for the text); the lexer gives each such token its `Sym`, the parser compares one enum value instead of kind and text (`isP`, `eatK`, `binaryOp`, `startsExpression` and others). Simple types as a table indexed by `Sym`. The message of the farthest failure is built only in `error()`. |
+| Attempts without exceptions | Before an expression statement (and in a `for` initializer), `localVarDecl` is attempted only where it can succeed (a name followed by a name, `<`, `?` or `[` after the qualified name, or `const`, `var`, `own`, `shared`, `weak`, a simple type, `(`); otherwise the same failure is recorded directly. In a class, field and method share type and name; `fieldDecl` is no longer attempted before each method. The reported syntax errors are unchanged (`compare.py` stage `ast`). |
+| Tuples as return values | `callInner`, `methodCall`, `staticCall` and `invoke` return the type and leave the facts in a field; `capturingFrames` became `captureFrom` (the end is always `frames.length`); `literalKind` gives the kind of a literal without a tuple. |
+| `methodsOf`, `fieldOf` | Index per type (`MemberIndex`, built after `resolveMembers`): first method or field per name, the next method with the same name, the names of the type and all supertypes, the supertypes of a type without type arguments. A name that is not there ends the lookup immediately. |
+
+Status (27.11.2026): `diagnose rppc/std rpp-compiler` 0.415 s against 0.44 s before (median of 15 runs, same computer; `rppc` 0.47 s), same output. Fixed point and seed (`--check-seed`) current; `rppcc test` 332 passed, 0 failed; `compare.py --exe` 659/1332/1310/828/106/581/863 equal, 0 different; `compare_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 328 equal, 0 different. According to the profile, the parser helpers (`isP`, `eatP`, `eatK`) remain the largest part of the parser; their cost is now the call itself (frame per call).

@@ -174,6 +174,9 @@ private:
     // Ergebnis des zuletzt geprüften äußersten Aufrufs: 1 nodiscard, 2 Funktionswert, 4 kehrt nie zurück
     bool hasLastCall = false;
     i32 lastFacts = 0;
+    // Fakten, die callInner, methodCall, staticCall und invoke neben dem Typ liefern (M7-Nachtrag:
+    // statt eines Tupels als Rückgabewert)
+    i32 retFacts = 0;
     // Steht der gerade geprüfte Ausdruck direkt als Argument eines Aufrufs?
     bool asArgument = false;
     i64 quiet = 0;
@@ -1026,8 +1029,9 @@ private:
         return s;
     }
 
-    // Rahmen, die die Variable erfassen (innere Lambdas): von, bis (ausschließlich)
-    (i64, i64) capturingFrames(i64 id) {
+    // Rahmen, die die Variable erfassen (innere Lambdas): von captureFrom(id) bis frames.length
+    // (ausschließlich); ohne Tupel (M7-Nachtrag)
+    i64 captureFrom(i64 id) {
         i64 decl = frames.length;
         if (id == -1) {
             decl = 1;
@@ -1040,11 +1044,12 @@ private:
         if (decl > frames.length) {
             decl = frames.length;
         }
-        return (decl, frames.length);
+        return decl;
     }
 
     bool capturedByOwnLambda(i64 id) {
-        (i64 from, i64 to) = capturingFrames(id);
+        i64 from = captureFrom(id);
+        i64 to = frames.length;
         for (i64 f = from; f < to; f++) {
             if (frames[f].ownLambda) {
                 return true;
@@ -1059,7 +1064,8 @@ private:
             return;
         }
         // Zugriffe eines Lambdas auf erfasste Orte prüft die Erfassungsstelle (R-10.7).
-        (i64 from, i64 to) = capturingFrames(pl.root);
+        i64 from = captureFrom(pl.root);
+        i64 to = frames.length;
         for (i64 f = from; f < to; f++) {
             i64 k = Program::indexOfInt(frames[f].capIds, pl.root);
             if (k >= 0) {
@@ -1202,7 +1208,8 @@ private:
                 errAlso(e.line, e.col, "R-5.3", a, n + " is borrowed and cannot be moved or stored");
                 return;
             }
-            (i64 from, i64 to) = capturingFrames(id);
+            i64 from = captureFrom(id);
+            i64 to = frames.length;
             if (from < to) {
                 bool isOwn = false;
                 for (i64 f = from; f < to; f++) {
@@ -3058,7 +3065,8 @@ private:
                 }
             }
             // Erfassung durch Lambdas (R-10.7 bis R-10.9)
-            (i64 from, i64 to) = capturingFrames(id);
+            i64 from = captureFrom(id);
+            i64 to = frames.length;
             if (from < to) {
                 bool byOwn = false;
                 for (i64 f = from; f < to; f++) {
@@ -3650,7 +3658,8 @@ private:
 
     shared Ty call(Node callee, Node args, i32 line, i32 col) mut {
         hasLastCall = false;
-        (shared Ty t, i32 facts) = callInner(callee, args, line, col);
+        shared Ty t = callInner(callee, args, line, col);
+        i32 facts = retFacts;
         hasLastCall = true;
         lastFacts = facts;
         return t;
@@ -3662,13 +3671,15 @@ private:
         }
     }
 
-    (shared Ty, i32) callInner(Node callee, Node args, i32 line, i32 col) mut {
+    shared Ty callInner(Node callee, Node args, i32 line, i32 col) mut {
         if (callee.kind == "name") {
             string nm = callee.text;
             if (findLocal(nm) >= 0) {
                 shared Ty t0 = expr(callee, null);
                 shared Ty t = nonNullOperand(t0, callee, callee.line, callee.col);
-                return (callValue(t, args, callee.line, callee.col), 2);
+                shared Ty retTy = callValue(t, args, callee.line, callee.col);
+                retFacts = 2;
+                return retTy;
             }
             shared Ty? st0 = selfTy();
             bool ownMethod = st0 != null && p.methodsOf(st0, nm).length > 0;
@@ -3676,27 +3687,32 @@ private:
                 (bool handled, shared Ty bt, i32 bf) = builtinFunction(nm, args, line, col);
                 if (handled) {
                     lastTarget = Target::named(TargetKind::Builtin, nm);
-                    return (bt, bf);
+                    retFacts = bf;
+                    return bt;
                 }
             }
             shared Ty? st = selfTy();
             if (st == null) {
                 err(callee.line, callee.col, "R-8.16", nm + " is not defined here");
-                return (Ty::error(), 0);
+                retFacts = 0;
+                return Ty::error();
             }
             MethodInfo[] cands = p.methodsOf(st, nm);
             if (cands.length == 0) {
                 if (p.fieldOf(st, nm) != null) {
                     shared Ty t0 = expr(callee, null);
                     shared Ty t = nonNullOperand(t0, callee, callee.line, callee.col);
-                    return (callValue(t, args, callee.line, callee.col), 2);
+                    shared Ty retTy = callValue(t, args, callee.line, callee.col);
+                    retFacts = 2;
+                    return retTy;
                 }
                 string rule = "R-8.16";
                 if (inMixin()) {
                     rule = "R-7.19";
                 }
                 err(callee.line, callee.col, rule, nm + " is not defined here");
-                return (Ty::error(), 0);
+                retFacts = 0;
+                return Ty::error();
             }
             pendingRecv = new Place(-1);
             return invoke(cands, args, line, col, 0, Ty::error(), nm);
@@ -3712,18 +3728,22 @@ private:
                 }
                 if (isStatic || baseFlow == null) {
                     err(callee.line, callee.col, "R-7.15", "base.m() is allowed only in methods of a subclass");
-                    return (Ty::error(), 0);
+                    retFacts = 0;
+                    return Ty::error();
                 }
                 MethodInfo[] cands = p.methodsOf(baseFlow, id.text);
                 pendingRecv = new Place(-1);
-                (shared Ty bt, i32 bf) = invoke(cands, args, line, col, 0, Ty::error(), id.text);
+                shared Ty bt = invoke(cands, args, line, col, 0, Ty::error(), id.text);
+                i32 bf = retFacts;
                 exactTarget();
-                return (bt, bf);
+                retFacts = bf;
+                return bt;
             }
             shared Ty ot0 = expr(object, null);
             if (ot0.isError()) {
                 probeArgs(args);
-                return (Ty::error(), 0);
+                retFacts = 0;
+                return Ty::error();
             }
             shared Ty ot = receiver(ot0, object, safe, callee.line, callee.col);
             // R-6.16: Bei null wird der Rest der Kette übersprungen, auch die Argumente.
@@ -3732,15 +3752,18 @@ private:
                 baseFlow = flow.dup();
             }
             pendingRecv = placeOf(object);
-            (shared Ty t, i32 facts) = methodCall(ot, id, args, line, col);
+            shared Ty t = methodCall(ot, id, args, line, col);
+            i32 facts = retFacts;
             pendingRecv = null;
             if (baseFlow != null) {
                 flow = baseFlow.join(flow, "R-6.16", "R-5.15");
             }
             if (safe) {
-                return (Ty::nullable(t), facts);
+                retFacts = facts;
+                return Ty::nullable(t);
             }
-            return (t, facts);
+            retFacts = facts;
+            return t;
         }
         if (callee.kind == "static") {
             return staticCall(callee.kids[0], args, line, col);
@@ -3764,10 +3787,13 @@ private:
                 err(line, col, "R-10.17", "Wrong number of arguments");
             }
             shared Ty t = lambdaBody(inner.text == "own", ps, inner.kids[1], null, inner.line, inner.col);
-            return (t, 2);
+            retFacts = 2;
+            return t;
         }
         shared Ty t = expr(callee, null);
-        return (callValue(t, args, callee.line, callee.col), 2);
+        shared Ty retTy = callValue(t, args, callee.line, callee.col);
+        retFacts = 2;
+        return retTy;
     }
 
     // Aufruf eines Funktionswerts (R-10.17)
@@ -3812,17 +3838,20 @@ private:
         return new PInfo(pnode.kids[1].text, ty, mode);
     }
 
-    (shared Ty, i32) methodCall(shared Ty ot, Node id, Node args, i32 line, i32 col) mut {
+    shared Ty methodCall(shared Ty ot, Node id, Node args, i32 line, i32 col) mut {
         shared Ty core = Tys::core(ot);
         string nm = id.text;
         shared Ty? wi = Tys::weakInner(ot);
         if (wi != null) {
             if (nm == "lock" && args.kids.length == 0) {
                 lastTarget = new Target(TargetKind::Lock);
-                return (Ty::nullable(Ty::wrap(TK::Shared, wi)), 1);
+                shared Ty retTy = Ty::nullable(Ty::wrap(TK::Shared, wi));
+                retFacts = 1;
+                return retTy;
             }
             err(id.line, id.col, "R-4.41", "Use lock() to access a weak reference");
-            return (Ty::error(), 0);
+            retFacts = 0;
+            return Ty::error();
         }
         (bool isBuiltin, MethodInfo[] bcands) = builtinMethods(core, nm);
         if (isBuiltin) {
@@ -3844,20 +3873,23 @@ private:
                 FieldInfo? f = p.fieldOf(core, nm);
                 if (f != null) {
                     checkAccess(f.access, f.owner, id.line, id.col);
-                    return (callValue(f.ty, args, id.line, id.col), 2);
+                    shared Ty retTy = callValue(f.ty, args, id.line, id.col);
+                    retFacts = 2;
+                    return retTy;
                 }
             }
             string rule = unknownMemberRule(core);
             string msg = show(core) + " has no method " + nm;
             err(id.line, id.col, rule, msg);
             probeArgs(args);
-            return (Ty::error(), 0);
+            retFacts = 0;
+            return Ty::error();
         }
         pendingRecv = recv;
         return invoke(cands, args, line, col, 1, Ty::error(), nm);
     }
 
-    (shared Ty, i32) staticCall(Node sr, Node args, i32 line, i32 col) mut {
+    shared Ty staticCall(Node sr, Node args, i32 line, i32 col) mut {
         ref Node ownerNode = sr.kids[0];
         ref Node mem = sr.kids[1];
         string nm = mem.text;
@@ -3865,23 +3897,27 @@ private:
             pendingRecv = null;
             (bool ok, MethodInfo[] cands) = builtinStatics(ownerNode.text, nm);
             if (ok) {
-                (shared Ty st, i32 sf) = invoke(cands, args, line, col, 2, Ty::error(), nm);
+                shared Ty st = invoke(cands, args, line, col, 2, Ty::error(), nm);
+                i32 sf = retFacts;
                 if (lastTarget != null) {
                     Target bt = Target::named(TargetKind::BuiltinStatic, nm);
                     bt.prim = ownerNode.text;
                     lastTarget = bt;
                 }
-                return (st, sf);
+                retFacts = sf;
+                return st;
             }
             err(mem.line, mem.col, "R-13.3", ownerNode.text + "::" + nm + " does not exist");
-            return (Ty::error(), 0);
+            retFacts = 0;
+            return Ty::error();
         }
         shared Ty owner = resolveTN(ownerNode, sr.line, sr.col);
         if (owner.kind != TK::Named) {
             if (!owner.isError()) {
                 err(sr.line, sr.col, "R-7.27", ":: must follow a type");
             }
-            return (Ty::error(), 0);
+            retFacts = 0;
+            return Ty::error();
         }
         i64 d = owner.id;
         if (p.defs[d].kind == DefKind::Enum) {
@@ -3904,10 +3940,12 @@ private:
                     consume(ax, at, fields[i].ty, "R-5.3", a);
                 }
                 lastTarget = Target::ofDef(TargetKind::Variant, d, vi);
-                return (owner, 0);
+                retFacts = 0;
+                return owner;
             }
             err(mem.line, mem.col, "R-4.25", nm + " is not a variant with a payload");
-            return (Ty::error(), 0);
+            retFacts = 0;
+            return Ty::error();
         }
         if (p.defs[d].kind == DefKind::Mixin) {
             // M::m() ruft die Fassung aus dem importierten Mixin für this auf (R-7.15).
@@ -3922,7 +3960,8 @@ private:
             }
             if (mt == null || isStatic) {
                 err(sr.line, sr.col, "R-7.15", "M::m() is allowed only in a class that imports M");
-                return (Ty::error(), 0);
+                retFacts = 0;
+                return Ty::error();
             }
             MethodInfo[] cands = [];
             for (MethodInfo m : p.methodsOf(mt, nm)) {
@@ -3931,9 +3970,11 @@ private:
                 }
             }
             pendingRecv = new Place(-1);
-            (shared Ty mt2, i32 mf) = invoke(cands, args, line, col, 0, Ty::error(), nm);
+            shared Ty mt2 = invoke(cands, args, line, col, 0, Ty::error(), nm);
+            i32 mf = retFacts;
             exactTarget();
-            return (mt2, mf);
+            retFacts = mf;
+            return mt2;
         }
         MethodInfo[] cands = [];
         for (MethodInfo m : p.methodsOf(owner, nm)) {
@@ -3944,7 +3985,8 @@ private:
         if (cands.length == 0) {
             string tn = p.defs[d].name;
             err(mem.line, mem.col, "R-7.27", tn + " has no static method " + nm);
-            return (Ty::error(), 0);
+            retFacts = 0;
+            return Ty::error();
         }
         return invoke(cands, args, line, col, 2, Ty::error(), nm);
     }
@@ -4026,9 +4068,40 @@ private:
         return (0, false, 0);
     }
 
+    // Nur die Art aus literalInfo, ohne Tupel (M7-Nachtrag)
+    static i32 literalKind(Node e) {
+        if (e.kind == "int") {
+            return intLiteralKind(e.text);
+        }
+        if (e.kind == "float") {
+            return 2;
+        }
+        if (e.kind == "unary" && e.text == "-") {
+            ref Node x = e.kids[0];
+            if (x.kind == "int") {
+                return intLiteralKind(x.text);
+            }
+            if (x.kind == "float") {
+                return 2;
+            }
+            return 0;
+        }
+        if (e.kind == "paren") {
+            return literalKind(e.kids[0]);
+        }
+        return 0;
+    }
+
+    static i32 intLiteralKind(string text) {
+        (bool ok, ui64 v) = Num::value(text);
+        if (ok) {
+            return 1;
+        }
+        return 0;
+    }
+
     static bool isLiteral(Node e) {
-        (i32 k, bool n, ui64 v) = literalInfo(e);
-        return k != 0;
+        return literalKind(e) != 0;
     }
 
     ArgShape argShape(Node a) mut {
@@ -4045,8 +4118,9 @@ private:
         if (x.kind == "null") {
             return new ArgShape(3, Ty::error());
         }
-        (i32 k, bool neg, ui64 mag) = literalInfo(x);
+        i32 k = literalKind(x);
         if (k == 1) {
+            (i32 k1, bool neg, ui64 mag) = literalInfo(x);
             ArgShape s = new ArgShape(1, Ty::error());
             s.neg = neg;
             s.mag = mag;
@@ -4061,7 +4135,8 @@ private:
         if (x.kind == "name") {
             i64 li = findLocal(x.text);
             if (li >= 0) {
-                (i64 from, i64 to) = capturingFrames(locals[li].id);
+                i64 from = captureFrom(locals[li].id);
+                i64 to = frames.length;
                 if (from >= to) {
                     return new ArgShape(0, localType(li));
                 }
@@ -4159,7 +4234,7 @@ private:
 
     // Wählt unter den Varianten aus und prüft die Argumente (R-7.17, R-4.44).
     // recv: 0 this, 1 Objekt, 2 statisch, 3 eingebaut (recvTy ist dann der Typ)
-    (shared Ty, i32) invoke(MethodInfo[] cands, Node args, i32 line, i32 col, i32 recv, shared Ty recvTy, string nm) mut {
+    shared Ty invoke(MethodInfo[] cands, Node args, i32 line, i32 col, i32 recv, shared Ty recvTy, string nm) mut {
         Place? recvPlace = null;
         if (recv != 2) {
             recvPlace = take(mut pendingRecv);
@@ -4209,12 +4284,15 @@ private:
                 (bool ok, MethodInfo m) = instantiate(cands[single], shapes);
                 if (cands[single].tparams.length > 0 && !ok) {
                     err(line, col, "R-4.44", "The type arguments for " + nm + " cannot be inferred");
-                    return (Ty::error(), factsOf(cands[single]));
+                    retFacts = factsOf(cands[single]);
+                    return Ty::error();
                 }
                 i64 id = beginCall();
                 checkArgs(m, args, id);
                 endCall(id);
-                return (m.ret.ty, factsOf(m));
+                shared Ty retTy = m.ret.ty;
+                retFacts = factsOf(m);
+                return retTy;
             }
             if (sameArity == 0 && cands.length == 1) {
                 string msg = nm + " expects " + cands[0].params.length.toString() + " arguments, got " + n.toString();
@@ -4229,13 +4307,15 @@ private:
                 err(line, col, rule, "No overload of " + nm + " matches the arguments");
             }
             probeArgs(args);
-            return (Ty::error(), 0);
+            retFacts = 0;
+            return Ty::error();
         }
         if (viable.length > 1) {
             chosenIdx = best(viable, ranks);
             if (chosenIdx < 0) {
                 err(line, col, "R-7.17", "The call to " + nm + " is ambiguous");
-                return (Ty::error(), 0);
+                retFacts = 0;
+                return Ty::error();
             }
         }
         MethodInfo chosen = viable[chosenIdx].substituted(new Subst());
@@ -4329,7 +4409,8 @@ private:
         shared Ty rty = chosen.ret.ty;
         i32 facts = factsOf(chosen);
         lastChosen = chosen;
-        return (rty, facts);
+        retFacts = facts;
+        return rty;
     }
 
     // base.m() und M::m(): genau die gewählte Fassung (nicht virtuell)
@@ -4608,7 +4689,8 @@ private:
             err(line, col, "R-7.5", dn + " has no parameterless constructor");
             return t;
         }
-        (shared Ty r, i32 f) = invoke(cands, args, line, col, 2, Ty::error(), dn);
+        shared Ty r = invoke(cands, args, line, col, 2, Ty::error(), dn);
+        i32 f = retFacts;
         Target ct = Target::ofDef(TargetKind::Ctor, d, -1);
         MethodInfo? lc = take(mut lastChosen);
         if (lastTarget != null && lc != null) {
