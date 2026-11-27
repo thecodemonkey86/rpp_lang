@@ -58,6 +58,8 @@ Passen auf derselben Stufe 5 zwei Namen (zwei `using`-Zeilen mit demselben Namen
 | `dependencies` | nein | Liste von Abhängigkeiten (R-11.15) |
 | `registry` | nein | Adresse eines eigenen oder gespiegelten Verzeichnisses statt des zentralen; bis es den Dienst gibt, ein Ordner im Dateisystem relativ zum Projektverzeichnis (R-11.26) |
 | `symbols` | nein | eigene Symbole für die bedingte Kompilierung, je Modus: `debug: [ … ]`, `release: [ … ]` |
+| `native` | nein | `true`, wenn das Projekt `extern`-Klassen und Handle-Typen deklarieren darf (R-15.13); Standard `false` |
+| `nativePaths` | nein | Liste von Ordnern relativ zum Projektverzeichnis, in denen C-Bibliotheken zuerst gesucht werden (R-15.4) |
 
 Unbekannte Einträge sind ein Fehler. Die Datei verwendet nur die YAML-Formen, die für diese Einträge nötig sind (Zuordnungen, Listen, einfache Werte und Kommentare).
 
@@ -72,6 +74,8 @@ dependencies:
   - name: acme.json          # aus dem Verzeichnis, Mindestversion
     version: "1.4"
 ```
+
+Eine Abhängigkeit auf eine Bibliothek, die C-Code mitbringt, braucht zusätzlich `allowNative: true` (R-15.14).
 
 **R-11.16 (Zyklenfreiheit).** Der Graph der Abhängigkeiten zwischen Projekten ist zyklenfrei; ein Zyklus ist ein Fehler.
 
@@ -110,7 +114,7 @@ libraries:
     checksum: sha256:…
 ```
 
-Der Befehl `lock` (`rppc lock PROJEKT`, `rppcc lock PROJEKT`) wählt nach R-11.28, ohne eine vorhandene Sperrdatei zu lesen, und schreibt sie neu, die Einträge nach Namen sortiert; dieselbe Eingabe ergibt dieselbe Datei. Gibt es beim Übersetzen eine `rpp.lock`, gehört zu jeder Anforderung die gesperrte Version, auch wenn sie inzwischen zurückgezogen ist (R-11.21); sie muss die Mindestversion erfüllen und dieselbe Hauptversion haben. Fehler sind dann: eine Anforderung ohne Eintrag oder mit einem Eintrag, der sie nicht erfüllt; ein Eintrag, den keine Anforderung nennt; eine Prüfsumme, die nicht zum Ordner passt (R-11.20); eine Sperrdatei, die nicht diese Form hat. Ohne `rpp.lock` wird nach R-11.28 gewählt. Sperrdateien von Bibliotheken werden nicht gelesen.
+Der Befehl `lock` (`rppc lock PROJEKT`, `rppcc lock PROJEKT`) wählt nach R-11.28, ohne eine vorhandene Sperrdatei zu lesen, und schreibt sie neu, die Einträge nach Namen sortiert; dieselbe Eingabe ergibt dieselbe Datei. Gibt es beim Übersetzen eine `rpp.lock`, gehört zu jeder Anforderung die gesperrte Version, auch wenn sie inzwischen zurückgezogen ist (R-11.21); sie muss die Mindestversion erfüllen und dieselbe Hauptversion haben. Fehler sind dann: eine Anforderung ohne Eintrag oder mit einem Eintrag, der sie nicht erfüllt; ein Eintrag, den keine Anforderung nennt; eine Prüfsumme, die nicht zum Ordner passt (R-11.20); eine Sperrdatei, die nicht diese Form hat. Ohne `rpp.lock` wird nach R-11.28 gewählt. Sperrdateien von Bibliotheken werden nicht gelesen. Der Eintrag einer Bibliothek mit `native: true` enthält zusätzlich die Zeile `native: true` nach `checksum` (R-15.15).
 
 **R-11.31 (Veröffentlichen und Zurückziehen).** `rppcc publish [--registry VERZEICHNIS] PROJEKT` veröffentlicht eine Bibliothek in das angegebene Verzeichnis, sonst in das aus `registry` des Projekts, sonst in das aus `RPP_REGISTRY`. Verlangt sind der Typ `library`, ein Name `besitzer.name`, eine gültige Version, keine Abhängigkeit mit `path` und eine fehlerfreie Prüfung; eine schon vorhandene Version ist ein Fehler. Die exportierte Schnittstelle (exportierte Typen mit ihren `public`- und `protected`-Teilen, R-11.10) wird mit der nächstniedrigeren veröffentlichten Version verglichen. Entfallen oder ändern sich Teile, muss die Hauptversion steigen; kommen nur Teile hinzu, mindestens die Nebenversion (R-11.21). Kopiert werden `rpp.yaml` und die Quelldateien, die der Compiler lädt. `rppcc withdraw [--registry VERZEICHNIS] NAME VERSION` legt die Markierung aus R-11.26 an.
 

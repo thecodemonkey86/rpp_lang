@@ -32,6 +32,7 @@ All determinations have been decided (see “R++ Design Decisions”, Sections 1
 | Destructor | an exception leaves a destructor (V-11) | both | `DestructorError` |
 | Abortion | Call of `fail(text)` (R-9.19) | both | `FailError` |
 | Resources | Stack overflow, missing memory (Chapter 12, R-12.10) | both | `StackOverflowError`, `OutOfMemoryError` |
+| C interop | an argument or result that cannot be converted, a missing library or a missing symbol at start (Chapter 15) | both (missing library in release mode: build error, R-12.5) | `NativeError` |
 
 **R-9.3 (Speaking in other chapters).** Where chapters 4 to 8 say for these checks that “an exception is thrown”, a program error is meant after R-9.2. Program errors are not classes; their names (`IndexError`, `OverflowError`, `BorrowError`, etc.) appear only in the error message.
 

@@ -42,10 +42,11 @@ Nicht beobachtbar sind Laufzeit, Speicherverbrauch, Adressen von Objekten und di
 | Stacktrace in Meldungen | immer | der Implementierung überlassen | R-9.16 |
 | Stacküberlauf, Speichermangel | Programmfehler | Programmfehler, aber an anderer Stelle möglich | R-12.10 |
 | Code in `#if debug` bzw. `#if release` | aktiv | inaktiv bzw. umgekehrt | R-11.24 |
+| Fehlende C-Bibliothek oder fehlendes Symbol | Programmfehler vor `main` (`NativeError`) | Fehler beim Bauen | R-15.12 |
 
 Weil Programmfehler nicht gefangen werden können (Kapitel 9), führt keiner dieser Unterschiede dazu, dass ein Programm in beiden Modi verschiedene `catch`-Zweige nimmt.
 
-**R-12.6 (Kein undefiniertes Verhalten).** Für jedes übersetzte Programm legt die Spezifikation das beobachtbare Verhalten fest, bis auf die Punkte in R-12.5. Es gibt kein undefiniertes Verhalten: keine ungültigen Speicherzugriffe (Kapitel 5), keine Null-Dereferenzierung (Kapitel 6), keine uninitialisierten Werte (R-4.46), eine feste Auswertungsreihenfolge (R-8.2) und festgelegtes Verhalten bei Überlauf.
+**R-12.6 (Kein undefiniertes Verhalten).** Für jedes übersetzte Programm legt die Spezifikation das beobachtbare Verhalten fest, bis auf die Punkte in R-12.5. Es gibt kein undefiniertes Verhalten: keine ungültigen Speicherzugriffe (Kapitel 5), keine Null-Dereferenzierung (Kapitel 6), keine uninitialisierten Werte (R-4.46), eine feste Auswertungsreihenfolge (R-8.2) und festgelegtes Verhalten bei Überlauf. Für Programme mit C-Code gilt das nur unter den Bedingungen aus R-15.16.
 
 **R-12.7 (Gleitkomma).** Gleitkommaoperationen werden in beiden Modi bitgenau nach IEEE 754 ausgeführt: jede Operation einzeln mit Rundung zum nächsten Wert, ohne Zusammenfassen zu einer FMA-Operation und ohne erweiterte Zwischengenauigkeit. Debug und Release liefern dieselben Bits. Mathematische Funktionen der Standardbibliothek (soweit vorhanden) liefern in beiden Modi dieselben Ergebnisse.
 

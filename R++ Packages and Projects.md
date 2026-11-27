@@ -58,6 +58,8 @@ If two names (two `using` lines with the same name) fit on the same level 5, thi
 | `dependencies` | No | List of dependencies (R-11.15) |
 | `registry` | No | Address of own or mirrored directory instead of the central; until the service exists, a directory in the file system relative to the project directory (R-11.26) |
 | `symbols` | No | Specific conditional compilation symbols, per mode: `debug: [ … ]` `release: [ … ]` |
+| `native` | No | `true` if the project may declare `extern` classes and handle types (R-15.13); default `false` |
+| `nativePaths` | No | List of folders relative to the project directory that are searched first for C libraries (R-15.4) |
 
 Unknown entries are an error, and the file uses only the YAML forms that are necessary for these entries (mappings, lists, simple values and comments).
 
@@ -72,6 +74,8 @@ dependencies:
   - name: acme.json          # Minimum version from the registry
     version: "1.4"
 ```
+
+A dependency on a library that brings C code additionally needs `allowNative: true` (R-15.14).
 
 **R-11.16 (Cycle freedom).** The graph of dependencies between projects is cycle-free; a cycle is an error.
 
@@ -110,7 +114,7 @@ libraries:
     checksum: sha256:…
 ```
 
-The `lock` command (`rppc lock PROJECT`, `rppcc lock PROJECT`) selects according to R-11.28 without reading an existing lock file and rewrites it with the entries sorted by name; the same input gives the same file. If an `rpp.lock` exists when compiling, each requirement gets the locked version, even if it has been withdrawn since (R-11.21); it must satisfy the minimum version and have the same major version. Errors are then: a requirement without an entry or with an entry that does not satisfy it; an entry that no requirement names; a checksum that does not match the directory (R-11.20); a lock file that does not have this form. Without `rpp.lock`, selection follows R-11.28. Lock files of libraries are not read.
+The `lock` command (`rppc lock PROJECT`, `rppcc lock PROJECT`) selects according to R-11.28 without reading an existing lock file and rewrites it with the entries sorted by name; the same input gives the same file. If an `rpp.lock` exists when compiling, each requirement gets the locked version, even if it has been withdrawn since (R-11.21); it must satisfy the minimum version and have the same major version. Errors are then: a requirement without an entry or with an entry that does not satisfy it; an entry that no requirement names; a checksum that does not match the directory (R-11.20); a lock file that does not have this form. Without `rpp.lock`, selection follows R-11.28. Lock files of libraries are not read. The entry of a library with `native: true` additionally contains the line `native: true` after `checksum` (R-15.15).
 
 **R-11.31 (Publishing and withdrawing).** `rppcc publish [--registry DIR] PROJECT` publishes a library to the given registry, otherwise to the one from the project's `registry`, otherwise to the one from `RPP_REGISTRY`. It requires the type `library`, a name `owner.name`, a valid version, no dependency with `path`, and a check without errors; a version that already exists is an error. The exported interface (exported types with their `public` and `protected` parts, R-11.10) is compared with the next lower published version. If parts are removed or changed, the major version must increase; if parts are only added, at least the minor version (R-11.21). `rpp.yaml` and the source files that the compiler loads are copied. `rppcc withdraw [--registry DIR] NAME VERSION` creates the marker from R-11.26.
 

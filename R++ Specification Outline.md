@@ -29,6 +29,7 @@ Draft 0.47, 22 November 2026. This document lays out the chapters of the R++ lan
 | 12 | [Execution Model](R%2B%2B%20Execution%20Model.md) | Debug and release mode, allowed differences | Draft 0.1 (“R++ Execution Model”), Rules R-12.1 to R-12.12 |
 | 13 | [Standard Library](R%2B%2B%20Standard%20Library.md) | Minimum size: `string`, Arrays, Exceptions, `Func` | Draft 0.8 ("R++ Standard Library"), first cut for self-translation, everything decided; extension with `rpp.random`, `Vectors`, `rpp.math`, `Text`, file operations, `Deque`/`getOrPut` (sections 9–15) |
 | 14 | [Conformance Tests](R%2B%2B%20Conformance%20Tests.md) | Structure of the test suite, assignment to rules | Draft 0.2 ("R++ Conformance Tests"), all rules named or justified |
+| 15 | [C Interop](R%2B%2B%20C%20Interop.md) | `extern` classes, handles, types across the boundary, safety boundary | Draft 0.1 ("R++ C Interop"), rules R-15.1 to R-15.17, amendments V-15.1 to V-15.9 adopted |
 
 ## 2. Lexical structure
 
@@ -45,7 +46,7 @@ Reserved words:
 
 ```
 abstract as base bool break byte case cast catch char class const
-constructor continue copy default destructor discard do else enum export f32 f64 false
+constructor continue copy default destructor discard do else enum export extern f32 f64 false
 finally for i8 i16 i32 i64 if import mixin mut new nodiscard null override own package
 private protected public ref return shared static string switch this throw
 true try ui8 ui16 ui32 ui64 using var virtual void weak while

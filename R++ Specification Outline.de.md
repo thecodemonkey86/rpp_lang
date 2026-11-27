@@ -29,6 +29,7 @@ Stand: 22.11.2026, Entwurf 0.47. Grundlage ist das Dokument „R++ Designentsche
 | 12 | [Ausführungsmodell](R%2B%2B%20Execution%20Model.de.md) | Debug- und Releasemodus, zulässige Unterschiede | Entwurf 0.1 („R++ Ausführungsmodell“), Regeln R-12.1 bis R-12.12 |
 | 13 | [Standardbibliothek](R%2B%2B%20Standard%20Library.de.md) | Mindestumfang: `string`, Arrays, Exceptions, `Func` | Entwurf 0.8 („R++ Standardbibliothek“), erster Schnitt für Selbstübersetzung, alles entschieden; Ausbau mit `rpp.random`, `Vectors`, `rpp.math`, `Text`, Datei-Operationen, `Deque`/`getOrPut` (Abschnitte 9–15) |
 | 14 | [Konformitätstests](R%2B%2B%20Conformance%20Tests.de.md) | Aufbau der Testsuite, Zuordnung zu Regeln | Entwurf 0.2 („R++ Konformitätstests“), alle Regeln genannt oder begründet |
+| 15 | [C-Anbindung](R%2B%2B%20C%20Interop.de.md) | `extern`-Klassen, Handles, Typen über die Grenze, Sicherheitsgrenze | Entwurf 0.1 („R++ C-Anbindung“), Regeln R-15.1 bis R-15.17, Ergänzungen V-15.1 bis V-15.9 angenommen |
 
 ## 2. Lexikalische Struktur
 
@@ -45,7 +46,7 @@ Reservierte Wörter:
 
 ```
 abstract as base bool break byte case cast catch char class const
-constructor continue copy default destructor discard do else enum export f32 f64 false
+constructor continue copy default destructor discard do else enum export extern f32 f64 false
 finally for i8 i16 i32 i64 if import mixin mut new nodiscard null override own package
 private protected public ref return shared static string switch this throw
 true try ui8 ui16 ui32 ui64 using var virtual void weak while

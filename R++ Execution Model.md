@@ -42,10 +42,11 @@ Unobservable are runtime, memory usage, addresses of objects, and the sequence o
 | Stacktrace in messages | always | Leave to implementation | R-9.16 |
 | Stack overflow, storage deficiency | Program error | Program error, but possible elsewhere | R-12.10 |
 | Code in `#if debug` or `#if release` | Active | Inactive or vice versa | R-11.24 |
+| Missing C library or missing symbol | Program error before `main` (`NativeError`) | Build error | R-15.12 |
 
 Because program errors cannot be caught (Chapter 9), none of these differences will cause a program to take different `catch` branches in both modes.
 
-**R-12.6 (No undefined behavior).** For each translated program, the specification specifies the observable behavior, except for the points in R-12.5. There is no undefined behavior: no invalid memory accesses (chapter 5), no zero dereference (chapter 6), no uninitialized values (R-4.46), a fixed evaluation order (R-8.2) and defined behavior at overflow.
+**R-12.6 (No undefined behavior).** For each translated program, the specification specifies the observable behavior, except for the points in R-12.5. There is no undefined behavior: no invalid memory accesses (chapter 5), no zero dereference (chapter 6), no uninitialized values (R-4.46), a fixed evaluation order (R-8.2) and defined behavior at overflow. For programs with C code, this holds only under the conditions of R-15.16.
 
 **R-12.7 (floating-point).** Floating point operations are executed bit-accurately according to IEEE 754 in both modes: each operation individually with rounding to the next value, without summarizing to an FMA operation and without extended intermediate accuracy. Debug and release deliver the same bits. Mathematical functions of the standard library (if available) deliver the same results in both modes.
 

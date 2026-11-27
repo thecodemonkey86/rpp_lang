@@ -32,6 +32,7 @@ Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschn
 | Destruktor | eine Exception verlässt einen Destruktor (V-11) | beide | `DestructorError` |
 | Abbruch | Aufruf von `fail(text)` (R-9.19) | beide | `FailError` |
 | Ressourcen | Stacküberlauf, fehlender Speicher (Kapitel 12, R-12.10) | beide | `StackOverflowError`, `OutOfMemoryError` |
+| C-Anbindung | ein Argument oder Ergebnis, das sich nicht umwandeln lässt, eine fehlende Bibliothek oder ein fehlendes Symbol beim Start (Kapitel 15) | beide (fehlende Bibliothek im Releasemodus: Fehler beim Bauen, R-12.5) | `NativeError` |
 
 **R-9.3 (Sprechweise in anderen Kapiteln).** Wo die Kapitel 4 bis 8 für diese Prüfungen sagen, dass „eine Exception geworfen wird“, ist ein Programmfehler nach R-9.2 gemeint. Programmfehler sind keine Klassen; ihre Namen (`IndexError`, `OverflowError`, `BorrowError` usw.) erscheinen nur in der Fehlermeldung.
 
