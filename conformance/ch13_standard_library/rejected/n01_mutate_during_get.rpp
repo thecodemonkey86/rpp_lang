@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 13 – muss abgelehnt werden.
+// Regel: R-5.24, R-13.17
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (table ist durch den Borrow s lesend geliehen).
+package conformance.ch13;
+using rpp.collections.Map;
+using rpp.collections.Entry;
+
+class Symbol {
+public:
+    string name;
+    i32 uses = 0;
+    constructor(string n) { this.name = n; }
+    void use() mut { uses++; }
+}
+
+class T {
+public:
+    void m(mut Map<string, Symbol> table) {
+        ref Symbol? s = table.get("a");
+        table.put("b", new Symbol("b")); // FEHLER
+        if (s != null) {
+            print(s.name);
+        }
+    }
+}

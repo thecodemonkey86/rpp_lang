@@ -1,0 +1,37 @@
+// Konformitätstest Kapitel 9 – muss abgelehnt werden.
+// Regel: R-9.17
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (g ist möglicherweise schon im try verschoben).
+package conformance.ch09;
+using rpp.core.Exception;
+
+class ParseError : Exception {
+public:
+    i64 line;
+    constructor(string message, i64 line) : base(message) {
+        this.line = line;
+    }
+}
+
+class SyntaxError : ParseError {
+public:
+    constructor(string message) : base(message, 0) { }
+}
+
+class Foo {
+public:
+    void run() { }
+}
+
+class T {
+public:
+    void consume(own Foo f) { }
+    void m() {
+        Foo g = new Foo();
+        try {
+            consume(g);
+            print("x");
+        } catch (Exception e) {
+            g.run(); // FEHLER
+        }
+    }
+}

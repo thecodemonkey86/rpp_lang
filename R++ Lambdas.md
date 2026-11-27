@@ -1,82 +1,84 @@
-# R++ Lambdas und Funktionstypen (Kapitel 10)
+# R++ Lambdas and Function Types (Chapter 10)
 
-Stand: 21.11.2026, Entwurf 0.1. Dieses Dokument füllt Kapitel 10 des „R++ Spezifikationsgerüsts“. Es regelt Lambdas, das Erfassen von Variablen und Funktionstypen. Die Typregeln für `Func` stehen in Kapitel 4 (R-4.37, R-4.38); wie Erfassen auf Borrows und Moves abgebildet wird, in Kapitel 5 (Abschnitt 7); Verengung in Lambdas in Kapitel 6 (R-6.13).
+[Deutsch](R%2B%2B%20Lambdas.de.md)
 
-Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschnitte 11 und 23). Jede normative Regel trägt eine Nummer `R-10.n`. Die Konformitätstests liegen in `konformitaet/kap10_lambdas/`.
+Draft 0.1, 21 November 2026. Chapter 10 specifies lambdas, variable capture, and function types. See R-4.37 and R-4.38 for `Func`, Chapter 5 Section 7 for the mapping from captures to borrows and moves, and R-6.13 for narrowing in lambdas.
 
-## 1. Überblick
+The decisions for this chapter appear in Sections 11 and 23 of the design decisions. Rule numbers follow the form `R-10.n`. Tests are in `conformance/ch10_lambdas/`.
 
-| | Normales Lambda | `own`-Lambda |
+## 1. Overview
+
+| | Ordinary Lambda | `own` Lambda |
 |---|---|---|
-| Schreibweise | `(i32 x) => x + offset` | `own (i32 x) => x + offset` |
-| Erfasst | per Borrow, lesend oder veränderbar | per Wert: Kopie, geteilt oder verschoben |
-| Darf stehen | nur als Argument eines Aufrufs oder direkt aufgerufen | überall, wo ein `Func`-Wert stehen darf |
-| Lebensdauer | bis zum Ende des Aufrufs | wie jeder `own`-Wert |
-| Typische Verwendung | `list.forEach(…)`, `sort(…)` | Rückrufe speichern, Funktionen zurückgeben |
+| Syntax | `(i32 x) => x + offset` | `own (i32 x) => x + offset` |
+| Captures | By read-only or mutable borrow | By value, copying, sharing, or moving as appropriate |
+| Where allowed | As a call argument or in a direct call | Anywhere a `Func` value is allowed |
+| lifetime | until the end of the call | Like any `own` value |
+| Typical use | `list.forEach(…)`, `sort(…)` | Store callbacks or return functions |
 
 ## 2. Lambdas
 
-**R-10.1 (Schreibweise).** Ein Lambda besteht aus einer Parameterliste mit Typen, `=>` und einem Rumpf: einem Ausdruck oder einem Block. Ein vorangestelltes `own` macht es zu einem `own`-Lambda. Parameter tragen dieselben Markierungen wie Methodenparameter: ohne Markierung lesend geliehen, `mut` veränderbar geliehen, `own` übernommen. Eine Capture-Liste gibt es nicht.
+**R-10.1 (Syntax).** A lambda consists of a typed parameter list, `=>`, and a body that is either an expression or a block. An initial `own` makes it an `own` lambda. Parameters use the same markers as method parameters. The default is a read-only borrow, `mut` is a mutable borrow, and `own` takes ownership. There is no explicit capture list.
 
-**R-10.2 (Ausdrucksebene).** Ein Lambda steht auf Ausdrucksebene; sein Rumpf reicht bis zum Ende des umgebenden Ausdrucks. Als Operand oder für einen direkten Aufruf wird es geklammert: `((i32 a) => a)(3)` (Gerüst, Abschnitt 3.1).
+**R-10.2 (Expression syntax).** A lambda body extends to the end of the enclosing expression. Parenthesize a lambda used as an operand or called directly, as in `((i32 a) => a)(3)` (Specification Outline, Section 3.1).
 
-**R-10.3 (Rückgabetyp).** Bei einem Ausdrucksrumpf ist der Rückgabetyp der Typ des Ausdrucks; ist dieser `void`, ist der Rückgabetyp `void`. Bei einem Blockrumpf ist er der gemeinsame Typ aller `return`-Werte nach den Regeln für `? :` (R-8.9); ohne `return` mit Wert ist er `void`. Ist ein `Func`-Typ erwartet, wird das Lambda gegen ihn geprüft, und Literale passen sich an den erwarteten Rückgabetyp an.
+**R-10.3 (Return type).** An expression-bodied lambda returns the type of its expression, including `void`. A block-bodied lambda returns the common type of its `return` values under the rules for `? :` (R-8.9). Without a value-bearing `return`, the type is `void`. If a `Func` type is expected, the compiler checks the lambda against it and types its literals using the expected return type.
 
-**R-10.4 (Typ ohne Kontext).** Steht ein Lambda ohne erwarteten Funktionstyp, etwa in `var f = own (i32 x) => x + 1;`, bekommt es den Typ `Func<P₁, …, Pₙ, R>` aus seinen Parametertypen und dem Rückgabetyp nach R-10.3. Ein normales Lambda kann so nicht stehen, weil es nur Argument sein oder direkt aufgerufen werden darf (R-10.7).
+**R-10.4 (Type without context).** Without an expected function type, an `own` lambda such as `var f = own (i32 x) => x + 1;` has type `Func<P₁, …, Pₙ, R>`, inferred from its parameter types and the return type in R-10.3. Ordinary lambdas can appear as call arguments or direct callees (R-10.7).
 
-**R-10.5 (Rumpf).** Im Rumpf gelten dieselben Regeln wie in einem Methodenrumpf: sichere Rückgabe (R-8.26), unbenutzte Ergebnisse (R-8.13), Exceptions (Kapitel 9). `return` verlässt nur das Lambda, nicht die umgebende Methode. `break` und `continue` können das Lambda nicht verlassen. Ein Lambda liefert nie einen Borrow (Kapitel 5, V-4).
+**R-10.5 (Body).** A lambda body follows the method-body rules for definite return (R-8.26), unused results (R-8.13), and exceptions (Chapter 9). `return` exits the lambda. `break` and `continue` cannot leave the lambda. A lambda cannot return a borrow (Chapter 5, V-4).
 
-## 3. Erfassen
+## 3. Capture
 
-**R-10.6 (Was erfasst wird).** Ein Lambda erfasst jede lokale Variable und jeden Parameter der umgebenden Methode, die es im Rumpf verwendet, außerdem `this`, wenn es `this` oder Member ohne Objekt verwendet.
+**R-10.6 (What is captured).** A lambda captures every local variable and parameter of the enclosing method that its body uses. It also captures `this` if it refers to `this` or accesses a member without an explicit receiver.
 
-**R-10.7 (Normales Lambda).** Ein normales Lambda erfasst per Borrow:
-- **veränderbar**, wenn der Rumpf der Variable etwas zuweist, sie veränderbar leiht (`mut x`) oder eine `mut`-Methode auf ihr aufruft, und dasselbe für ihre Felder;
-- sonst **lesend**.
+**R-10.7 (Ordinary lambdas).** An ordinary lambda captures by borrow.
+- A **mutable borrow** is used if the body assigns to the variable, borrows it with `mut x`, or calls a `mut` method on it. The same applies to operations on its fields.
+- Other captures are **read-only borrows**.
 
-Ein normales Lambda darf nur als Argument eines Aufrufs stehen oder geklammert direkt aufgerufen werden (`((i32 v) => v + 1)(3)`). Seine Borrows gelten für die Dauer dieses Aufrufs und gehen in die Loan-Prüfung des Aufrufs ein wie Borrow-Argumente (Kapitel 5, R-5.9 und R-5.10). `sort(mut list, (Foo a, Foo b) => a.x < list.length)` ist deshalb ein Fehler, weil `list` zugleich veränderbar und lesend geliehen würde.
+An ordinary lambda may appear only as an argument or in a direct call such as `((i32 v) => v + 1)(3)`. Its borrows last for the call and participate in loan checking alongside borrowed arguments (R-5.9 and R-5.10). `sort(mut list, (Foo a, Foo b) => a.x < list.length)` is an error because `list` would be borrowed both mutably and read-only at the same time.
 
-**R-10.8 (`own`-Lambda).** Ein `own`-Lambda erfasst per Wert, und zwar in dem Moment, in dem der Lambda-Ausdruck ausgewertet wird:
-- primitive Werte werden kopiert,
-- Strings und `shared`-Werte werden geteilt (Zähler + 1), `weak`-Werte kopiert,
-- `own`-Werte werden hineinverschoben; die Variable ist danach verschoben (Kapitel 5, R-5.3).
+**R-10.8 (`own` lambdas).** An `own` lambda captures by value when the lambda expression is evaluated.
+- Copy primitive values.
+- Share strings and `shared` values, incrementing the reference count. Copy `weak` values.
+- Move `own` values into the lambda. The source variable becomes moved (R-5.3).
 
-Spätere Änderungen an der Variable sieht das Lambda nicht.
+Later assignments to the original variable do not affect the captured value.
 
-**R-10.9 (Keine Borrows per Wert).** Ein `own`-Lambda kann keine Variable erfassen, die nur einen Borrow auf ein Objekt hält: Parameter ohne `own`, `ref`-Variablen, Schleifenelemente und Variablen aus Borrow-Blöcken. Ein Borrow lässt sich weder kopieren noch verschieben; man schreibt vorher `copy(x)`. Für primitive Werte, Strings und `shared`-Werte gilt das nicht.
+**R-10.9 (Borrows cannot be captured by value).** An `own` lambda cannot capture a variable holding only a borrow of an object. Examples include parameters without `own`, `ref` variables, loop elements, and variables from borrow blocks. Use `copy(x)` first to make an owned copy. This restriction leaves primitive values, strings, and `shared` values eligible for capture.
 
-**R-10.10 (Kein this in `own`-Lambdas).** Ein `own`-Lambda darf `this` weder direkt noch indirekt (über Member ohne Objekt) verwenden, denn `this` ist ein Borrow. Man holt die benötigten Werte vorher in lokale Variablen.
+**R-10.10 (`this` in `own` lambdas).** An `own` lambda cannot use `this` directly or through an implicit member receiver because `this` is a borrow.
 
-**R-10.11 (Unveränderlich).** Im Rumpf eines `own`-Lambdas sind die erfassten Werte unveränderlich: keine Zuweisung an eine erfasste Variable, und auf einem erfassten `own`-Objekt weder `mut`-Borrow noch `mut`-Methode. Ein Aufruf verändert das Lambda deshalb nie. Ausgenommen sind Objekte hinter einem erfassten `shared`-Verweis: Sie bleiben veränderbar, wie über jeden `shared`-Verweis (Kapitel 5, V-1 und V-8, mit Laufzeitprüfung). Veränderlichen Zustand hält man deshalb in einem erfassten `shared`-Objekt.
+**R-10.11 (Immutable captures).** An `own` lambda cannot assign to a captured variable. It cannot borrow a captured `own` object mutably or call its `mut` methods, so calls leave the lambda unchanged. Captured `shared` objects retain their normal runtime-checked mutability (Chapter 5, V-1 and V-8). A lambda can hold mutable state in such an object.
 
-**R-10.12 (Verengung).** Eine verengte Variable ist auch im Lambda verengt (Kapitel 6, R-6.13).
+**R-10.12 (Narrowing).** A captured variable that is narrowed at the lambda expression is also narrowed inside the lambda (R-6.13).
 
-## 4. Funktionstypen und Funktionswerte
+## 4. Function Types and Function Values
 
-**R-10.13 (Func).** `Func<P₁, …, Pₙ, R>` ist der Typ einer Funktion mit den Parametern `P₁ … Pₙ` und dem Rückgabetyp `R`. Für die Parameter gelten die Markierungen aus R-10.1: `Func<Foo, void>` leiht lesend, `Func<mut Foo, void>` veränderbar, `Func<own Foo, void>` übernimmt. `mut` ist nur an Parametern von `Func` erlaubt, nicht am Rückgabetyp und nicht in anderen generischen Typen. `void` steht nur an letzter Stelle. Funktionstypen sind strukturell und invariant (R-4.37).
+**R-10.13 (Func).** `Func<P₁, …, Pₙ, R>` describes a function with parameters `P₁ … Pₙ` and return type `R`. Its parameters use the markers from R-10.1. `Func<Foo, void>` borrows read-only, `Func<mut Foo, void>` borrows mutably, and `Func<own Foo, void>` takes ownership. `mut` is allowed only for parameters of `Func`. `void` is allowed only as the final type argument. Function types are structural and invariant (R-4.37).
 
-**R-10.14 (Passen).** Ein Lambda passt zu `Func<P₁, …, Pₙ, R>`, wenn es `n` Parameter mit genau den Typen und Markierungen `Pᵢ` hat und sein Rückgabewert in `R` umgewandelt werden kann (bei `R = void`: kein Wert).
+**R-10.14 (Matching a function type).** A lambda matches `Func<P₁, …, Pₙ, R>` if it has `n` parameters with exactly the types and markers `Pᵢ`, and its return value can be converted to `R`. For `R = void`, it must return no value.
 
-**R-10.15 (Funktionswerte).** Ein Wert vom Typ `Func<…>` ist ein `own`-Objekt; er entsteht nur aus einem `own`-Lambda. Zuweisen und Übergeben an einen `own`-Parameter verschieben ihn. Er kann `shared` werden (`shared Func<i32, i32> f = …;`), aber nicht kopiert werden (`copy(f)` ist ein Fehler).
+**R-10.15 (Function values).** Only `own` lambdas create owned objects of type `Func<…>`. Assignment to an owner or passing the object to an `own` parameter moves it. The object can be shared (`shared Func<i32, i32> f = …;`). `copy(f)` is an error.
 
-**R-10.16 (Parameter vom Typ Func).** Ein Parameter `Func<…> f` ohne Markierung nimmt ein normales Lambda, ein `own`-Lambda oder einen vorhandenen Funktionswert als lesenden Borrow. Die Methode darf `f` beliebig oft aufrufen und als Argument weitergeben, aber nicht speichern oder zurückgeben. Ein Parameter `own Func<…> f` nimmt nur `own`-Lambdas und Funktionswerte; die Methode besitzt sie danach.
+**R-10.16 (Parameters of type Func).** A parameter `Func<…> f` takes an ordinary lambda, an `own` lambda, or an existing function value as a read-only borrow. The method may call `f` any number of times or pass it as an argument. It cannot store or return it. An `own Func<…> f` parameter takes ownership and accepts only `own` lambdas and function values.
 
-**R-10.17 (Aufruf).** Ein Funktionswert wird mit `f(a₁, …, aₙ)` aufgerufen, auch als Feld (`this.handler(x)`) oder Parameter. Die Argumente folgen den Regeln für Methodenaufrufe (Kapitel 5 und 8). Ein Aufruf liest den Funktionswert nur und ist über jeden Borrow möglich. Liefert er einen Wert, gilt R-8.13 (unbenutztes Ergebnis ist ein Fehler, `discard` verwirft).
+**R-10.17 (Calling a function value).** Use `f(a₁, …, aₙ)` for a variable or parameter, or call a field such as `this.handler(x)`. Arguments follow the method-call rules (Chapters 5 and 8). R-8.13 requires a result to be used or explicitly discarded with `discard`.
 
-**R-10.18 (Überladen).** Ein Lambda-Argument passt bei der Auflösung überladener Methoden mit Rang „genau“, wenn es nach R-10.14 zum Parametertyp passt; sonst kommt die Variante nicht in Frage (Kapitel 7, R-7.17).
+**R-10.18 (Overloading).** A lambda argument is an exact match for an overload if it matches the parameter type under R-10.14. Otherwise the candidate is inapplicable (R-7.17).
 
-## 5. Beispiel
+## 5. Example
 
 ```
 class Button {
 private:
-    Func<void>? onClick;              // gespeicherter Rückruf: nur own-Lambdas
+    Func<void>? onClick;              // Stored callback: own lambdas only
 public:
     void setHandler(own Func<void> f) mut {
         this.onClick = f;
     }
     void click() {
-        ref Func<void>? h = this.onClick;   // nullbares own-Feld mit ref holen (R-6.15)
+        ref Func<void>? h = this.onClick;   // Borrow the nullable own field with ref (R-6.15)
         if (h != null) {
             h();
         }
@@ -88,26 +90,26 @@ public:
     void run(mut Foo[] list, mut Button b, shared Counter c) {
         i32 limit = 10;
         i32 sum = 0;
-        list.forEach((Foo f) => { if (f.x < limit) { sum += f.x; } });   // limit lesend, sum veränderbar geliehen
+        list.forEach((Foo f) => { if (f.x < limit) { sum += f.x; } });   // Read-only borrow of limit, mutable borrow of sum
         list.forEach((mut Foo f) => f.bump());                            // Func<mut Foo, void>
-        b.setHandler(own () => { c.increment(); });                       // c wird geteilt
+        b.setHandler(own () => { c.increment(); });                       // Shares c
         var square = own (i32 x) => x * x;                                // Func<i32, i32>
         i32 n = square(4);
     }
 }
 ```
 
-`click` zeigt das Zusammenspiel mit Kapitel 5 und 6: `Func<void>? h = this.onClick;` wäre ein Move aus dem Feld; zum Aufrufen holt man das nullbare Feld deshalb mit `ref` und prüft es. In `run` verändert das `own`-Lambda den Zähler über den erfassten `shared`-Verweis `c` (R-10.11).
+`click` shows the interplay with chapters 5 and 6: `Func<void>? h = this.onClick;` would be a move from the field; therefore, to call it, get the nullable field `ref` and check it. `run` In the `own` lambda changes the counter via the detected `shared` reference `c` (R-10.11).
 
-## 6. Konformitätstests
+## 6. Conformance tests
 
-Die Testprogramme liegen in `konformitaet/kap10_lambdas/`; geprüft werden sie mit `rppc test` (erste Implementierung, Meilenstein M3).
+The test programs are in `conformance/ch10_lambdas/`; they are tested with `rppc test` (first implementation, milestone M3).
 
-| Regeln | Akzeptiert | Abgelehnt |
+| Rules | Accepted | Rejected |
 |---|---|---|
-| R-10.3, R-10.4 Rückgabetyp, `var` | `a01_grundlagen.rpp` | `n01_normales_lambda_in_var.rpp`, `n02_rueckgabe_passt_nicht.rpp` |
-| R-10.5 Rumpf | `a01_grundlagen.rpp` | `n03_break_aus_lambda.rpp` |
-| R-10.7 normales Lambda | `a02_erfassen.rpp` | `n04_normales_lambda_speichern.rpp`, `n05_loan_konflikt.rpp` |
-| R-10.8 – R-10.11 `own`-Lambda | `a02_erfassen.rpp` | `n06_borrow_per_wert.rpp`, `n07_this_im_own_lambda.rpp`, `n08_erfasst_veraendern.rpp`, `n09_nach_erfassen_verschoben.rpp` |
-| R-10.13, R-10.14 Func | `a03_funktionstypen.rpp` | `n10_mut_am_rueckgabetyp.rpp`, `n11_mut_in_anderem_typ.rpp`, `n12_parameter_passt_nicht.rpp` |
-| R-10.15 – R-10.17 Funktionswerte | `a03_funktionstypen.rpp` | `n13_func_kopieren.rpp`, `n14_parameter_speichern.rpp`, `n15_ergebnis_unbenutzt.rpp` |
+| R-10.3 R-10.4 Return type, `var` | `a01_basics.rpp` | `n01_non_own_lambda_in_var.rpp`, `n02_return_type_mismatch.rpp` |
+| R-10.5 Tortoise | `a01_basics.rpp` | `n03_break_from_lambda.rpp` |
+| R-10.7 Normal Lambda | `a02_capture.rpp` | `n04_store_non_own_lambda.rpp`, `n05_loan_conflict.rpp` |
+| R-10.8 – R-10.11 `own` Lambda | `a02_capture.rpp` | `n06_borrow_by_value.rpp`, `n07_this_in_own_lambda.rpp`, `n08_mutate_captured_value.rpp`, `n09_moved_after_capture.rpp` |
+| R-10.13 R-10.14 Func | `a03_function_types.rpp` | `n10_mut_on_return_type.rpp`, `n11_mut_in_other_type.rpp`, `n12_parameter_mismatch.rpp` |
+| R-10.15 – R-10.17 Functional values | `a03_function_types.rpp` | `n13_copy_func.rpp`, `n14_store_parameter.rpp`, `n15_unused_result.rpp` |

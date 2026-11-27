@@ -16,7 +16,7 @@
 //! Meilenstein M4:
 //!   rppc run [--release] [--check-invariants] PATH [-- ARGS…]   Programm ausführen (Debug-Interpreter)
 //!
-//! WURZEL ist das Verzeichnis, das `rpp-grammatik/` und `konformitaet/` enthält.
+//! WURZEL ist das Verzeichnis, das `rpp-grammar/` und `conformance/` enthält.
 
 mod conftest;
 mod defsdump;

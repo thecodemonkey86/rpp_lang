@@ -16,12 +16,12 @@ EXE_SUFFIX = ".exe" if WINDOWS else ""
 COMPILER = ROOT / "rpp-compiler"
 RUNTIME = COMPILER / "runtime"
 STD = ROOT / "rppc" / "std"
-CONFORMANCE = ROOT / "konformitaet"
-ARGUMENTS = CONFORMANCE / "kap12_ausfuehrung/laufzeit/l08_argumente.rpp"
-CONSOLE = CONFORMANCE / "kap13_bibliothek/laufzeit/l04_konsole.rpp"
-DIVISION = CONFORMANCE / "kap04_typen/laufzeit/l02_division_durch_null.rpp"
-NULL_ERROR = CONFORMANCE / "kap06_null/abgelehnt/n08_ersatz_nicht_nullbar.rpp"
-JSON_RUNTIME = CONFORMANCE / "kap13_bibliothek/laufzeit"
+CONFORMANCE = ROOT / "conformance"
+ARGUMENTS = CONFORMANCE / "ch12_execution/runtime/l08_arguments.rpp"
+CONSOLE = CONFORMANCE / "ch13_standard_library/runtime/l04_console.rpp"
+DIVISION = CONFORMANCE / "ch04_types/runtime/l02_division_by_zero.rpp"
+NULL_ERROR = CONFORMANCE / "ch06_null_safety/rejected/n08_fallback_not_nullable.rpp"
+JSON_RUNTIME = CONFORMANCE / "ch13_standard_library/runtime"
 
 
 def rppc(profile):
@@ -136,9 +136,9 @@ def check_native():
         ("division", DIVISION, False, [], 2, "vorher\n", "DivisionError: Division by zero"),
     ]
     for name, source, expected in (
-        ("json-tree", "l41_json_baum.rpp", "JSON tree OK\n"),
-        ("json-errors", "l42_json_fehler.rpp", "JSON errors OK\n"),
-        ("json-depth", "l43_json_tiefe.rpp", "JSON depth OK\n"),
+        ("json-tree", "l41_json_tree.rpp", "JSON tree OK\n"),
+        ("json-errors", "l42_json_errors.rpp", "JSON errors OK\n"),
+        ("json-depth", "l43_json_depth.rpp", "JSON depth OK\n"),
     ):
         for mode in ("debug", "release"):
             cases.append((f"{name}-{mode}", JSON_RUNTIME / source, mode == "release", [], 0, expected, ""))

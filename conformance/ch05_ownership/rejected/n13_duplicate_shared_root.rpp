@@ -1,0 +1,28 @@
+// Konformitätstest Kapitel 5 – muss abgelehnt werden.
+// Regel: Überlappung bei shared-Wurzeln (3.2), V-1
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Borrows auf ein shared-Objekt überlappen immer).
+package conformance.ch05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() mut { this.value = this.value + 1; }
+}
+
+class Pair {
+public:
+    Foo left;
+    Foo right;
+    constructor(own Foo l, own Foo r) { this.left = l; this.right = r; }
+}
+
+class T {
+public:
+    void swapValues(mut Foo a, mut Foo b) { }
+    void m() {
+        shared Pair s = new Pair(new Foo(1), new Foo(2));
+        swapValues(mut s.left, mut s.right); // FEHLER
+    }
+}

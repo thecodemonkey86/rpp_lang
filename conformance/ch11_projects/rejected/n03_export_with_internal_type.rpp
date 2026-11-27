@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 11 – muss abgelehnt werden.
+// Regel: R-11.11
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Helper ist nicht exportiert).
+package conformance.ch11;
+
+export class Shape {
+public:
+    Helper helper() { return new Helper(); } // FEHLER
+}
+
+class Helper {
+public:
+    i32 n = 0;
+}

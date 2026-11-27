@@ -1,0 +1,15 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.23
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Circle ist kein Untertyp von Point).
+package conformance.ch04;
+
+class Shape { }
+class Circle : Shape { }
+class Point { }
+
+class T {
+public:
+    void m(Point p) {
+        ref Circle? c = p as Circle; // FEHLER
+    }
+}

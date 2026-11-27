@@ -1,0 +1,18 @@
+// Konformitätstest Kapitel 6 – muss abgelehnt werden.
+// Regel: R-6.19
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (??= gibt es nicht).
+package conformance.ch06;
+
+class Node {
+public:
+    void run() { }
+}
+
+class T {
+public:
+    void m() {
+        Node? x = null;
+        x = x ?? new Node();
+        x ??= new Node(); // FEHLER
+    }
+}

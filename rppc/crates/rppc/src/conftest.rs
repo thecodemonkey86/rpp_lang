@@ -50,7 +50,7 @@ struct Unit {
 }
 
 fn units(root: &Path) -> Vec<Unit> {
-    let kinds = ["akzeptiert", "abgelehnt", "laufzeit"];
+    let kinds = ["accepted", "rejected", "runtime"];
     let mut all = Vec::new();
     walk(root, &mut all);
     let kind_of = |p: &Path| p.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -117,7 +117,7 @@ fn judge(u: &Unit, diags: &[Diag]) -> Outcome {
     let errors: Vec<&Diag> = diags.iter().filter(|d| !d.warning).collect();
     let show = |ds: &[&Diag]| ds.iter().map(|d| format!("{d}")).collect::<Vec<_>>().join("\n         ");
     match u.kind.as_str() {
-        "akzeptiert" | "laufzeit" => {
+        "accepted" | "runtime" => {
             if !errors.is_empty() {
                 return Outcome::Fail(show(&errors));
             }
@@ -160,7 +160,7 @@ fn judge(u: &Unit, diags: &[Diag]) -> Outcome {
 }
 
 pub fn run(root: &Path, verbose: bool) -> ExitCode {
-    let conformance = root.join("konformitaet");
+    let conformance = root.join("conformance");
     let std = std_dir();
     let mut stats: BTreeMap<String, [usize; 3]> = BTreeMap::new();
     let mut lines = Vec::new();
@@ -168,7 +168,7 @@ pub fn run(root: &Path, verbose: bool) -> ExitCode {
     for u in units(&conformance) {
         let diags = rpp_sema::check(&u.path, &std);
         let outcome = match judge(&u, &diags) {
-            Outcome::Pass if u.kind == "laufzeit" && run_runtime_enabled() => run_runtime(&u),
+            Outcome::Pass if u.kind == "runtime" && run_runtime_enabled() => run_runtime(&u),
             other => other,
         };
         let label = u.path.strip_prefix(&conformance).unwrap_or(&u.path).to_string_lossy().replace('\\', "/");

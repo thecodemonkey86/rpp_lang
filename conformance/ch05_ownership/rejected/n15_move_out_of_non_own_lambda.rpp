@@ -1,0 +1,22 @@
+// Konformitätstest Kapitel 5 – muss abgelehnt werden.
+// Regel: Lambdas (Abschnitt 7), R-5.3
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (ein normales Lambda erfasst a nur geliehen).
+package conformance.ch05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() mut { this.value = this.value + 1; }
+}
+
+class T {
+public:
+    void take(own Foo f) { }
+    void run(Func<void> f) { f(); }
+    void m() {
+        Foo a = new Foo(1);
+        run(() => { take(a); }); // FEHLER
+    }
+}

@@ -1,0 +1,20 @@
+// Konformitätstest Kapitel 5 – muss abgelehnt werden.
+// Regel: R-5.3, R-5.11, V-9
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (aus shared wird nie own; copy(s) verwenden).
+package conformance.ch05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() mut { this.value = this.value + 1; }
+}
+
+class T {
+public:
+    void m() {
+        shared Foo s = new Foo(1);
+        Foo f = s; // FEHLER
+    }
+}

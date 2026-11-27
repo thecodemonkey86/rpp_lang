@@ -1,36 +1,38 @@
-# rpp-compiler – der R++-Compiler in R++
+# rpp-compiler — the self-hosting R++ compiler
 
-Meilenstein M6 (siehe „R++ Implementierungsplan“): Der Compiler wird Schritt für Schritt in R++ geschrieben, mit der ersten Implementierung `rppc` ausgeführt und mit ihr verglichen, bis er sich selbst übersetzt.
+[Deutsch](README.de.md)
 
-Stand 22.11.2026: die ganze Prüfung (Lexer, Präprozessor, Parser, Projekte, Deklarationen, Rümpfe mit Flussanalyse) und ein Codegenerator nach C (`c`).
+Milestone M6 developed the compiler in R++ and compared it against the Rust implementation until it could compile itself. [Implementation plan](../R%2B%2B%20Implementation%20Plan.md)
 
-## Inhalt
+As of 22 November 2026, the compiler covered lexical analysis, preprocessing, parsing, project loading, declarations, and body checking with flow analysis. It also offered a C code generator through the `c` command.
 
-| Pfad | Zweck |
+## Contents
+
+| Path | Purpose |
 |---|---|
-| `rpp.yaml` | Projekt `rppcc` (ausführbar) |
-| `src/compiler/lexer/` | Token-Arten, Tokens und Lexer, gleichwertig zu `rppc/crates/rpp-syntax/src/lexer.rs` |
-| `src/compiler/pre/` | bedingte Kompilierung (R-11.23 bis R-11.25), gleichwertig zu `preprocess.rs` |
-| `src/compiler/syntax/Node.rpp` | Knoten des Syntaxbaums (Art, Text, Position, Kinder) und seine Textform |
-| `src/compiler/syntax/Parser.rpp` | Parser (rekursiver Abstieg, Vorrangparser, Rücksetzen über eine Exception), gleichwertig zu `parser.rs`, mit der Prüfung der Ausdrucksanweisungen (R-8.12) |
-| `src/compiler/syntax/Source.rpp` | eine Quelldatei lesen (Präprozessor, Lexer, Parser, R-8.12); der erste Fehler als `SyntaxError` |
-| `src/compiler/project/Yaml.rpp` | der YAML-Teil aus R-11.13, gleichwertig zu `yaml.rs` |
-| `src/compiler/project/Project.rpp` | Projekte, Quellordner, lokale Abhängigkeiten, Standardbibliothek (R-11.13, R-11.15 bis R-11.17), gleichwertig zu `project.rs` |
-| `src/compiler/sema/Ty.rpp` | semantische Typen (unveränderlich, als `shared Ty` geteilt), gleichwertig zu `ty.rs` |
-| `src/compiler/sema/Defs.rpp` | Deklarationstabellen: Typen, Felder, Methoden, Konstruktoren, Varianten |
-| `src/compiler/sema/Program.rpp` | Deklarationsphase: Typen sammeln, Namen auflösen, Membertabellen, Constraints, Regeln auf Ebene von Dateien und Klassen; gleichwertig zu `Program::build` in `defs.rs` |
-| `src/compiler/sema/Flow.rpp` | Zustand der Flussanalyse: Verengung, Initialisierung, Moves, Orte und Loans; gleichwertig zu `flow.rs` |
-| `src/compiler/sema/Checker.rpp` | Prüfung der Rümpfe: Anweisungen, Ausdrücke, Aufrufe, Lambdas, Eingebautes, Flussanalyse; gleichwertig zu `body.rs`, dazu die Angaben für die Ausführung |
-| `src/compiler/sema/Rt.rpp` | Angaben für die Ausführung je Knoten (wie `rt.rs`): Typen, Zieltypen, Moves, Aufrufziele, Erfassungen der Lambdas, Basiskonstruktoren, Typen der Deklarationen |
-| `src/compiler/gen/CGen.rpp` | Codegenerator nach C: setzt die Auswertung des Debug-Interpreters von `rppc` (`rpp-interp`) Stelle für Stelle in C um |
-| `runtime/rpp_rt.h`, `runtime/rpp_rt.c` | Laufzeit für den erzeugten Code (C17, MSVC und gcc): Werte mit Besitzform wie `value.rs`, Freigabe, Exceptions und Programmfehler, Zahlen beider Modi, Strings, Vektoren, eingebaute Teile der Standardbibliothek |
-| `src/main.rpp` | Befehle `tokens`, `pre`, `ast`, `project`, `defs`, `diagnose`, `c` |
-| `vergleich.py` | Vergleich mit `rppc` |
-| `vergleich_c.py`, `tests_c/` | Vergleich der übersetzten Programme mit `rppc run` |
+| `rpp.yaml` | Manifest for the `rppcc` executable |
+| `src/compiler/lexer/` | Token species, tokens and lexer equivalent to `rppc/crates/rpp-syntax/src/lexer.rs` |
+| `src/compiler/pre/` | conditional compilation (R-11.23 to R-11.25), equivalent to `preprocess.rs` |
+| `src/compiler/syntax/Node.rpp` | Node of the syntax tree (kind, text, position, children) and its text form |
+| `src/compiler/syntax/Parser.rpp` | Parser (recursive descent, precedence parser, reset via an exception), equivalent to `parser.rs`, with the checking of the expression statements (R-8.12) |
+| `src/compiler/syntax/Source.rpp` | read a source file (preprocessor, lexer, parser, R-8.12); the first error is as `SyntaxError` |
+| `src/compiler/project/Yaml.rpp` | the YAML part of R-11.13 equivalent to `yaml.rs` |
+| `src/compiler/project/Project.rpp` | Projects, source folders, local dependencies, standard library (R-11.13, R-11.15 to R-11.17), equivalent to `project.rs` |
+| `src/compiler/sema/Ty.rpp` | Immutable semantic types represented as `shared Ty`, equivalent to `ty.rs` |
+| `src/compiler/sema/Defs.rpp` | Declaration tables: types, fields, methods, constructors, variants |
+| `src/compiler/sema/Program.rpp` | Declaration phase: collect types, resolve names, member tables, constraints, file and class level rules; equivalent to `Program::build` in `defs.rs` |
+| `src/compiler/sema/Flow.rpp` | Flow state for type narrowing, initialization, moves, places, and loans, equivalent to `flow.rs` |
+| `src/compiler/sema/Checker.rpp` | Checks statements, expressions, calls, lambdas, and built-ins. Tracks flow and records execution data. Corresponds to `body.rs`. |
+| `src/compiler/sema/Rt.rpp` | Execution data per node (such as `rt.rs`): types, target types, moves, call targets, lambda captures, base constructors, declaration types |
+| `src/compiler/gen/CGen.rpp` | C generator that follows the evaluation steps of the `rpp-interp` interpreter |
+| `runtime/rpp_rt.h`, `runtime/rpp_rt.c` | Runtime for the generated code (C17, MSVC and gcc): values with ownership mode such as `value.rs`, release, exceptions and program errors, numbers of both modes, strings, vectors, built-in parts of the standard library |
+| `src/main.rpp` | Commands `tokens`, `pre`, `ast`, `project`, `defs`, `diagnose`, `c` |
+| `compare.py` | Comparison with `rppc` |
+| `compare_c.py`, `tests_c/` | Comparison of translated programs with `rppc run` |
 
-Der Syntaxbaum ist einheitlich aufgebaut statt mit einer Klasse je Knotenart. Seine Textform (ein Knoten je Zeile mit Art, Text und Position) erzeugt auf der Rust-Seite `rppc/crates/rpp-syntax/src/dump.rs` aus dem AST von `rppc`.
+The syntax tree uses a uniform node structure. The Rust implementation builds the corresponding text representation in `rppc/crates/rpp-syntax/src/dump.rs`. Each line gives a node's kind, text, and position.
 
-## Ausführen
+## Run the inspection commands
 
 ```
 cd ../rppc
@@ -41,7 +43,7 @@ cargo run -- run ../rpp-compiler -- project [--release] STD PATH
 cargo run -- run ../rpp-compiler -- defs STD PATH
 cargo run -- run ../rpp-compiler -- diagnose [--timings] STD PATH
 cargo run -- run ../rpp-compiler -- c [--release] STD PATH OUTPUT.c
-cargo run -- tokens FILE.rpp          # dieselben Ausgaben von rppc
+cargo run -- tokens FILE.rpp          # The same output from rppc
 cargo run -- pre debug,linux FILE.rpp
 cargo run -- ast debug,linux FILE.rpp
 cargo run -- project [--release] std PFAD
@@ -49,87 +51,87 @@ cargo run -- defs std PFAD
 cargo run -- diagnose std PFAD
 ```
 
-## Vergleich
+## Comparison
 
-`rppcc diagnose --timings STD PATH` gibt die Dauer von Projektladen, Deklarationsprüfung und Rumpfprüfung in drei Zeilen auf der Fehlerausgabe aus. Die Werte sind ganze Millisekunden. Sortierung und Ausgabe der Diagnosen liegen außerhalb der Messung. Ohne `--timings` erscheinen nur die regulären Diagnosen.
+`rppcc diagnose --timings STD PATH` outputs the duration of project loading, declaration checking and body checking in three lines on the error output; the values are whole milliseconds; sorting and output of the diagnoses are outside the measurement. Without `--timings` only the regular diagnoses appear.
 
-`rppcc project --help` und `rppcc tokens --help` zeigen die jeweilige Hilfe auf der Standardausgabe (Exit-Code 0). Bei fehlenden oder überzähligen Argumenten und unbekannten Optionen erscheinen Meldung und Aufruf auf der Fehlerausgabe (Exit-Code 2). Mit `rppcc tokens -- -beispiel.rpp` lassen sich auch Dateinamen mit führendem Minus übergeben.
+`rppcc project --help` and `rppcc tokens --help` show the respective help on the standard output (exit code 0); in the case of missing or excess arguments and unknown options, message and call appear on the error output (exit code 2). With `rppcc tokens -- -beispiel.rpp` file names with leading minus can also be transferred.
 
-`project` zeigt Haupt- und Quelldateien relativ zum Verzeichnis ihres jeweiligen Projekts an. Dateipositionen in Meldungen von `project`, `defs` und `diagnose` beziehen sich auf das Eingabeprojekt, bei Einzeldateien auf deren Verzeichnis. Für Dateien außerhalb dieser Basis erscheint der absolute Pfad.
+`project` displays main and source files relative to the directory of their respective project. File positions in messages from `project`, `defs` and `diagnose` refer to the input project, for individual files to their directory. For files outside this base, the absolute path appears.
 
 ```
-py -X utf8 vergleich.py                # alle Teile; -v zeigt jeden Fall; tokens|pre|ast|project|defs|diagnose wählt Teile; --fr N: Anzahl der FR++-Zufallsprogramme
+py -X utf8 compare.py                # Run all stages. -v prints each case, and --fr N adds N random FR++ programs.
 ```
 
-Eingaben sind alle `.rpp`-Dateien des Projekts (Konformitätstests, Grammatiktests einschließlich der negativen Tests und Lesarten, Standardbibliothek, `rpp-compiler` selbst) und Grenzfälle je Teil; `pre` und `ast` laufen mit den Symbolsätzen `debug,linux` und `release,windows`. `project` lädt alle Projektverzeichnisse und Einzeldateien der Konformitätstests, `rpp-compiler` selbst und 39 Grenzfälle für `rpp.yaml` im Debug- und Releasemodus; die Ausgabe nennt Projekte, Dateien mit deklariertem und erwartetem Paket und Typnamen sowie die Meldungen. `defs` läuft über dieselben Eingaben, die Grammatiktests und 17 Grenzfälle für Deklarationsregeln; die Ausgabe nennt alle Typen mit ihren Membern und Signaturen und die Meldungen der Deklarationsphase. `diagnose` vergleicht alle Meldungen der ganzen Prüfung über dieselben Eingaben ohne `rpp-compiler` selbst (im Interpreter zu langsam) und über die nach R++ übersetzten FR++-Programme.
+Entries are all `.rpp` files of the project (conformance tests, grammar tests including negative tests and readings, standard library, `rpp-compiler` itself) and border cases per part; `pre` and `ast` run with the sets of symbols `debug,linux` and `release,windows`. `project` loads all project directories and individual files of the conformance tests, `rpp-compiler` itself and 39 border cases for `rpp.yaml` in debug and release mode; the output lists projects, files with declared and expected package and type names as well as the messages. `defs` runs on the same inputs, the grammar tests and 17 limit cases for declaration rules; the output lists all types with their members and signatures and the declaration phase messages. `diagnose` compares all messages of the entire check via the same inputs without `rpp-compiler` itself (too slowly in the interpreter) and via the FR++ programs translated to R++.
 
-Stand 22.11.2026:
+As of 22 November 2026, the compiler covered lexical analysis, preprocessing, parsing, project loading, declarations, and body checking with flow analysis. It also offered a C code generator through the `c` command.
 
-| Teil | gleich | verschieden | Gegenprobe |
+| Command | Matches | Mismatches | Control run |
 |---|---|---|---|
-| `tokens` | 521 | 0 | ohne `??` in der Satzzeichenliste: 18 Abweichungen |
+| `tokens` | 521 | 0 | without `??` in the punctuation list: 18 deviations |
 | `pre` | 1056 | 0 | – |
-| `ast` (Baum oder erster Fehler mit Position) | 1036 | 0 | `+`/`-` stärker als `*`: 10 Abweichungen |
-| `project` | 592 | 0 | `name:app` ohne Leerzeichen angenommen: 1 Abweichung |
-| `defs` | 501 | 0 | `protected` mit dem Rang von `public`: 1 Abweichung |
-| `diagnose` | 782 | 0 | R-6.9 statt R-6.8 nach `if`: 1 Abweichung |
+| `ast` (tree or first error with position) | 1036 | 0 | `+`/`-` stronger than `*`: 10 deviations |
+| `project` | 592 | 0 | `name:app` Accepted without spaces: 1 deviation |
+| `defs` | 501 | 0 | `protected` with rank of `public`: 1 deviation |
+| `diagnose` | 782 | 0 | R-6.9 instead of R-6.8 after `if`: 1 deviation |
 
-Beim Aufbau des Parsers ist ein Fehler im Interpreter aufgefallen und behoben: Ein `own`-Argument, das über `??`, `?:` oder Klammern kam, wurde geliehen statt verschoben (neuer Laufzeittest `kap05_ownership/laufzeit/l02_own_argument_ausdruck.rpp`).
+When building the parser, an error in the interpreter was noticed and fixed: A `own` argument that came via `??`, `?:` or brackets was borrowed instead of moved (new runtime test `ch05_ownership/runtime/l02_own_argument_expression.rpp`).
 
-## Codegenerator nach C
+## C code generator
 
-`rppcc c [--release] STD PATH OUTPUT.c` prüft das Programm einschließlich der Standardbibliothek und erzeugt eine C-Datei; sie wird zusammen mit `runtime/rpp_rt.c` übersetzt:
+`rppcc c [--release] STD PATH OUTPUT.c` checks the program including the standard library and generates a C file; it is translated together with `runtime/rpp_rt.c`:
 
 ```
 cl /std:c17 /O2 /I runtime OUTPUT.c runtime/rpp_rt.c /link /STACK:16777216
 gcc -std=c17 -O2 -I runtime OUTPUT.c runtime/rpp_rt.c -lm
 ```
 
-Der Codegenerator folgt dem Debug-Interpreter von `rppc`, der Referenz nach R-12.3: Jeder Ausdruck wird zu C-Code, der dieselben Schritte in derselben Reihenfolge ausführt (`eval`, `eval_store`, `transfer`, `temp`, `convert`, `args`). Ein Wert (`rv`) trägt wie `Value` im Interpreter seine Art und bei Objekten die Besitzform am Verweis; Freigabe, Destruktoren (V-7), Sperren (V-1), Unwinding mit `finally`, Programmfehler, Stacktrace und Exit-Codes (R-12.9) verhalten sich wie dort. Fehler laufen als Status durch die Aufrufe; jede Anweisung und jeder Gültigkeitsbereich hat eine Aufräummarke. Generics werden nicht vervielfältigt; Typargumente stehen wie im Interpreter am Objekt (R-7.26). Der Modus (debug oder release) wird beim Erzeugen gewählt.
+The code generator follows the debug interpreter of `rppc`, the reference to R-12.3: each expression becomes C-code that performs the same steps in the same order (`eval`, `eval_store`, `transfer`, `temp`, `convert`, `args`). A value (`rv`) bears its kind in the interpreter as `Value` and the ownership mode in objects at the reference; release, destructors (V-7), locks (V-1), unwinding with `finally`, program errors, stacktrace and exit codes (R-12.9) behave as there. Errors run as status through the invocations; each statement and scope has a cleanup mark. Generics are not duplicated; type arguments stand on the object as in the interpreter (R-7.26). The mode (debug or release) is selected when generating.
 
-Die Angaben, die der Interpreter aus `Program::rt` liest, erhebt `Checker.rpp` an denselben Stellen wie `body.rs` (`Rt.rpp`); die Knoten des Syntaxbaums sind dafür nummeriert (`Node.id`).
+The information which the interpreter reads from `Program::rt` is collected `Checker.rpp` in the same places as `body.rs` (`Rt.rpp`); the nodes of the syntax tree are numbered for this (`Node.id`).
 
-Vergleich: `py -X utf8 vergleich_c.py [--fr N] [--only-fr] [--gcc] [--exe RPPCC] [--cflags "…"] [PATTERN]` erzeugt, übersetzt (MSVC; mit `--gcc` gcc) und startet jeden Laufzeittest der Konformitätstests und jedes Programm in `tests_c/` in beiden Modi in einem frischen Arbeitsverzeichnis und vergleicht Ausgabe, Fehlerausgabe und Exit-Code mit `rppc run`; mit `--fr N` auch die nach R++ übersetzten FR++-Programme. `--only-fr` beschränkt den Vergleich auf FR++-Programme.
+Comparison: `py -X utf8 compare_c.py [--fr N] [--only-fr] [--gcc] [--exe RPPCC] [--cflags "…"] [PATTERN]` creates, translates (MSVC; with `--gcc` gcc) and starts each runtime test of the conformance tests and each program in `tests_c/` in both modes in a fresh working directory and compares output, error output and exit code with `rppc run`; with `--fr N` also the FR++ programs translated to R++. `--only-fr` limits the comparison to FR++ programs.
 
-Unicode-Tabellen (`runtime/rpp_unicode.h`, `rpp_unicode_ign.h`) entstehen mit `runtime/gen_unicode.rs` aus der Standardbibliothek von Rust und mit `gen_unicode_ignorable.py`; damit verhalten sich `char` und Strings wie im Interpreter. Texte von Betriebssystemfehlern in `IOException` kommen aus der C-Bibliothek (nach V-13.12 nicht festgelegt). Pfade und Kommandozeilenargumente sind UTF-8; unter Windows gehen Dateizugriffe über die `wchar_t`-Fassungen.
+Unicode tables (`runtime/rpp_unicode.h`, `rpp_unicode_ign.h`) are created with `runtime/gen_unicode.rs` from the standard library of Rust and with `gen_unicode_ignorable.py`; thus `char` and strings behave as in the interpreter. Texts of operating system errors in `IOException` come from the C library (not specified after V-13.12). Paths and command line arguments are UTF-8; under Windows, file accesses go through the `wchar_t` versions.
 
-Mit `--exe` erzeugt ein übersetzter `rppcc` den C-Code statt des Interpreters; `--cflags "-DRPP_NATCHECK"` übersetzt so, dass jeder native Lesezugriff des Generators (M7) die Art des Werts prüft.
+With `--exe` a translated `rppcc` generates the C code instead of the interpreter; `--cflags "-DRPP_NATCHECK"` translates so that each native read access of the generator (M7) checks the nature of the value.
 
-Native Grundwerte (M7): Reine Ausdrücke über `i8`–`i64`, `char` und `bool` ohne Aufrufe wertet der Generator direkt in C als `int64_t` aus; der schnelle Fall steht in `rpp_rt.h` (`rn_…`), alle anderen Fälle gehen über die rv-Pfade wie im Interpreter. Lokale Variablen und Parameter dieser Typen sind C-Variablen (`int64_t x…`), außer ein Lambda erfasst sie oder `take`/`replace` bzw. eine Tupelzuweisung braucht sie als Ort. Kleine Blöcke verwaltet die Laufzeit selbst (Freilisten je Größenklasse, `xmalloc`/`xfree`).
+Native base values (M7): Pure expressions above `i8`–`i64`, `char` and `bool` without invocations are evaluated directly by the generator in C as `int64_t`; the rapid case is in `rpp_rt.h` (`rn_…`), all other cases go through the rv paths as in the interpreter. Local variables and parameters of these types are C variables (C)`int64_t x…`, except when it controls a lambda; or `take`/`replace` It needs a tuple assignment as a place. Small blocks manage the runtime themselves (free lists per size class), `xmalloc`/`xfree`).
 
-Umgebungsvariablen der Laufzeit: `RPP_NOFREE=1` gibt keinen Speicher frei (zum Eingrenzen von Fehlern bei der Freigabe); `RPP_PROFILE=DATEI` schreibt jede Millisekunde den Befehlszähler und bis zu sieben Aufrufer als Adressen relativ zum Modul, eine Stichprobe je Zeile (Windows; auflösen mit der Map-Datei des Linkers, `/MAP`); `RPP_MAINTHREAD=1` läuft ohne eigenen Thread mit großem Stack.
+Runtime environment variables: `RPP_NOFREE=1` does not release memory (to limit sharing errors); `RPP_PROFILE=FILE` writes the command counter and up to seven callers as addresses relative to the module each millisecond, one sample per row (Windows; resolve with the linker’s map file, `/MAP`); `RPP_MAINTHREAD=1` runs without its own thread with a large stack.
 
-Geschwindigkeit (26.11.2026, übersetzter `rppcc.exe`, MSVC `/O2`): `diagnose rpp-compiler` 0,40 s, Selbstübersetzung 0,62 s (25.11.2026: 1,4 s und 1,7 s; 22.11.2026: 9,2 s und 10,4 s); `rppc diagnose` (Release) 0,47 s. Die einzelnen Schritte stehen im Implementierungsplan, Abschnitt 6.
+Speed (26.11.2026, translated `rppcc.exe`, MSVC `/O2`): `diagnose rpp-compiler` 0,40 s, self-compilation 0,62 s (25.11.2026: 1,4 s and 1,7 s; 22.11.2026: 9,2 s and 10,4 s); `rppc diagnose` (release) 0,47 s. The individual steps are set out in the implementation plan, Section 6.
 
-## Bauen, Ausführen und Testen (M8)
+## Build, run, and test native programs (M8)
 
-`rppcc` baut native Programme selbst; Rust wird dafür nicht gebraucht:
-
-```
-rppcc build [--release] [-o AUSGABE] PFAD     # prüfen, C erzeugen, mit dem C-Compiler übersetzen
-rppcc run [--release] PFAD [-- ARGUMENTE]     # in ein temporäres Verzeichnis bauen und ausführen
-rppcc test [-v] [--check-only] [WURZEL]       # Konformitätstests wie `rppc test`
-```
-
-Die Teile stehen in `src/compiler/driver/`: `Toolchain.rpp` sucht die Wurzel (das Verzeichnis mit `rppc/std` und `rpp-compiler/runtime`: `RPP_HOME`, sonst aufwärts vom Verzeichnis des laufenden `rppcc`) und ruft den C-Compiler auf (`RPP_CC`, sonst `cl` unter Windows und `cc` sonst; für `cl` gelten die Schalter von MSVC, sonst die von gcc und clang). `build` ohne `-o` legt das Programm im aktuellen Verzeichnis ab, benannt nach der Datei bzw. dem Projektverzeichnis. `--release` wählt die R++-Semantik des Releasemodus und übersetzt das C mit `/O2` bzw. `-O2`, sonst mit `/O1` bzw. `-O1`. `run` startet das Programm mit `Process::call`; es erbt die Konsole, und sein Exit-Code wird der von `rppcc`.
-
-`ConformanceTest.rpp` folgt `rppc/crates/rppc/src/conftest.rs`: Annehmen oder Ablehnen prüft der Compiler im selben Prozess (Debugmodus), mit denselben Regeln für Fehlerzeilen, erwartete Regel und Warnungen. Laufzeittests werden in beiden Modi erzeugt, mit der einmal übersetzten Laufzeit gebunden und in einem frischen, leeren Arbeitsverzeichnis ausgeführt (V-14.3); verglichen werden Ausgabe, Exit-Code und Fehlerausgabe. Die Ausgabe hat dieselbe Form wie die von `rppc test`. Ein ganzer Lauf dauert unter Windows (MSVC) gut 80 s, unter Linux (gcc, WSL) gut 2 Minuten.
-
-Dafür kam die Standardbibliothek um `rpp.process` (`Process::run`, `Process::call`), `Env::executablePath` und `Dir::removeAll` hinzu (R-13.43 bis R-13.45).
-
-## Bootstrap ohne Rust
-
-`bootstrap/rppcc.c` ist der C-Code des Compilers selbst, erzeugt mit `rppcc c --release rppc/std rpp-compiler bootstrap/rppcc.c` (Startpunkt, ohne Zeilenumwandlung eingecheckt). Die Skripte bauen daraus den Compiler:
+`rppcc` builds native programs themselves; Rust is not needed for this:
 
 ```
-sh rpp-compiler/bootstrap/bootstrap.sh [--check-seed]       # gcc oder clang ($CC, sonst cc)
-rpp-compiler\bootstrap\bootstrap.cmd [--check-seed]          # MSVC, notfalls über vswhere gefunden
+rppcc build [--release] [-o OUTPUT] PATH      # Check, generate C, and invoke the C compiler
+rppcc run [--release] PATH [-- ARGS…]          # Build in a temporary directory and run
+rppcc test [-v] [--check-only] [ROOT]           # Run the conformance suite
 ```
 
-Stufe 0 ist der übersetzte Startpunkt. Er übersetzt den Compiler aus dem Quelltext (gen1, Stufe 1), Stufe 1 tut es noch einmal (gen2). Fixpunkt heißt: gen1 und gen2 sind Byte für Byte gleich. Mit `--check-seed` muss außerdem gen1 gleich dem Startpunkt sein; das prüft die CI. Nach Änderungen am Compiler oder an der Standardbibliothek den Startpunkt deshalb neu erzeugen:
+The parts are in `src/compiler/driver/`: `Toolchain.rpp` search the root (the directory with `rppc/std` and `rpp-compiler/runtime`: `RPP_HOME`, otherwise up from the current `rppcc` directory) and call the C compiler (`RPP_CC`, otherwise `cl` under Windows and `cc` otherwise; for `cl` apply the switches of MSVC, otherwise those of gcc and clang). `build` without `-o` places the program in the current directory, named after the file or the project directory. `--release` selects the R++ semantics of the release mode and translates the C with `/O2` or `-O2` otherwise with `/O1` or `-O1`. `run` the program starts with `Process::call`; it inherits the console, and its exit code becomes that of `rppcc`.
+
+`ConformanceTest.rpp` follows `rppc/crates/rppc/src/conftest.rs`: Accept or reject the compiler checks in the same process (debug mode), with the same rules for error lines, expected rule and warnings. Runtime tests are generated in both modes, bound to the runtime once translated and executed in a fresh, empty working directory (V-14.3); output, exit code and error output are compared. The output has the same form as that of `rppc test`. A whole run takes a good 80 s under Windows (MSVC), a good 2 minutes under Linux (gcc, WSL).
+
+The standard library gained `rpp.process` (`Process::run`, `Process::call`), `Env::executablePath`, and `Dir::removeAll` to support this workflow (R-13.43 through R-13.45).
+
+## Bootstrap without Rust
+
+`bootstrap/rppcc.c` is the C code of the compiler itself, generated with `rppcc c --release rppc/std rpp-compiler bootstrap/rppcc.c` (start point, checked in without line conversion).
+
+```
+sh rpp-compiler/bootstrap/bootstrap.sh [--check-seed]       # GCC or Clang ($CC, defaults to cc)
+rpp-compiler\bootstrap\bootstrap.cmd [--check-seed]          # MSVC (looked up with vswhere as needed)
+```
+
+Stage 0 compiles the seed and uses it to generate the compiler from source (`gen1.c`). Stage 1 compiles `gen1.c` and generates the compiler again (`gen2.c`). The build reaches a fixed point when the two C files match byte for byte. The CI option `--check-seed` also checks that the checked-in seed matches. After changing the compiler or standard library, refresh the seed from the repository root.
 
 ```
 rpp-compiler/build/rppcc c --release rppc/std rpp-compiler rpp-compiler/bootstrap/rppcc.c
 ```
 
-Das Ergebnis ist `rpp-compiler/build/rppcc` (`rppcc.exe`); das Verzeichnis `build/` ist nicht eingecheckt. Der Startpunkt ist auf allen Plattformen derselbe: Unter Windows (MSVC) und Linux (gcc) erzeugt der Compiler aus demselben Quelltext denselben C-Code.
+The result is `rpp-compiler/build/rppcc` (`rppcc.exe`); the directory `build/` is not checked in; the starting point is the same on all platforms: on Windows (MSVC) and Linux (gcc), the compiler generates the same C code from the same source code.

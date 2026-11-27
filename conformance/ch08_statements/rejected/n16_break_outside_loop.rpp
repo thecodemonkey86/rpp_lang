@@ -1,0 +1,13 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.25
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (break außerhalb von Schleife und switch).
+package conformance.ch08;
+
+class T {
+public:
+    void m(i32 n, f64 d, string s, bool flag) {
+        if (flag) {
+            break; // FEHLER
+        }
+    }
+}

@@ -1,0 +1,24 @@
+// Konformitätstest Kapitel 6 – muss abgelehnt werden.
+// Regel: R-6.12
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (im try-Block wurde z null zugewiesen).
+package conformance.ch06;
+
+class Node {
+public:
+    void run() { }
+}
+
+class T {
+public:
+    void risky() { }
+
+    void m() {
+        Node? z = new Node();
+        try {
+            z = null;
+            risky();
+        } catch (Exception e) {
+            z.run(); // FEHLER
+        }
+    }
+}

@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 7 – muss abgelehnt werden.
+// Regel: R-7.13
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (describe überschreibt ohne override).
+package conformance.ch07;
+
+class Shape {
+public:
+    virtual string describe() { return "Form"; }
+}
+
+class Circle : Shape {
+public:
+    string describe() { return "Kreis"; } // FEHLER
+}

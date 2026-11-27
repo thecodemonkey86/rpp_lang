@@ -19041,7 +19041,7 @@ static int M_44_8(rv* ret, rv self, rv* args) {
     V[0] = args[0];
     M[0] = rt_tmark();
     t2 = rv_view(V[0]);
-    t3 = rt_lit(&S62, "konformitaet", 12);
+    t3 = rt_lit(&S62, "conformance", 11);
     (A0)[0] = t2;
     (A0)[1] = t3;
     st = M_25_9(&t1, rv_null(), A0);
@@ -19148,7 +19148,7 @@ static int M_44_8(rv* ret, rv self, rv* args) {
     if (rv_truthy(t4)) {
     t7 = rv_view(V[6]);
     t8 = rv_view(rv_o(t7)->slots[2]);
-    t9 = rt_lit(&S64, "laufzeit", 8);
+    t9 = rt_lit(&S64, "runtime", 7);
     st = rt_equal(&B[2], t8, t9);
     if (st) goto L26;
     t6 = rv_bool(B[2]);
@@ -20024,14 +20024,14 @@ static int M_44_14(rv* ret, rv self, rv* args) {
     V[0] = args[0];
     M[0] = rt_tmark();
     t3 = rv_view(V[0]);
-    t4 = rt_lit(&S78, "akzeptiert", 10);
+    t4 = rt_lit(&S78, "accepted", 8);
     st = rt_equal(&B[0], t3, t4);
     if (st) goto L2;
     t2 = rv_bool(B[0]);
     t1 = rv_bool(rv_truthy(t2));
     if (!rv_truthy(t1)) {
     t6 = rv_view(V[0]);
-    t7 = rt_lit(&S79, "abgelehnt", 9);
+    t7 = rt_lit(&S79, "rejected", 8);
     st = rt_equal(&B[1], t6, t7);
     if (st) goto L2;
     t5 = rv_bool(B[1]);
@@ -20040,7 +20040,7 @@ static int M_44_14(rv* ret, rv self, rv* args) {
     t0 = rv_bool(rv_truthy(t1));
     if (!rv_truthy(t0)) {
     t9 = rv_view(V[0]);
-    t10 = rt_lit(&S80, "laufzeit", 8);
+    t10 = rt_lit(&S80, "runtime", 7);
     st = rt_equal(&B[2], t9, t10);
     if (st) goto L2;
     t8 = rv_bool(B[2]);
@@ -21728,7 +21728,7 @@ static int M_44_25(rv* ret, rv self, rv* args) {
     M[7] = rt_tmark();
     t2 = rv_view(V[0]);
     t3 = rv_view(rv_o(t2)->slots[2]);
-    t4 = rt_lit(&S109, "akzeptiert", 10);
+    t4 = rt_lit(&S109, "accepted", 8);
     st = rt_equal(&B[0], t3, t4);
     if (st) goto L20;
     t1 = rv_bool(B[0]);
@@ -21736,7 +21736,7 @@ static int M_44_25(rv* ret, rv self, rv* args) {
     if (!rv_truthy(t0)) {
     t6 = rv_view(V[0]);
     t7 = rv_view(rv_o(t6)->slots[2]);
-    t8 = rt_lit(&S110, "laufzeit", 8);
+    t8 = rt_lit(&S110, "runtime", 7);
     st = rt_equal(&B[1], t7, t8);
     if (st) goto L20;
     t5 = rv_bool(B[1]);

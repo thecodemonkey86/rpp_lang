@@ -37,8 +37,8 @@ The second command prints `Hello, Ada!`. Omit `-- Ada` to print `Hello, world!`.
 
 - An executable starts at `i32 main(string[] args)`. Its return value is the process exit code. `print` writes a line to standard output.
 - `T?` allows `null`. An `if (value != null)` check can narrow a nullable value within that branch. Use `value?.member` for optional access and `value ?? fallback` to supply a default.
-- `own` denotes exclusive ownership, `shared` denotes shared ownership, and `weak` is a non-owning reference to a shared object. Use `ref` and `ref mut` for read-only and mutable borrows. Passing an object to an `own` parameter moves it. [Ownership rules](R%2B%2B%20Ownership-Kernkalk%C3%BCl.md)
-- `T[]` is a growable vector. `using rpp.io.Console;` imports a type, and `Console::write("text")` calls a static method. The bundled standard library needs no dependency entries. [Standard library](R%2B%2B%20Standardbibliothek.md)
+- `own` denotes exclusive ownership, `shared` denotes shared ownership, and `weak` is a non-owning reference to a shared object. Use `ref` and `ref mut` for read-only and mutable borrows. Passing an object to an `own` parameter moves it. [Ownership rules](R%2B%2B%20Ownership%20Core%20Calculus.md)
+- `T[]` is a growable vector. `using rpp.io.Console;` imports a type, and `Console::write("text")` calls a static method. The bundled standard library needs no dependency entries. [Standard library](R%2B%2B%20Standard%20Library.md)
 
 ## Create a project
 
@@ -62,7 +62,7 @@ cargo run --manifest-path rppc/Cargo.toml -- run hello -- Ada
 
 Paths in the manifest are relative to the project directory. A file under `src/demo/util/` starts with `package demo.util;`. Files directly under `src/` belong to the root package and omit the package declaration.
 
-A reusable library uses `type: library` and omits `main`. Its package names start with the library name, and other projects can use types marked `export`. The current tools load local dependencies through `dependencies` entries with `name` and `path`. [Local library example](konformitaet/kap11_projekte/akzeptiert/a04_bibliothek), [package and project specification](R%2B%2B%20Pakete%20und%20Projekte.md)
+A reusable library uses `type: library` and omits `main`. Its package names start with the library name, and other projects can use types marked `export`. The current tools load local dependencies through `dependencies` entries with `name` and `path`. [Local library example](conformance/ch11_projects/accepted/a04_library), [package and project specification](R%2B%2B%20Packages%20and%20Projects.md)
 
 ## Build a native executable
 
@@ -145,11 +145,15 @@ The separate [Compiler bootstrap workflow](.github/workflows/bootstrap.yml) is r
 | --- | --- |
 | [`rppc/`](rppc/) | Rust reference implementation and [standard library source](rppc/std/rpp/). |
 | [`rpp-compiler/`](rpp-compiler/) | Self-hosting compiler, C runtime, and Python scripts that compare diagnostics and native execution against the reference implementation. |
-| [`rpp-grammatik/`](rpp-grammatik/README.md) | Normative ANTLR grammar, parser tests, and differential testing against the Rust parser. |
-| [`konformitaet/`](konformitaet/) | Small R++ examples organized by specification chapter. Start with the `akzeptiert` (accepted) and `laufzeit` (runtime) directories. |
-| [`fr-modell/`](fr-modell/README.md) | Executable model of the ownership rules, with its own tests and comparison tools. |
+| [`rpp-grammar/`](rpp-grammar/README.md) | Normative ANTLR grammar, parser tests, and differential testing against the Rust parser. |
+| [`conformance/`](conformance/) | Small R++ examples organized by specification chapter. Start with the `accepted` and `runtime` directories. |
+| [`fr-model/`](fr-model/README.md) | Executable model of the ownership rules, with its own tests and comparison tools. |
 
-Most detailed documentation is currently in German. See the [specification index](R%2B%2B%20Spezifikationsger%C3%BCst.md), the [conformance test rules](R%2B%2B%20Konformit%C3%A4tstests.md), and the [implementation plan](R%2B%2B%20Implementierungsplan.md).
+## Documentation
+
+See the [language specification](R%2B%2B%20Specification%20Outline.md), the [conformance test rules](R%2B%2B%20Conformance%20Tests.md), and the [implementation plan](R%2B%2B%20Implementation%20Plan.md). Each translated document links to its German edition.
+
+Die deutschen Sprachreferenzen sind in der [Spezifikationsübersicht](R%2B%2B%20Specification%20Outline.de.md) verlinkt.
 
 ## License
 

@@ -1,0 +1,43 @@
+// Konformitätstest Kapitel 4 – muss übersetzt werden.
+// Regel: R-4.2, R-4.29, R-4.36, R-4.38, R-4.41
+package conformance.ch04;
+
+enum Shape {
+    Circle(f64 r),
+    Rect(f64 w, f64 h),
+}
+
+enum Color { Red, Green }
+
+class Foo {
+public:
+    i32 v = 0;
+}
+
+class Values {
+public:
+    void keep(own Shape s) { }
+    void apply(Func<i32, i32> f) { discard f(1); }
+    (Foo, i32) make() { return (new Foo(), 1); }
+
+    void demo(weak Foo w) {
+        i32 a = 1;
+        i32 b = a;                      // Kopie; a bleibt unverändert
+        b++;
+        Color c = Color::Red;
+        Color d = c;                    // Enum ohne Daten: Kopie
+        bool same = c == d;
+        Shape s = Shape::Circle(2.0);
+        keep(s);                        // Enum mit Daten: Move
+        s = Shape::Rect(1.0, 2.0);
+        (Foo f, i32 n) = make();        // Elemente gehen an f und n über
+        f.v = n;
+        Func<i32, i32> twice = own (i32 x) => x * 2;
+        apply(twice);
+        apply((i32 x) => x + b);
+        shared Foo? alive = w.lock();
+        if (alive != null) {
+            print(alive.v.toString());
+        }
+    }
+}

@@ -1,102 +1,104 @@
-# R++ Exceptions (Kapitel 9)
+# R++ Exceptions (Chapter 9)
 
-Stand: 21.11.2026, Entwurf 0.2. Dieses Dokument füllt Kapitel 9 des „R++ Spezifikationsgerüsts“. Es regelt, was geworfen und gefangen werden kann, wie `try`, `catch` und `finally` ablaufen, was beim Unwinding passiert und wie Programmfehler das Programm beenden. Für Besitz und Freigabe gilt Kapitel 5, für Verengung Kapitel 6 (R-6.12), für Erreichbarkeit Kapitel 8.
+[Deutsch](R%2B%2B%20Exceptions.de.md)
 
-Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschnitte 11 und 22). Jede normative Regel trägt eine Nummer `R-9.n`. Die Konformitätstests liegen in `konformitaet/kap09_exceptions/`.
+Status: 11/21/2026, Draft 0.2. This document fills Chapter 9 of the R++ Specification Outline, which regulates what can be thrown and caught, how `try`, `catch` and `finally` run, what happens during unwinding, and how program errors terminate the program. For ownership and release, Chapter 5 applies, for narrowing, Chapter 6 (R-6.12), for accessibility, Chapter 8.
 
-## 0. Ergänzung beim Schreiben der Laufzeittests (angenommen am 21.11.2026)
+All determinations have been decided (see “R++ Design Decisions”, Sections 11 and 22). `R-9.n` Conformance tests shall be carried out in: `conformance/ch09_exceptions/`.
 
-| Nr. | Vorschlag |
+## 0. Supplement when writing the runtime tests (adopted on 21.11.2026)
+
+| No | Proposal |
 |---|---|
-| V-9.1 | Jede Art von Programmfehler hat einen festen Namen, der in der Meldung erscheint (Tabelle in R-9.2); Laufzeittests prüfen ihn. Stacküberlauf und Speichermangel stehen als Art „Ressourcen“ in der Tabelle. |
+| V-9.1 | Each type of program error has a fixed name that appears in the message (table in R-9.2); runtime tests check it; stack overflow and memory deficiency are sort of “resources” in the table. |
 
-## 1. Zwei Arten von Fehlern zur Laufzeit
+## 1. Two types of errors at runtime
 
-**R-9.1 (Exceptions und Programmfehler).**
-- Eine **Exception** wird mit `throw` ausgelöst und kann mit `catch` gefangen werden. Exceptions sind ungeprüft: Methoden geben nicht an, was sie werfen.
-- Ein **Programmfehler** wird von der Sprache selbst oder von `fail` ausgelöst. Er kann nicht gefangen werden: Das Programm räumt noch auf (R-9.14) und endet dann.
+**R-9.1 (Exceptions and program errors).**
+- An **Exception** is triggered with `throw` and can be caught with `catch`. Exceptions are unchecked: methods do not specify what they throw.
+- A **program error** is triggered by the language itself or by `fail`. It cannot be caught: the program still cleans up (R-9.14) and then ends.
 
-**R-9.2 (Programmfehler).** Programmfehler sind:
+**R-9.2 (Program error).** Program errors are:
 
-| Art | Auslöser | Modus | Name in der Meldung (V-9.1) |
+| Species | Triggers | Mode mode | Name in the message (V-9.1) |
 |---|---|---|---|
-| Index | Index oder Bereich außerhalb der Grenzen (Arrays, Vektoren, Slices, Strings) | beide | `IndexError` |
-| Überlauf | Ganzzahlüberlauf, Schiebeweite außerhalb des Bereichs | nur Debug (Release: Wraparound bzw. modulo) | `OverflowError` |
-| Division | Ganzzahldivision oder `%` durch 0 | beide | `DivisionError` |
-| Umwandlung | `cast` außerhalb des Zielbereichs, NaN zu Ganzzahl | nur Debug (Release: Abschneiden bzw. Sättigung) | `CastError` |
-| Umwandlung | `cast<char>` ohne gültigen Skalarwert, `cast<E>` ohne passende Variante | beide | `CastError` |
-| Zusicherung | `assert(c, text)` mit `c == false` | beide | `AssertError` |
-| Sperre | Konflikt beim Zugriff auf ein `shared`-Objekt (Kapitel 5, V-1) | beide | `BorrowError` |
-| Destruktor | eine Exception verlässt einen Destruktor (V-11) | beide | `DestructorError` |
-| Abbruch | Aufruf von `fail(text)` (R-9.19) | beide | `FailError` |
-| Ressourcen | Stacküberlauf, fehlender Speicher (Kapitel 12, R-12.10) | beide | `StackOverflowError`, `OutOfMemoryError` |
+| Index | Index or range outside boundaries (arrays, vectors, slices, strings) | both | `IndexError` |
+| Overflow | Integer overflow, out-of-range shift count | only debug (release: wraparound or modulo) | `OverflowError` |
+| Division | integer division or `%` by 0 | both | `DivisionError` |
+| Conversion | `cast` outside the target range, NaN to integer | only debug (release: cutting or saturation) | `CastError` |
+| Conversion | `cast<char>` without a valid scalar value, `cast<E>` without a suitable variant | both | `CastError` |
+| Commitment | `assert(c, text)` with `c == false` | both | `AssertError` |
+| Lock | Conflict of access to a `shared` object (Chapter 5, V-1) | both | `BorrowError` |
+| Destructor | an exception leaves a destructor (V-11) | both | `DestructorError` |
+| Abortion | Call of `fail(text)` (R-9.19) | both | `FailError` |
+| Resources | Stack overflow, missing memory (Chapter 12, R-12.10) | both | `StackOverflowError`, `OutOfMemoryError` |
 
-**R-9.3 (Sprechweise in anderen Kapiteln).** Wo die Kapitel 4 bis 8 für diese Prüfungen sagen, dass „eine Exception geworfen wird“, ist ein Programmfehler nach R-9.2 gemeint. Programmfehler sind keine Klassen; ihre Namen (`IndexError`, `OverflowError`, `BorrowError` usw.) erscheinen nur in der Fehlermeldung.
+**R-9.3 (Speaking in other chapters).** Where chapters 4 to 8 say for these checks that “an exception is thrown”, a program error is meant after R-9.2. Program errors are not classes; their names (`IndexError`, `OverflowError`, `BorrowError`, etc.) appear only in the error message.
 
-Weil ein Programmfehler nicht gefangen werden kann, verzweigen Debug- und Releasemodus nie unterschiedlich, nur weil eine Prüfung im Debugmodus anschlägt.
+Because a program error cannot be caught, debug and release modes never branch out differently just because a check in debug mode strikes.
 
-## 2. Die Klasse Exception
+## 2. The class Exception
 
-**R-9.4 (Exception).** Die Standardbibliothek stellt die Klasse `rpp.core.Exception` bereit:
+**R-9.4 (Exception).** The standard library provides the class `rpp.core.Exception`:
 
 ```
 export class Exception {
 public:
     string message;
-    Exception? cause;            // Ursache, besitzt sie
-    Exception[] suppressed;      // während des Unwindings unterdrückt (R-9.10)
+    Exception? cause;            // Owns the cause
+    Exception[] suppressed;      // Suppressed during unwinding (R-9.10)
     constructor(string message);
     constructor(string message, own Exception cause);
-    virtual string describe();   // Nachricht mit Ursachen und unterdrückten Exceptions
+    virtual string describe();   // Message with causes and suppressed exceptions
 }
 ```
 
-Eigene Exceptions erben direkt oder indirekt von `Exception` und können weitere Felder haben.
+Own exceptions inherit directly or indirectly from `Exception` and may have further fields.
 
-## 3. throw
+## 3. Throw
 
-**R-9.5 (throw).** `throw e;` verlangt einen Ausdruck vom Typ `own C` mit `C <: Exception`. Der Wert wird verschoben; ein `shared`-Wert, ein Borrow oder ein nullbarer Wert kann nicht geworfen werden. `throw` ist eine Anweisung, die nicht normal endet (Kapitel 6, Abschnitt 3.3).
+**R-9.5 (Throw).** `throw e;` requires a type `own C` expression with `C <: Exception`. The value is shifted; a `shared` value, borrow or nullable value cannot be thrown. `throw` is an statement that does not end normally (Chapter 6, Section 3.3).
 
-## 4. try, catch, finally
+## 4. Try, catch, finally.
 
-**R-9.6 (Aufbau).** Ein `try` hat mindestens ein `catch` oder ein `finally`. Der Typ in `catch (C e)` ist eine Klasse `C <: Exception`, ohne `?` und ohne Besitzform.
+**R-9.6 (Construction).** One `try` has at least one `catch` or one or more `finally` The type in `catch (C e)` is a class `C <: Exception`, without `?` and without ownership mode.
 
-**R-9.7 (Auswahl).** Entsteht im `try`-Block eine Exception, wird der erste `catch` gewählt, dessen Typ eine Oberklasse der tatsächlichen Klasse der Exception ist. `catch (Exception e)` fängt jede Exception. Ein `catch`, der hinter einem `catch` für eine seiner Oberklassen steht, kann nie gewählt werden; der Compiler meldet ihn als unerreichbaren Code (Warnung, R-8.27). Passt kein `catch`, läuft die Exception weiter.
+**R-9.7 (Selection).** Formed in `try`-block an exception, the first `catch` whose type is an upper class of the actual class of the exception. `catch (Exception e)` Catch every exception. `catch` The one behind one `catch` stands for one of its upper classes, can never be chosen; the compiler reports it as an unattainable code (warning, R-8.27). Does not fit `catch`, the exception continues.
 
-**R-9.8 (catch-Variable).** Die Variable eines `catch` besitzt die Exception (`own`). `throw e;` wirft sie weiter (Move); sonst wird sie am Ende des `catch`-Blocks freigegeben.
+**R-9.8 (Catch variable).** The variable of a `catch` has the exception (`own`). `throw e;` throws it further (move); otherwise it is released at the end of the `catch` block.
 
-**R-9.9 (finally).** Der `finally`-Block läuft immer, wenn der `try`-Block oder ein `catch`-Block verlassen wird: am normalen Ende, durch `return`, `break` oder `continue` und während eine Exception läuft. Danach geht es so weiter, wie es ohne `finally` weitergegangen wäre.
+**R-9.9 (finally).** The `finally`-Block always runs when the `try`-block or an `catch`-block is left: at the normal end, by `return`, `break` or `continue` And while an exception is going on, then it goes on like it does without. `finally` would have gone further.
 
-**R-9.10 (Verlassen von finally).** Ein `finally`-Block darf nicht mit `return` verlassen werden; `break` und `continue` dürfen ihn nicht verlassen (innerhalb einer Schleife im `finally` sind sie erlaubt). Ein `throw` direkt im `finally`-Block ist ein Fehler. Wirft aber ein Aufruf im `finally`-Block, während schon eine Exception läuft, ersetzt die neue Exception die alte; die alte wird an das Feld `suppressed` der neuen angehängt und geht nicht verloren.
+**R-9.10 (Leaving finally).** One `finally`-Block must not be with `return` are abandoned; `break` and `continue` not to leave it (within a loop in the `finally` They are allowed. `throw` directly to `finally`-Block is an error. But if a call is thrown in the `finally` block while an exception is already running, the new exception replaces the old one; the old one is attached to the field `suppressed` of the new one and is not lost.
 
 ## 5. Unwinding
 
-**R-9.11 (Ablauf).** Läuft eine Exception, werden die umgebenden Blöcke von innen nach außen verlassen, bis ein passender `catch` gefunden ist. Beim Verlassen jedes Blocks und jeder Methode
-1. werden die dort deklarierten Variablen in umgekehrter Reihenfolge freigegeben (Kapitel 5; verschobene Variablen werden dank Drop-Flag übersprungen),
-2. werden die Sperren von `shared`-Objekten aufgehoben, die der Block hält (Kapitel 5, Abschnitt 5.2),
-3. läuft ein vorhandener `finally`-Block.
+**R-9.11 (Expiry).** If an exception runs, the surrounding blocks are left from the inside out until a suitable `catch` is found.
+1. the variables declared there are released in reverse order (chapter 5; shifted variables are skipped thanks to the drop flag),
+2. lift the locks of `shared` objects held by the block (Chapter 5, Section 5.2),
+3. runs an existing `finally` block.
 
-**R-9.12 (Destruktoren).** Destruktoren laufen beim Unwinding wie beim normalen Verlassen eines Blocks. Verlässt eine Exception einen Destruktor, ist das ein Programmfehler (R-9.2).
+**R-9.12 (Destructors).** Destructors run unwinding as they normally leave a block, leaving an exception to a destructor is a program error (R-9.2).
 
-**R-9.13 (Konstruktoren).** Wirft ein Konstruktor, ist das Objekt nie fertig geworden. Freigegeben werden die bereits gesetzten Felder und, falls der Basiskonstruktor schon fertig war, der Basisanteil; dabei laufen die Destruktoren der Basisklassen. Der Destruktor der Klasse selbst läuft nicht. Für `copy` gilt dasselbe.
+**R-9.13 (Constructors).** If a constructor is thrown, the object is never finished; the fields already set and, if the base constructor was already finished, the base part are released; the destructors of the base classes run. The destructor of the class itself does not run. `copy` The same applies.
 
-## 6. Programmfehler und Programmende
+## 6. Program Error and Program End
 
-**R-9.14 (Abbruch).** Bei einem Programmfehler wird wie in R-9.11 aufgeräumt: Variablen werden freigegeben, Destruktoren und `finally`-Blöcke laufen, aber kein `catch` wird gewählt. Danach endet das Programm mit einer Meldung auf der Fehlerausgabe und dem Exit-Code **2**. Entsteht beim Aufräumen ein weiterer Programmfehler oder verlässt eine Exception einen Destruktor oder `finally`-Block, endet das Programm sofort.
+**R-9.14 (Abortion).** If a program error is cleared up as in R-9.11: variables are released, destructors and `finally` blocks run, but none `catch` is selected, after which the program ends with a message on the error output and the exit code **2**. If another program error occurs during cleaning up or an exception leaves a destructor or `finally` block, the program ends immediately.
 
-**R-9.15 (Ungefangene Exception).** Verlässt eine Exception `main`, endet das Programm nach dem Aufräumen mit `describe()` der Exception auf der Fehlerausgabe und dem Exit-Code **1**.
+**R-9.15 (Unprisoned Exception).** If an exception `main` leaves, the program ends after cleaning up with `describe()` the exception on the error output and the exit code **1**.
 
-**R-9.16 (Stacktrace).** Im Debugmodus tragen jede Exception und jeder Programmfehler einen Stacktrace, der in der Meldung erscheint. Im Releasemodus ist ein Stacktrace der Implementierung überlassen.
+**R-9.16 (Stacktrace).** In debug mode, each exception and program error carry a stacktrace that appears in the message, while in release mode, a stacktrace is left to the implementation.
 
-## 7. Zusammenspiel mit anderen Kapiteln
+## 7. Interaction with other chapters
 
-**R-9.17 (Moves und Zuweisungen im try).** Für die Prüfung von `catch`- und `finally`-Blöcken und der Anweisungen danach gilt eine Variable als verschoben, wenn sie an irgendeiner Stelle des `try`-Blocks verschoben werden kann, und als zugewiesen nur, wenn sie es schon vor dem `try` war. Zur Laufzeit entscheiden Drop-Flags (Kapitel 5, V-5). Für Verengung gilt R-6.12.
+**R-9.17 (Moves and assignments in try).** For the purpose of checking `catch` and `finally` blocks and the statements thereafter, a variable shall be considered to have been moved if it can be moved anywhere in the `try` block and shall be attributed only if it was before `try`. At runtime, drop flags decide (chapter 5), V-5For narrowing: R-6.12.
 
-**R-9.18 (Kein try-with-resources).** Es gibt kein `using` und kein try-with-resources. Ressourcen wie Dateien gibt ihr Destruktor frei; er läuft auch beim Unwinding.
+**R-9.18 (No try-with resources).** There is no `using` and no try-with-resources. Resources like files free up their destructor; it also runs during unwinding.
 
-**R-9.19 (fail).** Die eingebaute Funktion `fail(string text)` löst einen Programmfehler mit der Meldung `text` aus und kehrt nie zurück. Ein Aufruf von `fail` endet deshalb nicht normal: Er zählt für Verengung (Kapitel 6, Abschnitt 3.3), für die sichere Rückgabe (R-8.26) und für unerreichbaren Code (R-8.27) wie `throw`. `assert` zählt nicht so, weil es normal endet, wenn die Bedingung erfüllt ist.
+**R-9.19 (Failure).** The built-in function `fail(string text)` triggers a program error with the message `text` and never returns. Therefore, a call to `fail` does not end normally: it counts for narrowing (Chapter 6, Section 3.3), for secure return (R-8.26) and for unreachable code (R-8.27) as `throw`. `assert` does not count as such, because it ends normally when the condition is met.
 
-## 8. Beispiel
+## 8. Example
 
 ```
 class ParseError : Exception {
@@ -110,11 +112,11 @@ public:
 class Loader {
 public:
     Config load(string path) {
-        File f = File::open(path);        // Destruktor schließt die Datei, auch bei Exceptions
+        File f = File::open(path);        // The destructor closes the file even if an exception occurs
         try {
             return parse(f.readAll());
         } catch (ParseError e) {
-            throw new Exception("Konfiguration ungültig: " + path, e);   // e wird zur Ursache
+            throw new Exception("Konfiguration ungültig: " + path, e);   // e becomes the cause
         }
     }
 
@@ -127,15 +129,15 @@ public:
 }
 ```
 
-## 9. Konformitätstests
+## 9. Conformance tests
 
-Die Testprogramme liegen in `konformitaet/kap09_exceptions/`; geprüft werden sie mit `rppc test` (erste Implementierung, Meilenstein M3).
+The test programs are in `conformance/ch09_exceptions/`; they are tested with `rppc test` (first implementation, milestone M3).
 
-| Regeln | Akzeptiert | Abgelehnt |
+| Rules | Accepted | Rejected |
 |---|---|---|
-| R-9.4, R-9.5 Exception, throw | `a01_werfen_fangen.rpp` | `n01_kein_exception_typ.rpp`, `n02_shared_werfen.rpp` |
-| R-9.6 – R-9.8 catch | `a01_werfen_fangen.rpp`, `a02_weiterwerfen.rpp` | `n03_catch_kein_exception_typ.rpp`, `n04_nach_weiterwerfen_benutzt.rpp` |
-| R-9.7 unerreichbarer catch | `a04_warnung.rpp` | – |
-| R-9.9, R-9.10 finally | `a01_werfen_fangen.rpp` | `n05_return_in_finally.rpp`, `n06_throw_in_finally.rpp`, `n07_break_aus_finally.rpp` |
-| R-9.17 Moves im try | `a02_weiterwerfen.rpp` | `n08_move_im_try.rpp` |
-| R-9.19 fail, assert | `a03_fail.rpp` | `n09_assert_ist_kein_ausstieg.rpp` |
+| R-9.4 R-9.5 Exception, throw | `a01_throw_and_catch.rpp` | `n01_non_exception_type.rpp`, `n02_throw_shared.rpp` |
+| R-9.6 – R-9.8 catch | `a01_throw_and_catch.rpp`, `a02_rethrow.rpp` | `n03_catch_non_exception_type.rpp`, `n04_used_after_rethrow.rpp` |
+| R-9.7 Unreachable catch | `a04_warning.rpp` | – |
+| R-9.9, R-9.10 finally | `a01_throw_and_catch.rpp` | `n05_return_in_finally.rpp`, `n06_throw_in_finally.rpp`, `n07_break_from_finally.rpp` |
+| R-9.17 Moves in try | `a02_rethrow.rpp` | `n08_move_in_try.rpp` |
+| R-9.19 Fail, assert | `a03_fail.rpp` | `n09_assert_does_not_exit.rpp` |

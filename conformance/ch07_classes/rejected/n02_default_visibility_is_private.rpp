@@ -1,0 +1,17 @@
+// Konformitätstest Kapitel 7 – muss abgelehnt werden.
+// Regel: R-7.2
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Member vor dem ersten Label sind private).
+package conformance.ch07;
+
+class Box {
+    i32 value = 1;
+public:
+    i32 other = 2;
+}
+
+class Use {
+public:
+    i32 m(Box b) {
+        return b.value; // FEHLER
+    }
+}

@@ -1,0 +1,11 @@
+// Konformitätstest Kapitel 7 – muss abgelehnt werden.
+// Regel: R-7.24
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (T hat kein new()).
+package conformance.ch07;
+
+class Pool<T> {
+public:
+    T make() {
+        return new T(); // FEHLER
+    }
+}

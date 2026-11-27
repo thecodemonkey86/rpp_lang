@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 10 – muss abgelehnt werden.
+// Regel: R-10.18, R-10.14
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (kein on nimmt ein Lambda mit f64-Parameter).
+package conformance.ch10;
+
+class Run {
+public:
+    void on(Func<i32, i32> f) { }
+    void on(Func<string, void> f) { }
+
+    void demo() {
+        on((f64 x) => x); // FEHLER
+    }
+}

@@ -1,0 +1,34 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.31
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Box[] mit eigenen Elementen
+// ist kein Slice<shared Box>; die geteilten Verweise überlebten den Vektor).
+package conformance.ch04;
+
+class Box {
+public:
+    i64 v;
+    constructor(i64 v) { this.v = v; }
+}
+
+class T {
+public:
+    static shared Box[] keep(Slice<shared Box> s) {
+        shared Box[] r = [];
+        for (i64 i = 0; i < s.length; i++) { r.push(s[i]); }
+        return r;
+    }
+    static i64 sum(Slice<shared i64> s) {
+        i64 n = 0;
+        for (i64 i = 0; i < s.length; i++) { n = n + s[i]; }
+        return n;
+    }
+    void m() {
+        shared Box[] shared_ = [new Box(1)];
+        shared Box[] a = keep(shared_);
+        i64[] xs = [1, 2];
+        i64 n = sum(xs);
+        Box[] own_ = [];
+        own_.push(new Box(2));
+        shared Box[] b = keep(own_); // FEHLER
+    }
+}

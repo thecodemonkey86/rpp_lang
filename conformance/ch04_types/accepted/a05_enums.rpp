@@ -1,0 +1,28 @@
+// Konformitätstest Kapitel 4 – muss übersetzt werden.
+// Regel: R-4.25, R-4.26, R-4.27, R-4.28
+package conformance.ch04;
+
+enum Color { Red, Green, Blue }
+
+enum Level { Low = 1, Mid, High = 10, Minus = -1, }
+
+enum Shape {
+    Circle(f64 r),
+    Rect(f64 w, f64 h),
+}
+
+class EnumUse {
+public:
+    i32 demo(Color c, Level l, Shape s) {
+        bool red = c == Color::Red;
+        i32 v = cast<i32>(l);
+        Level back = cast<Level>(10);
+        i32 pos = cast<i32>(Color::Blue);
+        switch (s) {
+            case Shape::Circle(r):
+                return 1;
+            case Rect(w, h):
+                return 2;
+        }
+    }
+}

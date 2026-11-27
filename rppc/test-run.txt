@@ -1,0 +1,13 @@
+﻿
+Chapter                   passed          failed     pending
+  ch04_types                 37               0           0
+  ch05_ownership             36               0           0
+  ch06_null_safety                  24               0           0
+  ch07_classes               40               0           0
+  ch08_statements           31               0           0
+  ch09_exceptions            20               0           0
+  ch10_lambdas               21               0           0
+  ch11_projects              18               0           0
+  ch12_execution           10               0           0
+  ch13_standard_library            56               0           0
+  total                     293               0           0

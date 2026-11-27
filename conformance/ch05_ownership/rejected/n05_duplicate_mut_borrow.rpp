@@ -1,0 +1,21 @@
+// Konformitätstest Kapitel 5 – muss abgelehnt werden.
+// Regel: R-5.9 (T-Arg-Borrow)
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (a ist bereits veränderbar geliehen).
+package conformance.ch05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() mut { this.value = this.value + 1; }
+}
+
+class T {
+public:
+    void swapValues(mut Foo a, mut Foo b) { }
+    void m() {
+        Foo a = new Foo(1);
+        swapValues(mut a, mut a); // FEHLER
+    }
+}

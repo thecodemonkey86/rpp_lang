@@ -1,0 +1,20 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.29, R-5.3
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (s wurde schon verschoben).
+package conformance.ch04;
+
+enum Shape {
+    Circle(f64 r),
+    Rect(f64 w, f64 h),
+}
+
+class T {
+public:
+    void keep(own Shape s) { }
+
+    void demo() {
+        Shape s = Shape::Circle(2.0);
+        keep(s);
+        keep(s); // FEHLER
+    }
+}

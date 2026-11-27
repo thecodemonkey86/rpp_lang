@@ -1,9 +1,0 @@
-// Konformitätstest Kapitel 11 – muss abgelehnt werden.
-// Regel: R-11.23
-// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (#define gibt es nicht).
-package konformitaet.kap11;
-
-#define TRACE // FEHLER
-
-class Foo {
-}

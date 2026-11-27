@@ -1,0 +1,10 @@
+// Konformitätstest Kapitel 7 – muss abgelehnt werden.
+// Regel: R-7.1
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Feld und Methode heißen gleich).
+package conformance.ch07;
+
+class Box {
+public:
+    i32 size = 0;
+    i32 size() { return 1; } // FEHLER
+}

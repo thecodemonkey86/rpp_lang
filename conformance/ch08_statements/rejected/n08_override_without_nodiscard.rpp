@@ -1,0 +1,14 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.15, V-8.2
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (die überschriebene Methode ist nodiscard).
+package conformance.ch08;
+
+class Base {
+public:
+    nodiscard virtual i32 compute() { return 1; }
+}
+
+class Derived : Base {
+public:
+    override i32 compute() { return 2; } // FEHLER
+}

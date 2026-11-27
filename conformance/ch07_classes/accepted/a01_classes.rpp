@@ -1,0 +1,49 @@
+// Konformitätstest Kapitel 7 – muss übersetzt werden.
+// Regel: R-7.1, R-7.2, R-7.3, R-7.4, R-7.5, R-7.6, R-7.7, R-4.47
+package conformance.ch07;
+
+class Counter {
+    i32 hidden;                     // vor dem ersten Label: private
+public:
+    i32 count = 0;
+    string? label;                  // nullbar, ohne Initialisierer null
+
+    constructor() {
+        this.hidden = 1;
+    }
+
+    constructor(i32 start) {
+        this.hidden = start;
+        this.count = start;
+    }
+
+    void inc() mut {
+        count++;
+        hidden++;
+    }
+}
+
+class Plain {
+public:
+    i32 x = 1;
+    string? note;
+}
+
+class Named : Counter {
+public:
+    string name;
+    constructor(string n) : base(0) {
+        this.name = n;
+        inc();
+    }
+}
+
+class Use {
+public:
+    void demo() {
+        Counter a = new Counter();
+        Counter b = new Counter(5);
+        Plain p = new Plain();
+        Named n = new Named("x");
+    }
+}

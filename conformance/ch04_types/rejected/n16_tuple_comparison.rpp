@@ -1,0 +1,13 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.35
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Tupel haben kein ==).
+package conformance.ch04;
+
+class T {
+public:
+    void m(i32 n, i64 big, ui32 u, ui64 uu, f32 f, f64 d, byte b, char c, string s) {
+        (i32, i32) p = (1, 2);
+        (i32, i32) q = (1, 2);
+        bool eq = p == q; // FEHLER
+    }
+}

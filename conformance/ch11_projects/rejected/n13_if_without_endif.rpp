@@ -1,0 +1,9 @@
+// Konformitätstest Kapitel 11 – muss abgelehnt werden.
+// Regel: R-11.25
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (zu #if fehlt #endif).
+package conformance.ch11;
+
+#if debug // FEHLER
+
+class Foo {
+}

@@ -84,9 +84,9 @@ public:
         this.runtime = runtime;
     }
 
-    // Führt alle Tests unter ROOT/konformitaet aus; Exit-Code 0, wenn keiner fehlschlägt
+    // Führt alle Tests unter ROOT/conformance aus; Exit-Code 0, wenn keiner fehlschlägt
     i32 run(string root) mut {
-        string conformance = Path::absolute(Path::join(root, "konformitaet"));
+        string conformance = Path::absolute(Path::join(root, "conformance"));
         if (!Dir::exists(conformance)) {
             print("No conformance tests in " + conformance);
             return 2;
@@ -99,7 +99,7 @@ public:
         try {
             for (Unit u : units(conformance)) {
                 Outcome o = judge(u);
-                if (o.kind == 0 && u.kind == "laufzeit" && runtime) {
+                if (o.kind == 0 && u.kind == "runtime" && runtime) {
                     o = runRuntime(u);
                 }
                 string label = displayName(u.path, conformance);
@@ -179,7 +179,7 @@ private:
     }
 
     static bool isTestKind(string k) {
-        return k == "akzeptiert" || k == "abgelehnt" || k == "laufzeit";
+        return k == "accepted" || k == "rejected" || k == "runtime";
     }
 
     static bool inside(string p, string dir) {
@@ -341,7 +341,7 @@ private:
                 errorCount++;
             }
         }
-        if (u.kind == "akzeptiert" || u.kind == "laufzeit") {
+        if (u.kind == "accepted" || u.kind == "runtime") {
             if (errorCount > 0) {
                 return new Outcome(1, errors);
             }

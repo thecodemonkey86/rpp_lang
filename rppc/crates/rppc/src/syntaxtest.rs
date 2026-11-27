@@ -1,4 +1,4 @@
-//! Syntax-Testlauf: dieselben Prüfungen wie `rpp-grammatik/tools/run_tests.py`,
+//! Syntax-Testlauf: dieselben Prüfungen wie `rpp-grammar/tools/run_tests.py`,
 //! aber mit dem Rust-Parser. So wird gezeigt, dass beide Parser dieselbe Sprache lesen.
 
 use rpp_syntax::ast::{ClassMember, TopDecl};
@@ -51,7 +51,7 @@ struct Unit {
 }
 
 fn conformance_units(root: &Path) -> Vec<Unit> {
-    let kinds = ["akzeptiert", "abgelehnt", "laufzeit"];
+    let kinds = ["accepted", "rejected", "runtime"];
     let mut all = Vec::new();
     walk(root, &mut all);
     let kind_of = |p: &Path| p.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_string());
@@ -105,20 +105,20 @@ fn check_unit(u: &Unit) -> Vec<String> {
     let defaults = rpp_syntax::preprocess::default_symbols();
     for src in &u.sources {
         if let Err(e) = rpp_syntax::parse(&read(src), &defaults) {
-            let at_marker = u.kind == "abgelehnt" && markers.contains(&(src.clone(), e.span.line));
+            let at_marker = u.kind == "rejected" && markers.contains(&(src.clone(), e.span.line));
             if !at_marker {
                 let name = src.file_name().unwrap().to_string_lossy();
                 problems.push(format!("{name}: {e}"));
             }
         }
     }
-    if u.kind == "abgelehnt" && markers.len() != 1 {
+    if u.kind == "rejected" && markers.len() != 1 {
         problems.push(format!("expected one 'FEHLER' marker, found {}", markers.len()));
     }
-    if u.kind != "abgelehnt" && !markers.is_empty() {
+    if u.kind != "rejected" && !markers.is_empty() {
         problems.push(format!("test in '{}' contains a 'FEHLER' marker", u.kind));
     }
-    if u.kind == "laufzeit" {
+    if u.kind == "runtime" {
         let head: Vec<String> = read(&u.header).lines().take(8).map(str::to_string).collect();
         let ok = head.iter().any(|l| {
             let l = l.strip_prefix("// ").or_else(|| l.strip_prefix("# ")).unwrap_or("");
@@ -132,10 +132,10 @@ fn check_unit(u: &Unit) -> Vec<String> {
 }
 
 pub fn run(root: &Path) -> ExitCode {
-    let grammar = root.join("rpp-grammatik").join("tests");
-    let conformance = root.join("konformitaet");
+    let grammar = root.join("rpp-grammar").join("tests");
+    let conformance = root.join("conformance");
     if !grammar.is_dir() {
-        eprintln!("{} was not found. ROOT must contain rpp-grammatik/.", grammar.display());
+        eprintln!("{} was not found. ROOT must contain rpp-grammar/.", grammar.display());
         return ExitCode::from(2);
     }
     let mut failures = 0;
@@ -197,7 +197,7 @@ pub fn run(root: &Path) -> ExitCode {
 
     lines.push(String::new());
     lines.push("== Parse interpretations ==".to_string());
-    let probes = rpp_files(&grammar.join("lesarten"));
+    let probes = rpp_files(&grammar.join("parse_probes"));
     for path in &probes {
         let text = read(path);
         let name = header_value(&text, "// Name: ").unwrap_or_default();

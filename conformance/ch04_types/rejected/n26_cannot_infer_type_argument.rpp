@@ -1,0 +1,21 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.44, R-7.28
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (T lässt sich aus den Argumenten nicht ableiten).
+package conformance.ch04;
+
+class Foo {
+public:
+    i32 v = 0;
+}
+
+class Util {
+public:
+    static T make<T : new()>() { return new T(); }
+}
+
+class T {
+public:
+    void demo() {
+        Foo f = Util::make(); // FEHLER
+    }
+}

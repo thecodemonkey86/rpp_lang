@@ -1,0 +1,22 @@
+// Konformitätstest Kapitel 5 – muss abgelehnt werden.
+// Regel: R-5.17 (T-Borrow), Satz 5.2
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (list ist durch die Schleife geliehen).
+package conformance.ch05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() mut { this.value = this.value + 1; }
+}
+
+class T {
+public:
+    void m() {
+        Foo[] list = [new Foo(1)];
+        for (Foo f : list) {
+            list.push(new Foo(2)); // FEHLER
+        }
+    }
+}

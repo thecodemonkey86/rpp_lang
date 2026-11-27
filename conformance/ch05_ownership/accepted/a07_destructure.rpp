@@ -1,0 +1,45 @@
+// Konformitätstest Kapitel 5 – muss übersetzt werden.
+// Regel: R-5.25, V-15
+package conformance.ch05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+}
+
+class Pair<A, B> {
+public:
+    A first;
+    B second;
+    constructor(own A a, own B b) {
+        this.first = a;
+        this.second = b;
+    }
+}
+
+class Base {
+public:
+    i32 id = 1;
+}
+
+class Named : Base {
+public:
+    string name = "x";
+}
+
+class Unpack {
+public:
+    // Der Wert verlässt das Paar, ohne dass aus einem Feld verschoben wird (V-3 bleibt).
+    Foo second(own Pair<string, Foo> p) {
+        (string k, Foo v) = p;
+        return v;
+    }
+
+    // Geerbte Felder kommen zuerst.
+    void erbt() {
+        Named n = new Named();
+        (i32 id, string name) = n;
+        print(name + id.toString());
+    }
+}

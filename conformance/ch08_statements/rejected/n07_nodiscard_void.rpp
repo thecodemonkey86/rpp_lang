@@ -1,0 +1,9 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.15, V-8.2
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (nodiscard an einer void-Methode).
+package conformance.ch08;
+
+class T {
+public:
+    nodiscard void reset() { } // FEHLER
+}

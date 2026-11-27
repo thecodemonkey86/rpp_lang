@@ -1,0 +1,16 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.24
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Point importiert Equatable nicht).
+package conformance.ch04;
+
+class Point {
+public:
+    i32 x;
+}
+
+class T {
+public:
+    bool m(Point a, Point b) {
+        return a == b; // FEHLER
+    }
+}

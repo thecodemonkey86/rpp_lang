@@ -1,0 +1,27 @@
+// Konformitätstest Kapitel 6 – muss abgelehnt werden.
+// Regel: R-6.4
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Array-Elemente werden nicht verengt).
+package conformance.ch06;
+
+class Node {
+public:
+    string name;
+    Node? child;
+    shared Node? next;
+    weak Node? parent;
+    i32? count;
+    Node?[] slots = [];
+    constructor(string n) { this.name = n; }
+    bool ok() { return true; }
+    void run() { }
+    void touch() mut { }
+}
+
+class T {
+public:
+    void m(Node?[] list) {
+        if (list[0] != null) {
+            list[0].run(); // FEHLER
+        }
+    }
+}

@@ -1,0 +1,11 @@
+// Konformitätstest Kapitel 8 – muss abgelehnt werden.
+// Regel: R-8.19
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Parameter ohne own sind nur lesbar).
+package conformance.ch08;
+
+class T {
+public:
+    void m(i32 x) {
+        x = 1; // FEHLER
+    }
+}

@@ -1,5 +1,5 @@
 //! Parser für R++, von Hand geschrieben (rekursiver Abstieg, Vorrangparser für
-//! Ausdrücke). Er erkennt dieselbe Sprache wie `rpp-grammatik/RPP.g4`.
+//! Ausdrücke). Er erkennt dieselbe Sprache wie `rpp-grammar/RPP.g4`.
 //!
 //! Wo ANTLR mit unbegrenzter Vorausschau zwischen Alternativen entscheidet, probiert
 //! dieser Parser die Alternativen in der Reihenfolge der Grammatik aus und setzt bei

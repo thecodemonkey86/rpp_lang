@@ -1,0 +1,21 @@
+// Konformitätstest Kapitel 12 – Laufzeit.
+// Regel: R-12.11, Kapitel 5 V-7
+// Erwartet: Ausgabe "1\nfreigegeben\ndanach"; Exit-Code 0
+class Settings {
+public:
+    static const i32 value = 1;
+}
+
+class Tracer {
+public:
+    destructor() { print("freigegeben"); }
+}
+
+i32 main(string[] args) {
+    {
+        Tracer t = new Tracer();
+        print(Settings::value.toString());
+    }
+    print("danach");
+    return 0;
+}

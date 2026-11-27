@@ -1,0 +1,63 @@
+// Konformitätstest Kapitel 9 – muss übersetzt werden.
+// Regel: R-9.4, R-9.5, R-9.6, R-9.7, R-9.8, R-9.9
+package conformance.ch09;
+using rpp.core.Exception;
+
+class ParseError : Exception {
+public:
+    i64 line;
+    constructor(string message, i64 line) : base(message) {
+        this.line = line;
+    }
+}
+
+class SyntaxError : ParseError {
+public:
+    constructor(string message) : base(message, 0) { }
+}
+
+class Parser {
+public:
+    i32 parse(string text) {
+        if (text.length == 0) {
+            throw new ParseError("leer", 1);
+        }
+        return 1;
+    }
+
+    i32 safe(string text) {
+        i32 result = 0;
+        try {
+            result = parse(text);
+        } catch (SyntaxError e) {
+            print("Syntax: " + e.message);
+        } catch (ParseError e) {
+            print("Zeile");
+        } catch (Exception e) {
+            print(e.describe());
+        } finally {
+            print("fertig");
+        }
+        return result;
+    }
+
+    void onlyFinally(string text) {
+        try {
+            i32 n = parse(text);
+        } finally {
+            print("aufgeräumt");
+        }
+    }
+
+    void loopInFinally() {
+        try {
+            print("x");
+        } finally {
+            for (i32 i = 0; i < 3; i++) {
+                if (i == 1) {
+                    break;
+                }
+            }
+        }
+    }
+}

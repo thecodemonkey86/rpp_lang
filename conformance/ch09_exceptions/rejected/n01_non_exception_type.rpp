@@ -1,0 +1,30 @@
+// Konformitätstest Kapitel 9 – muss abgelehnt werden.
+// Regel: R-9.5
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Point erbt nicht von Exception).
+package conformance.ch09;
+using rpp.core.Exception;
+
+class ParseError : Exception {
+public:
+    i64 line;
+    constructor(string message, i64 line) : base(message) {
+        this.line = line;
+    }
+}
+
+class SyntaxError : ParseError {
+public:
+    constructor(string message) : base(message, 0) { }
+}
+
+class Point {
+public:
+    i32 x = 0;
+}
+
+class T {
+public:
+    void m() {
+        throw new Point(); // FEHLER
+    }
+}

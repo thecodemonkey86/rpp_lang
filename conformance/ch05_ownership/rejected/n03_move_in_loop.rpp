@@ -1,0 +1,25 @@
+// Konformitätstest Kapitel 5 – muss abgelehnt werden.
+// Regel: R-5.16 (T-While)
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (a wird in der Schleife verschoben und nicht neu belegt).
+package conformance.ch05;
+
+class Foo {
+public:
+    i32 value;
+    constructor(i32 v) { this.value = v; }
+    void run() { }
+    void bump() mut { this.value = this.value + 1; }
+}
+
+class T {
+public:
+    void take(own Foo f) { }
+    void m(i32 n) {
+        Foo a = new Foo(1);
+        i32 i = 0;
+        while (i < n) {
+            take(a); // FEHLER
+            i++;
+        }
+    }
+}

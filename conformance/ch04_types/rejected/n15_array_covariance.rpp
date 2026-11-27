@@ -1,0 +1,15 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.31
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (Circle[] ist kein Shape[]).
+package conformance.ch04;
+
+class Shape { }
+class Circle : Shape { }
+
+class T {
+public:
+    void take(Shape[] xs) { }
+    void m(Circle[] cs) {
+        take(cs); // FEHLER
+    }
+}

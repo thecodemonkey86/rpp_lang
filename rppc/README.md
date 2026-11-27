@@ -1,29 +1,31 @@
-# rppc – erste Implementierung von R++
+# rppc — the Rust reference implementation
 
-Rust-Workspace der ersten R++-Implementierung (siehe „R++ Implementierungsplan“). Stand: Meilensteine M1 (Syntax), M2 (Namen und Typen), M3 (Flussanalyse; Vergleich mit dem FR++-Modell) M4 (Debug-Interpreter mit Prüfmodus) und M5 (eingebaute Standardbibliothek in `crates/rpp-interp/src/stdlib.rs`, Typargumente zur Laufzeit).
+[Deutsch](README.de.md)
 
-## Inhalt
+The `rppc` workspace contains the R++ parser, semantic checker, interpreter, and standard library. Milestones M1–M5 covered syntax, names and types, flow analysis checked against FR++, the interpreter and its invariant checks, and the standard library with runtime type arguments. [Implementation plan](../R%2B%2B%20Implementation%20Plan.md)
 
-| Pfad | Zweck |
+## Contents
+
+| Path | Purpose |
 |---|---|
-| `crates/rpp-syntax/src/preprocess.rs` | bedingte Kompilierung (`#if` … `#endif`), wie `rpp-grammatik/tools/preprocess.py` |
-| `crates/rpp-syntax/src/lexer.rs` | Lexer nach den Lexer-Regeln von `RPP.g4` |
-| `crates/rpp-syntax/src/ast.rs` | abstrakter Syntaxbaum |
-| `crates/rpp-syntax/src/parser.rs` | Parser: rekursiver Abstieg, Vorrangparser für Ausdrücke, Rücksetzen wo ANTLR mit voller Vorausschau entscheidet |
-| `crates/rpp-syntax/src/lib.rs` | Einstieg `rpp_syntax::parse`, Prüfung der Ausdrucksanweisungen (R-8.12), Unit-Tests zum Vorrang |
-| `crates/rpp-sema/src/` | Projekte (`project.rs`, `yaml.rs`), Deklarationen und Klassenregeln (`defs.rs`), Typen (`ty.rs`), Rümpfe mit Flussanalyse (`body.rs`), Flusszustand, Orte und Loans (`flow.rs`) |
-| `crates/rpp-sema/src/rt.rs` | Angaben der Prüfung für die Ausführung (`Program::rt`) |
-| `crates/rpp-interp/src/` | Debug-Interpreter: Werte und Besitzformen (`value.rs`), Ausführung, Freigabe, Exceptions, Sperren (`lib.rs`) |
-| `std/rpp/…` | Standardbibliothek als R++-Quelltext (Kapitel 13); eingebaute Teile führen die Methoden mit `fail("eingebaut")` im Interpreter aus (`crates/rpp-interp/src/stdlib.rs`), `rpp.random`, `rpp.collections.Vectors`, `rpp.collections.Deque`, `rpp.text.Text` und der Rundungs-Teil von `rpp.math` sind reiner R++-Quelltext |
-| `crates/rppc/src/conftest.rs` | semantischer Konformitätstestlauf `rppc test` |
-| `crates/rppc/src/main.rs` | Kommandozeile |
-| `crates/rppc/src/syntaxtest.rs` | Syntax-Testlauf mit denselben Fällen wie `rpp-grammatik/tools/run_tests.py` |
-| `testbericht.txt` | Ausgabe des letzten Syntax-Testlaufs |
-| `testlauf.txt` | Ausgabe des letzten semantischen Testlaufs |
+| `crates/rpp-syntax/src/preprocess.rs` | conditional compilation (`#if` ... `#endif`), such as `rpp-grammar/tools/preprocess.py` |
+| `crates/rpp-syntax/src/lexer.rs` | Lexer under the Lexer Rules of `RPP.g4` |
+| `crates/rpp-syntax/src/ast.rs` | Abstract syntax tree |
+| `crates/rpp-syntax/src/parser.rs` | Recursive descent, expression precedence, and backtracking where ANTLR uses lookahead |
+| `crates/rpp-syntax/src/lib.rs` | Parser entry point `rpp_syntax::parse`, expression statement checks (R-8.12), and precedence tests |
+| `crates/rpp-sema/src/` | Project loading (`project.rs`, `yaml.rs`), declarations and class rules (`defs.rs`), types (`ty.rs`), body checking (`body.rs`), and flow state, places, and loans (`flow.rs`) |
+| `crates/rpp-sema/src/rt.rs` | Semantic checker data consumed by the interpreter through `Program::rt` |
+| `crates/rpp-interp/src/` | Debug interpreters: Values and ownership modes (`value.rs`), execution, release, exceptions, locks (`lib.rs`) |
+| `std/rpp/…` | Standard library as R++ source text (chapter 13); built-in parts execute the methods with `fail("eingebaut")` in the interpreter (`crates/rpp-interp/src/stdlib.rs`), `rpp.random`, `rpp.collections.Vectors`, `rpp.collections.Deque`, `rpp.text.Text` and the rounding part of `rpp.math` are pure R++ source text |
+| `crates/rppc/src/conftest.rs` | Semantic Conformance test run `rppc test` |
+| `crates/rppc/src/main.rs` | Command line |
+| `crates/rppc/src/syntaxtest.rs` | Syntax test run with the same cases as `rpp-grammar/tools/run_tests.py` |
+| [Syntax test report](test-report.txt) · [Deutsch](test-report.de.txt) | Historical syntax test output |
+| [Conformance test report](test-run.txt) · [Deutsch](test-run.de.txt) | Historical semantic test output |
 
-## Bauen und testen
+## Building and testing
 
-Voraussetzung: Rust (getestet mit 1.83). Es gibt keine fremden Crates.
+Prerequisite: Rust (tested with 1.83).
 
 ```
 cargo build
@@ -31,66 +33,66 @@ cargo test
 cargo run -- syntaxtest ..
 ```
 
-`syntaxtest` liest aus dem Projektverzeichnis (`..`):
+`syntaxtest` reads from the project directory (`..`):
 
-- `rpp-grammatik/tests/pos/*.rpp` – müssen akzeptiert werden, teils mit mehreren Symbolsätzen
-- `rpp-grammatik/tests/neg/*.rpp` – müssen abgelehnt werden
-- `rpp-grammatik/tests/lesarten/*.rpp` – die erste Anweisung muss als die angegebene Grammatikregel gelesen werden
-- `konformitaet/**` – müssen syntaktisch gültig sein; ein abgelehnter Test darf nur in der mit `FEHLER` markierten Zeile scheitern
+- `rpp-grammar/tests/pos/*.rpp` – must be accepted, partly with several sets of symbols
+- `rpp-grammar/tests/neg/*.rpp` – Must be rejected
+- `rpp-grammar/tests/parse_probes/*.rpp` – the first statement must be read as the specified grammar rule
+- `conformance/**` – must be syntactically valid; a rejected test must fail only in the line marked with `FEHLER`
 
-Einzelne Dateien parsen oder prüfen:
+Parse or check individual files:
 
 ```
-cargo run -- parse --symbols debug,linux DATEI.rpp
-cargo run -- check DATEI.rpp|PROJEKTVERZEICHNIS
+cargo run -- parse --symbols debug,linux FILE.rpp
+cargo run -- check PATH
 ```
 
-Konformitätstests semantisch prüfen (übersetzen oder ablehnen, Warnungen nur in `WARNUNG`-Zeilen; `-v` zeigt jeden Test):
+Run the conformance suite. `-v` prints the result of each test.
 
 ```
 cargo run -- test ..
 ```
 
-Laufzeittests werden dabei in beiden Modi und im Prüfmodus ausgeführt (Ausgabe, Exit-Code, Fehlerausgabe). Jeder Laufzeittest läuft in einem frischen, leeren Arbeitsverzeichnis (V-14.3). Stand 23.11.2026: 293 bestanden, 0 fehlgeschlagen.
+Runtime tests are executed in both modes and in the test mode (output, exit code, error output). Each runtime test runs in a fresh, empty working directory (V-14.3).
 
-Ein Programm ausführen. `Console::readLine()` liest bei Bedarf von der Standardeingabe, auch aus einer Pipe oder Datei. Argumente nach `--` gehen an das Programm.
-
-```
-cargo run -- run DATEI.rpp|PROJEKTVERZEICHNIS -- eins zwei
-cargo run -- run --release DATEI.rpp
-cargo run -- run --check-invariants DATEI.rpp      # Prüfmodus: Invarianten I-1, I-2, I-4, I-5 aus Kapitel 5
-cargo run -- tokens DATEI.rpp              # Tokens, eine Zeile je Token (Vergleich mit rpp-compiler)
-cargo run -- pre debug,linux DATEI.rpp     # bedingte Kompilierung angewendet
-cargo run -- ast debug,linux DATEI.rpp     # Syntaxbaum in Textform (rpp-syntax/src/dump.rs)
-cargo run -- project std PFAD              # geladene Projekte, Dateien, Meldungen (--release vor std)
-cargo run -- defs std PFAD                 # Deklarationstabellen und Meldungen der Deklarationsphase
-cargo run -- diagnose std PFAD               # alle Meldungen der Prüfung mit Warnungen und Begründungen
-```
-
-Eine Meldung nennt die verletzte Regel und, wo es hilft, die Regeln, die den Verstoß begründen:
+Use a source file or project directory for `PATH`. In a `run` command, arguments after the second `--` go to the R++ program. `Console::readLine()` reads from standard input, including from a pipe or redirected file.
 
 ```
-n03_zuweisung_hebt_auf.rpp:26:8: Error [R-6.2, R-6.11] z has nullable type Node? and has not been checked here
+cargo run -- run PATH -- one two
+cargo run -- run --release FILE.rpp
+cargo run -- run --check-invariants FILE.rpp   # Check invariants I-1, I-2, I-4, and I-5 from Chapter 5
+cargo run -- tokens FILE.rpp                   # One token per line for comparison against rpp-compiler
+cargo run -- pre debug,linux FILE.rpp         # Apply conditional compilation
+cargo run -- ast debug,linux FILE.rpp         # Print the syntax tree
+cargo run -- project std PATH                 # List projects, files, and diagnostics. Place --release before std.
+cargo run -- defs std PATH                    # Print declaration tables and declaration diagnostics
+cargo run -- diagnose std PATH                # Print all diagnostics, including warnings and rule references
 ```
 
-## Gleichwertigkeit mit der Grammatik
+A message identifies the violated rule and, where it helps, the rules that justify the violation:
 
-Der Python-Testlauf (`rpp-grammatik/tools/run_tests.py`) prüft dieselben Fälle mit dem aus `RPP.g4` erzeugten ANTLR-Parser. Zusätzlich vergleicht der Differenztest beide Parser an zufällig mutierten Programmen:
+```
+n03_assignment_invalidates_narrowing.rpp:26:8: Error [R-6.2, R-6.11] z has nullable type Node? and has not been checked here
+```
+
+## Equivalence with grammar
+
+The Python test run (`rpp-grammar/tools/run_tests.py`) checks the same cases with the ANTLR parser generated from `RPP.g4`, and the differential test compares both parsers on randomly mutated programs:
 
 ```
 cd ..
-py rpp-grammatik/tools/difftest.py 3000 2
+py rpp-grammar/tools/difftest.py 3000 2
 ```
 
-Stand 21.11.2026: 9 600 Mutanten mit drei Seeds, kein Unterschied in Annahme oder Ablehnung, die erste Fehlerzeile stimmt in allen abgelehnten Fällen überein.
+Status 21.11.2026: 9 600 mutants with three seeds, no difference in acceptance or rejection, the first line of error matches in all rejected cases.
 
-## Vergleich mit dem FR++-Modell
+## Comparison with the FR++ model
 
-`fr-modell/vergleich.py` übersetzt FR++-Programme in R++ und prüft, ob `rppc` sie genauso annimmt oder ablehnt wie das Modell (braucht `target/debug/rppc`):
+`fr-model/compare.py` translates FR++ programs into R++ and checks whether `rppc` accepts or rejects them in the same way as the model (needs `target/debug/rppc`):
 
 ```
-cd ../fr-modell
-py -X utf8 vergleich.py 5000
+cd ../fr-model
+py -X utf8 compare.py 5000
 ```
 
-Stand 21.11.2026: keine Abweichung bei allen übersetzbaren handgeschriebenen Programmen und 4466 übersetzbaren von 5000 Zufallsprogrammen (`fr-modell/vergleichsbericht.txt`).
+Status 21.11.2026: no deviation for all translatable handwritten programs and 4466 translatable from 5000 random programs (`fr-model/comparison-report.txt`).

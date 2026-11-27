@@ -1,7 +1,7 @@
 //! Syntax von R++: bedingte Kompilierung, Lexer, Parser und AST.
 //!
 //! Der Einstiegspunkt ist [`parse`]. Er erkennt dieselbe Sprache wie die normative
-//! Grammatik `rpp-grammatik/RPP.g4` zusammen mit den Prüfungen, die dort als
+//! Grammatik `rpp-grammar/RPP.g4` zusammen mit den Prüfungen, die dort als
 //! „späterer Prüfschritt“ vermerkt und im Python-Testlauf umgesetzt sind
 //! (erlaubte Formen von Ausdrucksanweisungen, Kapitel 8, R-8.12).
 
@@ -35,7 +35,7 @@ pub fn parse(source: &str, symbols: &HashSet<String>) -> Result<ast::Compilation
 }
 
 /// Prüft, dass jede Ausdrucksanweisung ohne Zuweisung ein Aufruf oder `++`/`--` ist
-/// (R-8.12). Entspricht `check_expr_statements` in `rpp-grammatik/tools/run_tests.py`.
+/// (R-8.12). Entspricht `check_expr_statements` in `rpp-grammar/tools/run_tests.py`.
 mod check {
     use crate::ast::*;
     use crate::SyntaxError;

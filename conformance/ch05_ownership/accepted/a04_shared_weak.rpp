@@ -1,0 +1,42 @@
+// Konformitätstest Kapitel 5 – muss übersetzt werden.
+// Regel: R-5.5, R-5.6, R-5.18, V-1, V-2, V-6, V-9
+package conformance.ch05;
+
+class Node {
+public:
+    string name;
+    shared Node? next;
+    weak Node? parent;
+    constructor(string n) {
+        this.name = n;
+        this.next = null;
+        this.parent = null;
+    }
+    void rename(string n) mut { this.name = n; }
+    string getName() { return this.name; }
+}
+
+class SharedDemo {
+public:
+    void demo() {
+        Node a = new Node("a");
+        // V-9: Das Ziel ist ausdrücklich shared; a wird verschoben.
+        shared Node s = a;
+        // Zähler + 1.
+        shared Node t = s;
+        // V-1: Veränderung über shared, zur Laufzeit geprüft.
+        t.rename("b");
+        // R-5.6: weak aus shared.
+        weak Node w = s;
+        // V-6, R-5.18: Zugriff über lock().
+        shared Node? p = w.lock();
+        if (p != null) {
+            print(p.getName());
+        }
+        Node child = new Node("c");
+        child.parent = s;
+        s.next = child;
+        // V-2: Zugriff durch ein shared-Feld über eine Hilfsvariable des Compilers.
+        string n = s.next?.getName() ?? "-";
+    }
+}

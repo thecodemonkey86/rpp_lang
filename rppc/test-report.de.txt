@@ -1,0 +1,503 @@
+== Positive Tests (müssen akzeptiert werden) ==
+  ok    01_original_examples.rpp
+  ok    02_ownership.rpp
+  ok    03_null_safety.rpp
+  ok    04_tuple.rpp
+  ok    05_arrays.rpp
+  ok    06_classes.rpp
+  ok    07_generics_and_operators.rpp
+  ok    08_lambdas.rpp
+  ok    09_control_flow.rpp
+  ok    10_cast_const_var_main.rpp
+  ok    11_conditional_compilation.rpp [debug]
+  ok    11_conditional_compilation.rpp [release]
+  ok    12_literals_generics_function_types.rpp
+  ok    13_conditions.rpp [debug/linux]
+  ok    13_conditions.rpp [debug/windows]
+  ok    13_conditions.rpp [TRACE/macos/release]
+  ok    13_conditions.rpp [release/windows]
+  ok    14_arrays_slices.rpp
+  ok    15_export.rpp
+  ok    16_ref_borrows.rpp
+  ok    17_classes_mixins_generics.rpp
+  ok    18_borrow_return.rpp
+
+== Negative Tests (müssen abgelehnt werden) ==
+  ok    Exponent ohne Punkt
+  ok    Exponent ohne Ziffern
+  ok    freie Funktion außer main
+  ok    main mit falscher Signatur
+  ok    Rückgabewerte ohne Tupel-Klammern
+  ok    fn-Keyword wie in Rust
+  ok    C++-Lambda mit Capture-Liste
+  ok    Lambda ohne Parametertypen
+  ok    C-Cast
+  ok    Operator ! zum Überspringen der Null-Prüfung
+  ok    veränderbares statisches Feld
+  ok    abstrakte Methode mit Rumpf
+  ok    lokale Variable mit mut
+  ok    bloßer Ausdruck als Anweisung
+  ok    bloßer Name als Anweisung
+  ok    Feldzugriff als Anweisung
+  ok    Objekterzeugung als Anweisung
+  ok    Vergleich als Anweisung
+  ok    Zuweisung an Rechenausdruck
+  ok    Tilde als Veränderbarkeits-Marker
+  ok    & als Veränderbarkeits-Marker (alte Schreibweise)
+  ok    Properties (zurückgestellt)
+  ok    Schlüsselwort als Paketname
+  ok    Schlüsselwort als Methodenname
+  ok    #if ohne #endif
+  ok    #else ohne #if
+  ok    unbekannte Direktive
+  ok    Makro-Definition
+  ok    #elif ohne #if
+  ok    #elif nach #else
+  ok    #if ohne Bedingung
+  ok    Bedingung mit fehlender Klammer
+  ok    Bedingung mit doppeltem Operator
+  ok    Vergleich in Bedingung
+  ok    Ziffern-Trenner am Ende
+  ok    Trenner direkt vor dem Punkt
+  ok    Typ-Suffix an Literal
+  ok    Constraints mit |
+  ok    explizite Typargumente beim Methodenaufruf
+  ok    eingebautes print ohne Klammern
+  ok    Array-Größe als Ausdruck
+  ok    Array-Größe als Gleitkommazahl
+  ok    Bereich mit drei Punkten
+  ok    Bereich mit Schrittweite
+  ok    Bereich außerhalb eines Index
+  ok    Slice-Typ in Kurzschreibweise
+  ok    Bereich als Anweisung
+  ok    export an einer Methode
+  ok    export an einem Feld
+  ok    export an main
+  ok    export nach abstract
+  ok    doppeltes export
+  ok    export als Name
+  ok    export an using
+  ok    Gleitkommazahl ohne führende Ziffer
+  ok    Mehrfachdeklaration im C-Stil
+  ok    Array-Deklaration im C-Stil
+  ok    Vererbung mit extends
+  ok    Mehrfachvererbung
+  ok    override und virtual zugleich
+  ok    Generics mit eckigen Klammern
+  ok    Fallunterscheidung mit beliebigem Ausdruck
+  ok    Bedingungsausdruck als Anweisung
+  ok    Lambda als Operand ohne Klammern
+  ok    mehrere Variablen in einer for-Initialisierung
+  ok    Mehrfachdeklaration mit var
+  ok    Tupel-Deklaration mit nur einer Variable im for-Kopf
+  ok    Kopie als Methodenaufruf
+  ok    Kopie ohne Klammern
+  ok    Kopie ohne Verwendung als Anweisung
+  ok    Typargumente ohne statischen Zugriff
+  ok    statischer Zugriff am generischen Typ mit Punkt
+  ok    Case-Marke mit Punkt
+  ok    Array-Größe mit Punkt
+  ok    :: ohne Name dahinter
+  ok    :: zweimal hintereinander
+  ok    :: nach this
+  ok    :: nach einem Aufruf
+  ok    statische Konstante als Anweisung
+  ok    ref ohne Initialisierung
+  ok    ref mit mut nur am Typ
+  ok    ref mit mut nur am Initialisierer
+  ok    ref mit Besitzform
+  ok    ref mit var
+  ok    ref an einem Feld
+  ok    ref an einem Parameter
+  ok    ref im for-Kopf
+  ok    zwei ref-Variablen in einer Deklaration
+  ok    ref als Name
+  ok    as ohne Typ
+  ok    as ohne Operand
+  ok    as mit Ausdruck statt Typ
+  ok    as als Name
+  ok    Enum-Variante mit Daten und Wert
+  ok    Enum-Wert als Ausdruck
+  ok    Enum-Wert als Gleitkommazahl
+  ok    Enum-Wert als Konstantenname
+  ok    new-Constraint mit Parametern
+  ok    new-Constraint ohne Klammern
+  ok    Mixin mit Feld
+  ok    Mixin mit Konstruktor
+  ok    Mixin mit Sichtbarkeits-Label
+  ok    Kettenzuweisung
+  ok    Zuweisung in Bedingung
+  ok    Zuweisung als Argument
+  ok    Verbundzuweisung als Operand
+  ok    Zuweisung als Lambda-Rumpf
+  ok    discard ohne Ausdruck
+  ok    discard als Name
+  ok    nodiscard an einem Feld
+  ok    nodiscard nach static
+  ok    nodiscard an einem Konstruktor
+  ok    try ohne catch und finally
+  ok    catch ohne Typ
+  ok    finally vor catch
+  ok    throw ohne Ausdruck
+  ok    mut nach dem Typargument
+  ok    doppeltes mut im Typargument
+  ok    mut an void
+  ok    ref void als Rückgabetyp
+  ok    ref mit Besitzform als Rückgabetyp
+  ok    return mut ohne Ausdruck
+  ok    ref an einem Konstruktor
+  ok    using mit Platzhalter
+  ok    using-Alias ohne Ziel
+  ok    using-Alias mit qualifiziertem Namen
+  ok    using nach einer Klasse
+  ok    mut nach dem Parametertyp
+  ok    & als Markierung am Argument (alte Schreibweise)
+  ok    mut als Name
+  ok    mut am Rückgabetyp ohne ref
+  ok    & nach der Parameterliste (alte Schreibweise)
+
+== Lesarten (müssen wie erwartet gelesen werden) ==
+  ok    a < b > c;  ist eine Deklaration  ->  localVarDecl
+  ok    List<Foo> x = y;  ->  localVarDecl
+  ok    Foo? f = flag ? a : b;  ->  localVarDecl
+  ok    x = a < b ? c : d;  ->  exprStatement
+  ok    x = a < b > (c);  ist ein Vergleich  ->  exprStatement
+  ok    (i32 a, i32 b) = f();  ->  tupleDecl
+  ok    (i32, i32) t = f();  ->  localVarDecl
+  ok    (a, b) = f();  ->  exprStatement
+  ok    (a).run();  ->  exprStatement
+  ok    a.b c = d;  ->  localVarDecl
+  ok    a.b(c);  ->  exprStatement
+  ok    a[i] = 3;  ->  exprStatement
+  ok    a[] b = c;  ->  localVarDecl
+  ok    a?.b();  ->  exprStatement
+  ok    a? b = c;  ->  localVarDecl
+  ok    shared Foo f = g;  ->  localVarDecl
+  ok    own (i32 x) => x; als Argument  ->  exprStatement
+  ok    for über Array  ->  forEachStmt
+  ok    for mit Zähler  ->  forStmt
+  ok    for mit Tupel-Deklaration  ->  forStmt
+  ok    for mit Tupel-Zuweisung an vorhandene Variablen  ->  forStmt
+  ok    x = y ?? z ? 1 : 2;  ->  exprStatement
+  ok    main als Variablenname  ->  localVarDecl
+  ok    Foo? f;  ->  localVarDecl
+  ok    List<Foo>? x = null;  ->  localVarDecl
+  ok    Func<i32, i32>[] fs = [];  ->  localVarDecl
+  ok    geklammertes Lambda wird aufgerufen  ->  exprStatement
+  ok    else gehört zum inneren if  ->  ifStmt
+  ok    Foo b = copy(a);  ->  localVarDecl
+  ok    copy(a).run();  ->  exprStatement
+  ok    List<Foo>::create();  ->  exprStatement
+  ok    List<Foo> xs = List<Foo>::create();  ->  localVarDecl
+  ok    x = List<List<Foo>>::empty().size();  ->  exprStatement
+  ok    x = Math::max(a, b);  ->  exprStatement
+  ok    x = i32::parse(s);  ->  exprStatement
+  ok    i64 m = i64::MAX;  ->  localVarDecl
+  ok    x = string::join(", ", parts);  ->  exprStatement
+  ok    Math::max(a, b);  als Anweisung  ->  exprStatement
+  ok    x = my.pkg.Registry<Foo>::count();  ->  exprStatement
+  ok    x = flag ? Color::Red : Color::Blue;  ->  exprStatement
+  ok    Shape s = Shape::Circle(1.0);  ->  localVarDecl
+  ok    for über statischen Aufruf  ->  forEachStmt
+  ok    case mit ::  ->  switchStmt
+  ok    i32[Limits::N] a = b;  festes Array  ->  localVarDecl
+  ok    ref Foo f = list[0];  ->  refDecl
+  ok    ref mut Foo g = mut a.b;  ->  refDecl
+  ok    ref Foo? n = this.next;  ->  refDecl
+  ok    ref List<Foo> xs = this.items;  ->  refDecl
+  ok    ref Circle? c = s as Circle;  ->  refDecl
+  ok    a[i++] = 3;  ->  exprStatement
+  ok    x = a[i++] + --j;  ->  exprStatement
+  ok    discard list.pop();  ->  discardStmt
+  ok    try mit finally ohne catch  ->  tryStmt
+  ok    Func<mut Foo, void> f = g;  ->  localVarDecl
+  ok    Func<own Foo, mut Foo, i32> f = g;  ->  localVarDecl
+  ok    Lambda mit mut-Parameter als Argument  ->  exprStatement
+  ok    x = a < b & c;  bleibt Ausdruck  ->  exprStatement
+  ok    x += y * 2;  ->  exprStatement
+  ok    Lambda mit Block und Zuweisung  ->  exprStatement
+  ok    x = s as Circle != null;  ->  exprStatement
+  ok    x = a + b as Foo;  ->  exprStatement
+  ok    x = (s as Circle)?.r() ?? 0.0;  ->  exprStatement
+  ok    x = s as List<Foo>;  ->  exprStatement
+  ok    x = s as Foo < y;  Vergleich nach as  ->  exprStatement
+  ok    x = a < b > c.d();  bleibt ein Vergleich  ->  exprStatement
+  ok    x = List<Foo>(a);  ist ein Vergleich  ->  exprStatement
+  ok    x = max<i32>(a);  ist ein Vergleich  ->  exprStatement
+  ok    Func<i32, void> f = g;  ->  localVarDecl
+  ok    Func<void> f = g;  ->  localVarDecl
+  ok    i64 x = 1_000_000;  ->  localVarDecl
+  ok    i32 x = _1;  ist ein Name  ->  localVarDecl
+  ok    x = a & b;  bleibt bitweises Und  ->  exprStatement
+  ok    i32[4] a = b;  festes Array  ->  localVarDecl
+  ok    a[N] b;  ist eine Deklaration  ->  localVarDecl
+  ok    List[Foo] x = y;  festes Array mit Größe Foo  ->  localVarDecl
+  ok    a[N] = b;  ist eine Zuweisung  ->  exprStatement
+  ok    a[i] = b[1..3].length;  ->  exprStatement
+  ok    Slice<i32> s = v[1..3];  ->  localVarDecl
+  ok    x = a[1..3];  ohne Leerzeichen kein Float  ->  exprStatement
+  ok    f(mut v[0..2]);  ->  exprStatement
+  ok    for (mut var f : mut list) { }  ->  forEachStmt
+
+== Konformitätstests (nur Syntax) ==
+  ok    ch04_types/rejected/n01_int_as_condition.rpp
+  ok    ch04_types/rejected/n02_cast_to_bool.rpp
+  ok    ch04_types/rejected/n03_byte_arithmetic.rpp
+  ok    ch04_types/rejected/n04_char_arithmetic.rpp
+  ok    ch04_types/rejected/n05_i64_to_f64.rpp
+  ok    ch04_types/rejected/n06_literal_out_of_range.rpp
+  ok    ch04_types/rejected/n07_no_common_type.rpp
+  ok    ch04_types/rejected/n08_unsigned_negation.rpp
+  ok    ch04_types/rejected/n09_assign_to_string_index.rpp
+  ok    ch04_types/rejected/n10_string_plus_number.rpp
+  ok    ch04_types/rejected/n11_as_unrelated_type.rpp
+  ok    ch04_types/rejected/n12_equality_without_equatable.rpp
+  ok    ch04_types/rejected/n13_duplicate_enum_value.rpp
+  ok    ch04_types/rejected/n14_compare_data_carrying_enum.rpp
+  ok    ch04_types/rejected/n15_array_covariance.rpp
+  ok    ch04_types/rejected/n16_tuple_comparison.rpp
+  ok    ch04_types/rejected/n17_var_null.rpp
+  ok    ch04_types/rejected/n18_generic_covariance.rpp
+  ok    ch04_types/rejected/n19_read_before_assignment.rpp
+  ok    ch04_types/rejected/n20_void_before_end.rpp
+  ok    ch04_types/rejected/n21_f32_literal_out_of_range.rpp
+  ok    ch04_types/rejected/n22_moved_data_carrying_enum.rpp
+  ok    ch04_types/rejected/n23_compare_func.rpp
+  ok    ch04_types/rejected/n24_non_nullable_weak_lock.rpp
+  ok    ch04_types/rejected/n25_tuple_after_destructuring.rpp
+  ok    ch04_types/rejected/n26_cannot_infer_type_argument.rpp
+  ok    ch04_types/rejected/n27_operation_without_constraint.rpp
+  ok    ch04_types/accepted/a01_primitive.rpp
+  ok    ch04_types/accepted/a02_conversions.rpp
+  ok    ch04_types/accepted/a03_string.rpp
+  ok    ch04_types/accepted/a04_classes.rpp
+  ok    ch04_types/accepted/a05_enums.rpp
+  ok    ch04_types/accepted/a06_arrays_tuples.rpp
+  ok    ch04_types/accepted/a07_nullable.rpp
+  ok    ch04_types/accepted/a08_values_and_ownership.rpp
+  ok    ch04_types/runtime/l01_arithmetic.rpp
+  ok    ch04_types/runtime/l02_division_by_zero.rpp
+  ok    ch05_ownership/rejected/n01_use_after_move.rpp
+  ok    ch05_ownership/rejected/n02_conditional_move.rpp
+  ok    ch05_ownership/rejected/n03_move_in_loop.rpp
+  ok    ch05_ownership/rejected/n04_vector_grows_in_loop.rpp
+  ok    ch05_ownership/rejected/n05_duplicate_mut_borrow.rpp
+  ok    ch05_ownership/rejected/n06_move_and_borrow_in_call.rpp
+  ok    ch05_ownership/rejected/n07_overlapping_receiver.rpp
+  ok    ch05_ownership/rejected/n08_move_out_of_field.rpp
+  ok    ch05_ownership/rejected/n09_return_field.rpp
+  ok    ch05_ownership/rejected/n10_borrow_in_field.rpp
+  ok    ch05_ownership/rejected/n11_vector_grows_with_slice.rpp
+  ok    ch05_ownership/rejected/n12_write_through_read_only_borrow.rpp
+  ok    ch05_ownership/rejected/n13_duplicate_shared_root.rpp
+  ok    ch05_ownership/rejected/n14_shared_as_own.rpp
+  ok    ch05_ownership/rejected/n15_move_out_of_non_own_lambda.rpp
+  ok    ch05_ownership/rejected/n16_take_non_nullable_field.rpp
+  ok    ch05_ownership/rejected/n17_ref_lives_to_end_of_block.rpp
+  ok    ch05_ownership/rejected/n18_ref_to_temporary.rpp
+  ok    ch05_ownership/rejected/n19_mutate_read_only_ref.rpp
+  ok    ch05_ownership/rejected/n20_ref_mut_and_direct_access.rpp
+  ok    ch05_ownership/rejected/n21_own_to_weak.rpp
+  ok    ch05_ownership/rejected/n22_destructure_with_destructor.rpp
+  ok    ch05_ownership/rejected/n23_destructure_wrong_field_count.rpp
+  ok    ch05_ownership/rejected/n24_destructure_borrowed_value.rpp
+  ok    ch05_ownership/rejected/n25_destructure_private_fields.rpp
+  ok    ch05_ownership/rejected/n26_used_after_destructuring.rpp
+  ok    ch05_ownership/accepted/a01_moves.rpp
+  ok    ch05_ownership/accepted/a02_fields.rpp
+  ok    ch05_ownership/accepted/a03_borrows.rpp
+  ok    ch05_ownership/accepted/a04_shared_weak.rpp
+  ok    ch05_ownership/accepted/a05_lambdas.rpp
+  ok    ch05_ownership/accepted/a06_ref.rpp
+  ok    ch05_ownership/accepted/a07_destructure.rpp
+  ok    ch05_ownership/runtime/l01_destructure.rpp
+  ok    ch05_ownership/runtime/l02_own_argument_expression.rpp
+  ok    ch05_ownership/runtime/l03_copy_enum_and_tuple.rpp
+  ok    ch06_null_safety/rejected/n01_unchecked.rpp
+  ok    ch06_null_safety/rejected/n02_narrow_field.rpp
+  ok    ch06_null_safety/rejected/n03_assignment_invalidates_narrowing.rpp
+  ok    ch06_null_safety/rejected/n04_if_without_exit.rpp
+  ok    ch06_null_safety/rejected/n05_wrong_side_of_or.rpp
+  ok    ch06_null_safety/rejected/n06_compare_non_nullable.rpp
+  ok    ch06_null_safety/rejected/n07_safe_access_on_non_nullable.rpp
+  ok    ch06_null_safety/rejected/n08_fallback_not_nullable.rpp
+  ok    ch06_null_safety/rejected/n09_void_as_value.rpp
+  ok    ch06_null_safety/rejected/n10_nullable_arithmetic.rpp
+  ok    ch06_null_safety/rejected/n11_narrow_element.rpp
+  ok    ch06_null_safety/rejected/n12_loop_invalidates_narrowing.rpp
+  ok    ch06_null_safety/rejected/n13_move_out_of_field.rpp
+  ok    ch06_null_safety/rejected/n14_try_invalidates_narrowing.rpp
+  ok    ch06_null_safety/rejected/n15_no_null_assignment_operator.rpp
+  ok    ch06_null_safety/rejected/n16_null_for_non_nullable.rpp
+  ok    ch06_null_safety/rejected/n17_unchecked_downcast.rpp
+  ok    ch06_null_safety/accepted/a01_narrowing.rpp
+  ok    ch06_null_safety/accepted/a02_shorthand.rpp
+  ok    ch06_null_safety/accepted/a03_fields.rpp
+  ok    ch06_null_safety/accepted/a04_lambdas_generics.rpp
+  ok    ch06_null_safety/accepted/a05_downcast_weak_try.rpp
+  ok    ch06_null_safety/runtime/l01_assert.rpp
+  ok    ch06_null_safety/runtime/l02_safe_access.rpp
+  ok    ch07_classes/rejected/n01_private_access_from_outside.rpp
+  ok    ch07_classes/rejected/n02_default_visibility_is_private.rpp
+  ok    ch07_classes/rejected/n03_no_default_constructor.rpp
+  ok    ch07_classes/rejected/n04_missing_base_call.rpp
+  ok    ch07_classes/rejected/n05_uninitialized_field.rpp
+  ok    ch07_classes/rejected/n06_missing_copy_in_subclass.rpp
+  ok    ch07_classes/rejected/n07_missing_override.rpp
+  ok    ch07_classes/rejected/n08_non_virtual.rpp
+  ok    ch07_classes/rejected/n09_different_mode.rpp
+  ok    ch07_classes/rejected/n10_narrower_visibility.rpp
+  ok    ch07_classes/rejected/n11_instantiate_abstract_class.rpp
+  ok    ch07_classes/rejected/n12_return_type_only.rpp
+  ok    ch07_classes/rejected/n13_ownership_only.rpp
+  ok    ch07_classes/rejected/n14_ambiguous.rpp
+  ok    ch07_classes/rejected/n15_mixin_conflict.rpp
+  ok    ch07_classes/rejected/n16_missing_requirement.rpp
+  ok    ch07_classes/rejected/n17_static_mixin_member.rpp
+  ok    ch07_classes/rejected/n18_new_without_constraint.rpp
+  ok    ch07_classes/rejected/n19_unsatisfied_constraint.rpp
+  ok    ch07_classes/rejected/n20_method_without_constraint.rpp
+  ok    ch07_classes/rejected/n21_field_and_method_same_name.rpp
+  ok    ch07_classes/rejected/n22_inheritance_cycle.rpp
+  ok    ch07_classes/rejected/n23_direct_destructor_call.rpp
+  ok    ch07_classes/rejected/n24_base_on_another_object.rpp
+  ok    ch07_classes/rejected/n25_constant_with_type_parameter.rpp
+  ok    ch07_classes/rejected/n26_explicit_type_argument.rpp
+  ok    ch07_classes/rejected/n27_mixin_unknown_method.rpp
+  ok    ch07_classes/rejected/n28_new_with_primitive_type.rpp
+  ok    ch07_classes/rejected/n29_mixin_type_missing_method.rpp
+  ok    ch07_classes/rejected/n30_this_in_static_method.rpp
+  ok    ch07_classes/accepted/a01_classes.rpp
+  ok    ch07_classes/accepted/a02_inheritance.rpp
+  ok    ch07_classes/accepted/a03_copy.rpp
+  ok    ch07_classes/accepted/a04_mixins.rpp
+  ok    ch07_classes/accepted/a05_overloading.rpp
+  ok    ch07_classes/accepted/a06_generics.rpp
+  ok    ch07_classes/runtime/l01_construction.rpp
+  ok    ch07_classes/runtime/l02_destructors.rpp
+  ok    ch07_classes/runtime/l03_virtual_copy.rpp
+  ok    ch07_classes/runtime/l04_new_t.rpp
+  ok    ch08_statements/rejected/n01_increment_float.rpp
+  ok    ch08_statements/rejected/n02_no_common_type.rpp
+  ok    ch08_statements/rejected/n03_range_on_string.rpp
+  ok    ch08_statements/rejected/n04_unused_result.rpp
+  ok    ch08_statements/rejected/n05_discard_nodiscard.rpp
+  ok    ch08_statements/rejected/n06_discard_void.rpp
+  ok    ch08_statements/rejected/n07_nodiscard_void.rpp
+  ok    ch08_statements/rejected/n08_override_without_nodiscard.rpp
+  ok    ch08_statements/rejected/n09_shadowing.rpp
+  ok    ch08_statements/rejected/n10_assign_to_const.rpp
+  ok    ch08_statements/rejected/n11_compound_assignment_narrows.rpp
+  ok    ch08_statements/rejected/n12_foreach_over_non_iterable.rpp
+  ok    ch08_statements/rejected/n13_duplicate_label.rpp
+  ok    ch08_statements/rejected/n14_missing_default.rpp
+  ok    ch08_statements/rejected/n15_non_exhaustive_enum.rpp
+  ok    ch08_statements/rejected/n16_break_outside_loop.rpp
+  ok    ch08_statements/rejected/n17_missing_return.rpp
+  ok    ch08_statements/rejected/n18_assign_to_parameter.rpp
+  ok    ch08_statements/rejected/n19_outside_block.rpp
+  ok    ch08_statements/rejected/n20_new_as_statement.rpp
+  ok    ch08_statements/rejected/n21_non_bool_loop_condition.rpp
+  ok    ch08_statements/rejected/n22_assignment_as_expression.rpp
+  ok    ch08_statements/accepted/a01_evaluation.rpp
+  ok    ch08_statements/accepted/a02_control_flow.rpp
+  ok    ch08_statements/accepted/a03_discard.rpp
+  ok    ch08_statements/accepted/a04_return.rpp
+  ok    ch08_statements/accepted/a05_warning.rpp
+  ok    ch08_statements/runtime/l01_order.rpp
+  ok    ch08_statements/runtime/l02_short_circuit.rpp
+  ok    ch08_statements/runtime/l03_precedence.rpp
+  ok    ch08_statements/runtime/l04_loops.rpp
+  ok    ch09_exceptions/rejected/n01_non_exception_type.rpp
+  ok    ch09_exceptions/rejected/n02_throw_shared.rpp
+  ok    ch09_exceptions/rejected/n03_catch_non_exception_type.rpp
+  ok    ch09_exceptions/rejected/n04_used_after_rethrow.rpp
+  ok    ch09_exceptions/rejected/n05_return_in_finally.rpp
+  ok    ch09_exceptions/rejected/n06_throw_in_finally.rpp
+  ok    ch09_exceptions/rejected/n07_break_from_finally.rpp
+  ok    ch09_exceptions/rejected/n08_move_in_try.rpp
+  ok    ch09_exceptions/rejected/n09_assert_does_not_exit.rpp
+  ok    ch09_exceptions/rejected/n10_try_with_resources.rpp
+  ok    ch09_exceptions/accepted/a01_throw_and_catch.rpp
+  ok    ch09_exceptions/accepted/a02_rethrow.rpp
+  ok    ch09_exceptions/accepted/a03_fail.rpp
+  ok    ch09_exceptions/accepted/a04_warning.rpp
+  ok    ch09_exceptions/runtime/l01_finally.rpp
+  ok    ch09_exceptions/runtime/l02_unwinding.rpp
+  ok    ch09_exceptions/runtime/l03_constructor_throws.rpp
+  ok    ch09_exceptions/runtime/l04_uncatchable_program_error.rpp
+  ok    ch09_exceptions/runtime/l05_stacktrace.rpp
+  ok    ch09_exceptions/runtime/l06_exception_from_destructor.rpp
+  ok    ch10_lambdas/rejected/n01_non_own_lambda_in_var.rpp
+  ok    ch10_lambdas/rejected/n02_return_type_mismatch.rpp
+  ok    ch10_lambdas/rejected/n03_break_from_lambda.rpp
+  ok    ch10_lambdas/rejected/n04_store_non_own_lambda.rpp
+  ok    ch10_lambdas/rejected/n05_loan_conflict.rpp
+  ok    ch10_lambdas/rejected/n06_borrow_by_value.rpp
+  ok    ch10_lambdas/rejected/n07_this_in_own_lambda.rpp
+  ok    ch10_lambdas/rejected/n08_mutate_captured_value.rpp
+  ok    ch10_lambdas/rejected/n09_moved_after_capture.rpp
+  ok    ch10_lambdas/rejected/n10_mut_on_return_type.rpp
+  ok    ch10_lambdas/rejected/n11_mut_in_other_type.rpp
+  ok    ch10_lambdas/rejected/n12_parameter_mismatch.rpp
+  ok    ch10_lambdas/rejected/n13_copy_func.rpp
+  ok    ch10_lambdas/rejected/n14_store_parameter.rpp
+  ok    ch10_lambdas/rejected/n15_unused_result.rpp
+  ok    ch10_lambdas/rejected/n16_lambda_matches_no_overload.rpp
+  ok    ch10_lambdas/accepted/a01_basics.rpp
+  ok    ch10_lambdas/accepted/a02_capture.rpp
+  ok    ch10_lambdas/accepted/a03_function_types.rpp
+  ok    ch10_lambdas/accepted/a04_overloading.rpp
+  ok    ch10_lambdas/runtime/l01_capture.rpp
+  ok    ch11_projects/rejected/n01_using_conflict/
+  ok    ch11_projects/rejected/n02_alias_shadowed/
+  ok    ch11_projects/rejected/n03_export_with_internal_type.rpp
+  ok    ch11_projects/rejected/n04_two_main_functions.rpp
+  ok    ch11_projects/rejected/n05_package_mismatch/
+  ok    ch11_projects/rejected/n06_keyword_as_package_name.rpp
+  ok    ch11_projects/rejected/n07_unlisted_dependency/
+  ok    ch11_projects/rejected/n08_dependency_cycle/
+  ok    ch11_projects/rejected/n09_reserved_rpp_owner/
+  ok    ch11_projects/rejected/n10_library_wrong_package/
+  ok    ch11_projects/rejected/n11_unknown_entry/
+  ok    ch11_projects/rejected/n12_unknown_directive.rpp
+  ok    ch11_projects/rejected/n13_if_without_endif.rpp
+  ok    ch11_projects/accepted/a01_using.rpp
+  ok    ch11_projects/accepted/a02_export.rpp
+  ok    ch11_projects/accepted/a03_packages_and_cycles/
+  ok    ch11_projects/accepted/a04_library/
+  ok    ch11_projects/runtime/l01_conditional_compilation/
+  ok    ch12_execution/runtime/l01_overflow.rpp
+  ok    ch12_execution/runtime/l02_cast.rpp
+  ok    ch12_execution/runtime/l03_floating_point.rpp
+  ok    ch12_execution/runtime/l04_exit_code.rpp
+  ok    ch12_execution/runtime/l05_exception_from_main.rpp
+  ok    ch12_execution/runtime/l06_program_error.rpp
+  ok    ch12_execution/runtime/l07_destructors.rpp
+  ok    ch12_execution/runtime/l08_arguments.rpp
+  ok    ch12_execution/runtime/l09_call_depth.rpp
+  ok    ch12_execution/runtime/l10_stack_overflow.rpp
+  ok    ch13_standard_library/rejected/n01_mutate_during_get.rpp
+  ok    ch13_standard_library/rejected/n02_unused_parse_result.rpp
+  ok    ch13_standard_library/rejected/n03_mutate_during_iteration.rpp
+  ok    ch13_standard_library/rejected/n04_sort_without_comparable.rpp
+  ok    ch13_standard_library/rejected/n05_set_without_hashable.rpp
+  ok    ch13_standard_library/rejected/n06_unchecked_readline.rpp
+  ok    ch13_standard_library/rejected/n07_unused_hash.rpp
+  ok    ch13_standard_library/accepted/a01_collections.rpp
+  ok    ch13_standard_library/accepted/a02_text.rpp
+  ok    ch13_standard_library/accepted/a03_iterable.rpp
+  ok    ch13_standard_library/accepted/a04_language_mixins.rpp
+  ok    ch13_standard_library/accepted/a05_input_and_output.rpp
+  ok    ch13_standard_library/runtime/l01_text.rpp
+  ok    ch13_standard_library/runtime/l02_parse_and_precondition.rpp
+  ok    ch13_standard_library/runtime/l03_set_order.rpp
+  ok    ch13_standard_library/runtime/l04_console.rpp
+  ok    ch13_standard_library/runtime/l05_map_set.rpp
+  ok    ch13_standard_library/runtime/l06_fmt_and_missing_key.rpp
+  ok    ch13_standard_library/runtime/l07_map_custom_keys.rpp
+  ok    ch13_standard_library/runtime/l08_files.rpp
+  ok    ch13_standard_library/runtime/l09_paths.rpp
+
+Umfang: 18 positive Dateien, 132 negative Tests, 81 Lesarten, 258 Konformitätstests
+Ergebnis: 0 Fehler

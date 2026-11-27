@@ -1,0 +1,35 @@
+// Konformitätstest Kapitel 13 – muss übersetzt werden.
+// Regel: R-13.3, R-13.4, R-13.11, R-13.12, R-13.13, R-13.14
+package conformance.ch13;
+using rpp.collections.Map;
+using rpp.collections.Entry;
+using rpp.text.StringBuilder;
+
+class Symbol {
+public:
+    string name;
+    i32 uses = 0;
+    constructor(string n) { this.name = n; }
+    void use() mut { uses++; }
+}
+
+class Report {
+public:
+    string describe(i32 count, f64 ratio, string input) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Anzahl: ");
+        sb.append(count.toString());
+        sb.appendLine("");
+        i32? parsed = i32::tryParse(input);
+        i64 big = i64::parse("123");
+        if (parsed != null && parsed > i32::MAX - 1) {
+            sb.append("groß");
+        }
+        string[] parts = input.split(",");
+        string joined = string::join("; ", parts);
+        if (input.startsWith("#") && 'a'.isLetter()) {
+            sb.append(input.substring(1, input.length).trim());
+        }
+        return sb.toString();
+    }
+}

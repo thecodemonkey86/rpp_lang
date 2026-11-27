@@ -1,0 +1,18 @@
+// Konformitätstest Kapitel 9 – muss abgelehnt werden.
+// Regel: R-9.18
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (try-with-resources gibt es nicht).
+package conformance.ch09;
+
+class Resource {
+public:
+    destructor() { print("zu"); }
+}
+
+class T {
+public:
+    void m() {
+        try (Resource r = new Resource()) { // FEHLER
+            print("x");
+        }
+    }
+}

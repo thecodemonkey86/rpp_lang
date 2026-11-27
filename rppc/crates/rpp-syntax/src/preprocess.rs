@@ -3,7 +3,7 @@
 //! Löst `#if`, `#elif`, `#else` und `#endif` vor dem Lexer auf. Direktiven und die
 //! Zeilen inaktiver Zweige werden durch Leerzeilen ersetzt, damit Zeilennummern
 //! erhalten bleiben. Inaktive Zweige werden nicht geprüft, die Bedingungen von
-//! Direktiven dagegen immer. Entspricht `rpp-grammatik/tools/preprocess.py`.
+//! Direktiven dagegen immer. Entspricht `rpp-grammar/tools/preprocess.py`.
 
 use std::collections::HashSet;
 use std::fmt;

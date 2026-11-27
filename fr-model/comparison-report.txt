@@ -1,0 +1,72 @@
+FR++ model vs. rppc (milestone M3), 21 November 2026
+
+py -X utf8 compare.py 5000
+
+Handwritten programs from tests/ and random programs with seeds 0–4999:
+
+                     Both accepted / rejected   Only rppc rejected   Only FR++ rejected   Not translatable
+Handwritten programs                  10 / 22                    0                    0                  2
+Random programs                   1564 / 2902                    0                    0                534
+
+Under V-13, FR++ demote (share e) translates via FrHilfe::weak_C(e), first to a shared variable and then to a weak reference.
+
+Programs with no equivalent in the surface language:
+  n14_path_through_shared_field.fr   Path through a shared field (allowed in the surface language under V-2)
+  n22_borrow_as_expression.fr        Unbound borrow return used as a statement
+  Random programs mostly assign to a parameter without own (R-8.19).
+
+Control run with one rule disabled in the FR++ checker, as in fuzz.py, using 300 programs:
+  py -X utf8 compare.py 300 --disable-rule NAME
+
+  loans                 53 mismatches
+  move                  22 mismatches
+  join                   1 mismatch
+  loop                   2 mismatches
+  shared-overlap         1 mismatch
+  write-permission      40 mismatches
+  receiver-loan         11 mismatches
+
+Disabling any one of these rules produces mismatches, so the comparison exercises all of them.
+
+Gaps found and fixed in rppc while setting up the comparison:
+  - A missing & for a Foo& parameter, or an extra & for other parameters, went unreported (R-5.9).
+  - Assignment to a Foo& parameter or a Foo& loop variable replaced the object (R-8.19, Chapter 5, Section 4.4).
+  - An own value passed to a shared T or weak T parameter was borrowed instead of being moved (V-9).
+  - Returning a borrow of a shared field was accepted (R-5.23, V-2).
+  - A borrow returned from a call could be moved as a value (R-5.24).
+  - In x.f = g(x), the place was checked before the value (R-5.7, R-5.13).
+
+A rerun after V-13 made it an error to use an own value for a weak destination produced the same results, with no mismatches.
+
+Execution (milestone M4), 22 November 2026
+
+py -X utf8 compare.py 2000 --run
+
+Programs accepted by both implementations run in the model and with
+rppc run --check-invariants. This checks I-1, I-2, I-4, and I-5 after each
+statement in main, plus leaks at program exit when nothing was shared.
+The comparison checks output, including output from destructors, or
+termination with BorrowError (V-1). Programs that exhaust the model's
+step budget are skipped.
+
+                       Executed and matched   Mismatched
+Handwritten programs                     10            0
+Random programs (2000)                  466            1
+
+No invariant was violated.
+
+Explained mismatch:
+  seed1070: Both implementations encounter the same lock conflict (BorrowError).
+  The model stops. rppc runs cleanup as required by R-9.14, and one of the
+  program's destructors loops indefinitely. The specification requires cleanup
+  after a program error. The model stops before that cleanup.
+
+Interpreter bugs found and fixed while setting up the comparison:
+  - A shared value returned by a call such as w.lock() was counted twice when stored.
+  - A ref bound to a returned borrow locked the receiver twice.
+  - A ref to a place read the place after locking it and conflicted with its own lock.
+  - The same occurred for a borrowed argument with a shared root (seed772).
+  - Primitive arguments were locked like borrows instead of being read (seed392).
+  - A second program error during cleanup replaced the first, and further
+    destructors ran. This produced an endless cascade of destructors in 13
+    programs. The first error now remains the cause and cleanup stops (R-9.14).

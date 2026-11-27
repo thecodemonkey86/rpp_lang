@@ -1,0 +1,33 @@
+// Konformitätstest Kapitel 8 – muss übersetzt werden.
+// Regel: R-8.2, R-8.4, R-8.5, R-8.7, R-8.8, R-8.9, R-8.10, R-8.15, R-8.16, R-8.18, R-8.19, R-8.20
+package conformance.ch08;
+
+class Calc {
+public:
+    i32[] values = [1, 2, 3];
+
+    nodiscard i32 next(mut i32 counter) {
+        counter++;
+        return counter;
+    }
+
+    void demo() mut {
+        i32 i = 0;
+        i32 a = values[i++];            // a = 1, i = 1
+        i32 b = ++i;                    // b = 2, i = 2
+        values[i] = a + b;
+        i += 2;
+        i8 small = 1;
+        small += 1;
+        i32 x = 1;
+        i32 y = 2;
+        (x, y) = (y, x);
+        f64 mix = i > 2 ? 1 : 2.5;      // gemeinsamer Typ f64
+        Slice<i32> part = values[1..];
+        i64 len = part.length;
+        const i32 fixed = 7;
+        string s = "abc";
+        char c = s[1];
+        i32 n = next(mut i);
+    }
+}

@@ -1,0 +1,246 @@
+== Akzeptierte Programme (Typprüfung, Ausführung, Invarianten) ==
+  ok    a01_moves.fr
+  ok    a02_fields.fr
+  ok    a03_borrows.fr
+  ok    a04_shared_weak.fr
+  ok    a05_release_order.fr
+  ok    a06_shared_conflict.fr
+  ok    a07_read_shared.fr
+  ok    a08_destructor_upgrade.fr
+  ok    a09_cycle.fr
+  ok    a10_borrow_return.fr
+
+== Abgelehnte Programme (Regel und Zeile) ==
+  ok    n01_use_after_move.fr [O-Var]  ohne Prüfung: Fehlerzustand
+  ok    n02_conditional_move.fr [O-Var]  ohne Prüfung: Fehlerzustand
+  ok    n03_move_in_loop.fr [R-5.16]  ohne Prüfung: Fehlerzustand
+  ok    n04_mutate_during_borrow.fr [R-5.10]
+  ok    n05_duplicate_mut_borrow.fr [R-5.9]
+  ok    n06_move_then_borrow.fr [O-Var]  ohne Prüfung: Fehlerzustand
+  ok    n07_borrow_then_move.fr [R-5.3]  ohne Prüfung: Fehlerzustand
+  ok    n08_overlapping_receiver.fr [R-5.9]  ohne Prüfung: Fehlerzustand
+  ok    n09_copy_own_field.fr [R-5.2]
+  ok    n10_borrow_in_field.fr [R-5.3]
+  ok    n11_duplicate_shared_root.fr [R-5.9]  ohne Prüfung: BorrowError
+  ok    n12_write_through_ref.fr [R-5.10]
+  ok    n13_shared_as_own.fr [R-5.11]
+  ok    n14_path_through_shared_field.fr [O-Feld]
+  ok    n15_assign_during_borrow.fr [R-5.12]  ohne Prüfung: Fehlerzustand
+  ok    n16_assign_to_borrow_variable.fr [R-5.12]
+  ok    n17_override_with_different_mode.fr [R-5.22]
+  ok    n18_read_only_method_mutates_this.fr [R-5.7]
+  ok    n19_write_through_alias.fr [R-5.7]  ohne Prüfung: Fehlerzustand
+  ok    n20_borrow_from_parameter.fr [R-5.23]  ohne Prüfung: Fehlerzustand
+  ok    n21_receiver_modified.fr [R-5.7]  ohne Prüfung: Fehlerzustand
+  ok    n22_borrow_as_expression.fr [R-5.24]
+  ok    n23_mut_borrow_from_read_only_method.fr [R-5.23]
+  ok    n24_borrow_through_shared_field.fr [R-5.23]
+
+Umfang: 10 akzeptierte, 24 abgelehnte Programme
+Ergebnis: 0 Fehler
+
+== Zufallstest, vollständiger Typprüfer
+Programme: 2000 (Seeds 0..1999), Typprüfer: vollständig, 175 s
+
+Angenommen: 644
+  ok             384
+  BorrowError    94
+  Budget         166
+  Fehlerzustand  0
+  Modellfehler   0
+  Abdeckung:   new 398102, free 155954, lock 13435, borrow_error 94, upgrade_ok 110, upgrade_fail 5138, borrow_call 9084
+
+Abgelehnt: 1356  (Regel: abgelehnt / davon zur Laufzeit im Fehlerzustand)
+  R-5.10      485 / 35
+  R-5.7       322 / 21
+  R-5.9       195 / 25
+  O-Var       151 / 42
+  R-5.3       108 / 21
+  R-5.17       42 / 2
+  R-5.2        32 / 0
+  R-5.12       11 / 3
+  R-5.16        9 / 2
+  R-5.18        1 / 0
+
+Verstöße bei angenommenen Programmen: 0
+
+== Gegenprobe: ohne loans
+Programme: 600 (Seeds 0..599), Typprüfer: ohne loans, 67 s
+
+Angenommen: 290
+  ok             166
+  BorrowError    53
+  Budget         66
+  Fehlerzustand  5
+  Modellfehler   0
+  Abdeckung:   new 152990, free 65646, lock 4457, borrow_error 53, upgrade_ok 71, upgrade_fail 1140, borrow_call 5167
+
+Abgelehnt: 310  (Regel: abgelehnt / davon zur Laufzeit im Fehlerzustand)
+  R-5.10      117 / 3
+  R-5.7        73 / 7
+  O-Var        62 / 19
+  R-5.3        30 / 4
+  R-5.9        16 / 1
+  R-5.17        8 / 1
+  R-5.16        4 / 1
+
+Verstöße bei angenommenen Programmen: 5
+  Seed 156: Satz 5.1: InvariantViolation: I-4: Variable v9 in Rahmen 1 verweist auf freigegebenes Objekt 0
+  Seed 168: Satz 5.1: InvariantViolation: I-4: Variable x in Rahmen 2 verweist auf freigegebenes Objekt 5
+  Seed 233: Satz 5.1: InvariantViolation: I-4: Variable v15 in Rahmen 0 verweist auf freigegebenes Objekt 0
+  Seed 260: Satz 5.1: InvariantViolation: I-4: Variable x in Rahmen 2 verweist auf freigegebenes Objekt 4
+  Seed 475: Satz 5.1: InvariantViolation: I-4: Variable x in Rahmen 2 verweist auf freigegebenes Objekt 6
+
+== Gegenprobe: ohne move
+Programme: 600 (Seeds 0..599), Typprüfer: ohne move, 86 s
+
+Angenommen: 252
+  ok             131
+  BorrowError    36
+  Budget         73
+  Fehlerzustand  12
+  Modellfehler   0
+  Abdeckung:   new 186019, free 79032, lock 4389, borrow_error 36, upgrade_ok 54, upgrade_fail 2932, borrow_call 6693
+
+Abgelehnt: 348  (Regel: abgelehnt / davon zur Laufzeit im Fehlerzustand)
+  R-5.10      158 / 6
+  R-5.7       100 / 10
+  R-5.9        58 / 8
+  R-5.2        15 / 0
+  R-5.17        7 / 0
+  R-5.12        5 / 1
+  R-5.3         5 / 2
+
+Verstöße bei angenommenen Programmen: 12
+  Seed 28: Satz 5.1: Stuck: v8 verweist auf kein Objekt (bot)
+  Seed 38: Satz 5.1: Stuck: so verweist auf kein Objekt (bot)
+  Seed 77: Satz 5.1: Stuck: so verweist auf kein Objekt (bot)
+  Seed 96: Satz 5.1: Stuck: so verweist auf kein Objekt (bot)
+  Seed 250: Satz 5.1: Stuck: sn verweist auf kein Objekt (bot)
+  Seed 255: Satz 5.1: Stuck: so verweist auf kein Objekt (bot)
+  Seed 293: Satz 5.1: Stuck: sn verweist auf kein Objekt (bot)
+  Seed 365: Satz 5.1: Stuck: y verweist auf kein Objekt (bot)
+  Seed 390: Satz 5.1: Stuck: y verweist auf kein Objekt (bot)
+  Seed 413: Satz 5.1: Stuck: v12 ist schon verschoben (⊥)
+  Seed 506: Satz 5.1: Stuck: sa hat den Wert ⊥
+  Seed 536: Satz 5.1: Stuck: so verweist auf kein Objekt (bot)
+
+== Gegenprobe: ohne join
+Programme: 600 (Seeds 0..599), Typprüfer: ohne join, 63 s
+
+Angenommen: 208
+  ok             122
+  BorrowError    29
+  Budget         57
+  Fehlerzustand  0
+  Modellfehler   0
+  Abdeckung:   new 147873, free 62473, lock 3383, borrow_error 29, upgrade_ok 41, upgrade_fail 1923, borrow_call 5058
+
+Abgelehnt: 392  (Regel: abgelehnt / davon zur Laufzeit im Fehlerzustand)
+  R-5.10      151 / 4
+  R-5.7        92 / 9
+  R-5.9        56 / 7
+  O-Var        36 / 13
+  R-5.3        28 / 5
+  R-5.2        15 / 0
+  R-5.17        7 / 0
+  R-5.12        5 / 1
+  R-5.16        2 / 0
+
+Verstöße bei angenommenen Programmen: 0
+
+== Gegenprobe: ohne schleife
+Programme: 600 (Seeds 0..599), Typprüfer: ohne schleife, 60 s
+
+Angenommen: 204
+  ok             123
+  BorrowError    28
+  Budget         53
+  Fehlerzustand  0
+  Modellfehler   0
+  Abdeckung:   new 136298, free 57534, lock 3379, borrow_error 28, upgrade_ok 39, upgrade_fail 1121, borrow_call 4461
+
+Abgelehnt: 396  (Regel: abgelehnt / davon zur Laufzeit im Fehlerzustand)
+  R-5.10      149 / 4
+  R-5.7        92 / 8
+  R-5.9        55 / 7
+  O-Var        41 / 13
+  R-5.3        33 / 6
+  R-5.2        15 / 0
+  R-5.17        7 / 0
+  R-5.12        4 / 1
+
+Verstöße bei angenommenen Programmen: 0
+
+== Gegenprobe: ohne schreibrecht
+Programme: 600 (Seeds 0..599), Typprüfer: ohne schreibrecht, 71 s
+
+Angenommen: 281
+  ok             173
+  BorrowError    36
+  Budget         71
+  Fehlerzustand  1
+  Modellfehler   0
+  Abdeckung:   new 156129, free 68006, lock 5927, borrow_error 36, upgrade_ok 180, upgrade_fail 1137, borrow_call 6300
+
+Abgelehnt: 319  (Regel: abgelehnt / davon zur Laufzeit im Fehlerzustand)
+  R-5.10       94 / 2
+  R-5.9        64 / 7
+  O-Var        54 / 20
+  R-5.7        46 / 2
+  R-5.3        36 / 7
+  R-5.2        19 / 0
+  R-5.12        4 / 1
+  R-5.16        2 / 0
+
+Verstöße bei angenommenen Programmen: 1
+  Seed 314: Satz 5.1: InvariantViolation: I-4: Variable v5 in Rahmen 0 verweist auf freigegebenes Objekt 0
+
+== Gegenprobe: ohne shared-ueberlappung
+Programme: 600 (Seeds 0..599), Typprüfer: ohne shared-ueberlappung, 59 s
+
+Angenommen: 203
+  ok             122
+  BorrowError    28
+  Budget         53
+  Fehlerzustand  0
+  Modellfehler   0
+  Abdeckung:   new 136286, free 57522, lock 3378, borrow_error 28, upgrade_ok 39, upgrade_fail 1121, borrow_call 4461
+
+Abgelehnt: 397  (Regel: abgelehnt / davon zur Laufzeit im Fehlerzustand)
+  R-5.10      149 / 4
+  R-5.7        91 / 8
+  R-5.9        55 / 7
+  O-Var        41 / 13
+  R-5.3        33 / 6
+  R-5.2        15 / 0
+  R-5.17        7 / 0
+  R-5.12        4 / 1
+  R-5.16        2 / 0
+
+Verstöße bei angenommenen Programmen: 0
+
+== Gegenprobe: ohne empfaenger-loan
+Programme: 600 (Seeds 0..599), Typprüfer: ohne empfaenger-loan, 66 s
+
+Angenommen: 230
+  ok             133
+  BorrowError    37
+  Budget         59
+  Fehlerzustand  1
+  Modellfehler   0
+  Abdeckung:   new 148970, free 63727, lock 3641, borrow_error 37, upgrade_ok 50, upgrade_fail 1126, borrow_call 4860
+
+Abgelehnt: 370  (Regel: abgelehnt / davon zur Laufzeit im Fehlerzustand)
+  R-5.10      134 / 4
+  R-5.7        84 / 7
+  R-5.9        54 / 7
+  O-Var        46 / 14
+  R-5.3        33 / 6
+  R-5.2         9 / 0
+  R-5.17        7 / 0
+  R-5.16        2 / 0
+  R-5.12        1 / 0
+
+Verstöße bei angenommenen Programmen: 1
+  Seed 233: Satz 5.1: InvariantViolation: I-4: Variable v15 in Rahmen 0 verweist auf freigegebenes Objekt 0

@@ -1,0 +1,10 @@
+// Konformitätstest Kapitel 7 – muss abgelehnt werden.
+// Regel: R-7.19
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (name() ist weder im Mixin noch als Anforderung deklariert).
+package conformance.ch07;
+
+mixin Greeter {
+    string greet() {
+        return "Hallo " + name(); // FEHLER
+    }
+}

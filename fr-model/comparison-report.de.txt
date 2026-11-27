@@ -1,0 +1,72 @@
+Vergleich FR++-Modell ↔ rppc (Meilenstein M3), Stand 21.11.2026
+
+py -X utf8 compare.py 5000
+
+Handgeschriebene Programme (tests/):
+Zufallsprogramme (Seeds 0 bis 4999):
+
+                     gleich (ang./abg.)  nur rppc lehnt ab  nur FR++ lehnt ab  nicht übersetzbar
+Testprogramme                   10 / 22                  0                  0                  2
+Zufallsprogramme            1564 / 2902                  0                  0                534
+
+FR++ demote (share e) wird nach V-13 über FrHilfe::weak_C(e) übersetzt (shared-Variable, dann weak).
+
+Nicht übersetzbar (keine Entsprechung an der Oberfläche):
+  n14_path_through_shared_field.fr   Pfad durch ein shared-Feld (V-2: an der Oberfläche erlaubt)
+  n22_borrow_as_expression.fr      ungebundene Borrow-Rückgabe als Anweisung
+  Zufallsprogramme vor allem: Zuweisung an einen Parameter ohne own (R-8.19)
+
+Gegenprobe: FR++-Prüfer ohne eine Regel (wie fuzz.py), 300 Programme
+  py -X utf8 compare.py 300 --abschwaechen NAME
+
+  loans                 53 Abweichungen
+  move                  22 Abweichungen
+  join                   1 Abweichung
+  schleife               2 Abweichungen
+  shared-ueberlappung    1 Abweichung
+  schreibrecht          40 Abweichungen
+  empfaenger-loan       11 Abweichungen
+
+Jede abgeschaltete Regel führt zu Abweichungen; der Vergleich erreicht also alle Regeln.
+
+Beim Aufbau des Vergleichs gefundene und behobene Lücken in rppc:
+  - Argument ohne & für einen Parameter Foo& (und & für andere Parameter) wurde nicht gemeldet (R-5.9)
+  - Zuweisung an einen Parameter Foo& oder eine Schleifenvariable Foo& ersetzte das Objekt (R-8.19, Kapitel 5 Abschnitt 4.4)
+  - own-Wert an einem Parameter shared T bzw. weak T wurde geliehen statt verschoben (V-9)
+  - Borrow-Rückgabe auf ein shared-Feld wurde angenommen (R-5.23, V-2)
+  - eine Borrow-Rückgabe konnte als Wert verschoben werden (R-5.24)
+  - in x.f = g(x) wurde der Ort vor dem Wert geprüft (R-5.7, R-5.13)
+
+Nach V-13 (own-Wert an weak-Ziel ist ein Fehler) erneut gelaufen: dasselbe Ergebnis, keine Abweichung.
+
+Ausführung (Meilenstein M4), Stand 22.11.2026
+
+py -X utf8 compare.py 2000 --ausfuehren
+
+Programme, die beide annehmen, laufen im Modell und mit `rppc run --pruefen` (Prüfmodus:
+Invarianten I-1, I-2, I-4, I-5 nach jeder Anweisung von main, Lecks ohne shared am Ende);
+verglichen werden die Ausgaben einschließlich der Destruktoren bzw. das Ende mit
+BorrowError (V-1). Programme, bei denen das Modell sein Schrittbudget erschöpft, werden
+nicht ausgeführt.
+
+                     ausgeführt und gleich   verschieden
+Testprogramme                           10             0
+Zufallsprogramme (2000)                466             1
+
+Keine Verletzung einer Invariante.
+
+Erklärter Unterschied:
+  seed1070: Beide stoßen auf denselben Sperrkonflikt (BorrowError). Das Modell hält
+  danach an; rppc räumt nach R-9.14 auf, und ein Destruktor des Programms läuft dabei in
+  eine Endlosschleife. Das Modell räumt nach Programmfehlern nicht auf; die Spezifikation
+  verlangt es.
+
+Beim Aufbau gefundene und behobene Fehler im Interpreter:
+  - ein shared-Wert aus einem Aufruf (etwa w.lock()) wurde beim Speichern doppelt gezählt
+  - ref auf eine Borrow-Rückgabe sperrte den Empfänger doppelt
+  - ref auf einen Ort las den Ort nach dem Sperren und kollidierte mit der eigenen Sperre
+  - ebenso ein geliehenes Argument mit shared-Wurzel (seed772)
+  - primitive Argumente wurden wie Borrows gesperrt statt gelesen (seed392)
+  - ein zweiter Programmfehler beim Aufräumen ersetzte den ersten, und weitere Destruktoren
+    liefen (13 Programme mit endloser Destruktor-Kaskade); jetzt bleibt der erste die
+    Ursache und das Aufräumen endet (R-9.14)

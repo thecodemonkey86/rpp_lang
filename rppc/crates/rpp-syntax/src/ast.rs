@@ -374,7 +374,7 @@ pub struct Stmt {
 
 impl Stmt {
     /// Name der Grammatikregel, wie ihn der ANTLR-Parser liefern würde
-    /// (für die Lesarten in `rpp-grammatik/tests/lesarten`).
+    /// (für die Lesarten in `rpp-grammar/tests/parse_probes`).
     pub fn rule_name(&self) -> &'static str {
         match self.kind {
             StmtKind::Block(_) => "block",

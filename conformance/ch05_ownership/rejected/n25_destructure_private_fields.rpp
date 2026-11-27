@@ -1,0 +1,18 @@
+// Konformitätstest Kapitel 5 – muss abgelehnt werden.
+// Regel: R-7.2, R-5.25
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (die Felder von Secret sind privat).
+package conformance.ch05;
+
+class Secret {
+private:
+    i32 a = 0;
+    i32 b = 0;
+}
+
+class T {
+public:
+    void m() {
+        Secret s = new Secret();
+        (i32 a, i32 b) = s; // FEHLER
+    }
+}

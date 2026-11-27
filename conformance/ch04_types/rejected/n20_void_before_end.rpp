@@ -1,0 +1,11 @@
+// Konformitätstest Kapitel 4 – muss abgelehnt werden.
+// Regel: R-4.37, R-4.45
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (void nur an letzter Stelle von Func).
+package conformance.ch04;
+
+class T {
+public:
+    void m(i32 n, i64 big, ui32 u, ui64 uu, f32 f, f64 d, byte b, char c, string s) {
+        Func<void, i32> f = null; // FEHLER
+    }
+}
