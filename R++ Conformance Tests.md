@@ -115,7 +115,7 @@ These rules cannot be checked with a single test program (R-14.6). The test run 
 | R-12.1 | Definition |
 | R-12.2 | covered by R-14.7: each test applies to both modes |
 | R-12.3 | concerns the development of implementation, not a program |
-| R-12.12 | Version 1 has no threads. |
+| R-12.12 | summary of Chapter 16; covered by its tests |
 | R-13.2 | Concerns the versioning of the library, not a program |
 | R-15.16 | Boundary of the guarantees for C code; covered by comparing both modes in all runtime tests of chapter 15 |
 | R-15.17 | covered by R-14.7: each runtime test of chapter 15 applies to both modes |

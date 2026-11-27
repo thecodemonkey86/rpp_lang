@@ -30,6 +30,7 @@ Draft 0.47, 22 November 2026. This document lays out the chapters of the R++ lan
 | 13 | [Standard Library](R%2B%2B%20Standard%20Library.md) | Minimum size: `string`, Arrays, Exceptions, `Func` | Draft 0.8 ("R++ Standard Library"), first cut for self-translation, everything decided; extension with `rpp.random`, `Vectors`, `rpp.math`, `Text`, file operations, `Deque`/`getOrPut` (sections 9–15) |
 | 14 | [Conformance Tests](R%2B%2B%20Conformance%20Tests.md) | Structure of the test suite, assignment to rules | Draft 0.2 ("R++ Conformance Tests"), all rules named or justified |
 | 15 | [C Interop](R%2B%2B%20C%20Interop.md) | `extern` classes, handles, types across the boundary, safety boundary | Draft 0.1 ("R++ C Interop"), rules R-15.1 to R-15.17, amendments V-15.1 to V-15.9 adopted |
+| 16 | [Threads](R%2B%2B%20Threads.md) | `rpp.sync`: threads, scopes, transfer between threads, channels, order | Draft 0.1 ("R++ Threads"), rules R-16.1 to R-16.23, amendments V-16.1 to V-16.11 adopted |
 
 ## 2. Lexical structure
 

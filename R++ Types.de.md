@@ -208,7 +208,7 @@ Ein Wert vom Typ `C` darf überall stehen, wo `D` verlangt wird; das gilt mit de
 
 ## 12. Typ-Parameter
 
-**R-4.42 (Constraints).** Ein Typ-Parameter `T` steht für einen beliebigen Typ außer `void`, auch für primitive Typen. Mit Constraints `T : M₁ & … & Mₙ` muss das Typargument Untertyp jedes `Mᵢ` sein. Im Rumpf sind auf `T` nur die Operationen erlaubt, die die Constraints zusagen; `==` verlangt `T : Equatable<T>`. Primitive Typen, `string` und Enums ohne Daten erfüllen `Equatable` von selbst.
+**R-4.42 (Constraints).** Ein Typ-Parameter `T` steht für einen beliebigen Typ außer `void`, auch für primitive Typen. Mit Constraints `T : M₁ & … & Mₙ` muss das Typargument Untertyp jedes `Mᵢ` sein. Im Rumpf sind auf `T` nur die Operationen erlaubt, die die Constraints zusagen; `==` verlangt `T : Equatable<T>`. Primitive Typen, `string` und Enums ohne Daten erfüllen `Equatable` von selbst. Die eingebaute Einschränkung `Transferable` erfüllt jeder übertragbare Typ (R-16.7, R-16.8).
 
 **R-4.43 (Invarianz).** Generische Typen sind invariant: `List<Circle>` ist kein Untertyp von `List<Shape>`, auch wenn `Circle <: Shape`.
 

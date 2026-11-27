@@ -96,7 +96,7 @@ Examples:
 
 ## 7. Type parameters
 
-**R-7.23 (Declaration).** Classes, mixins and methods may have type parameters. A constraint is a mixin type or `new()`; several are linked to `&`: `class Pool<T : Comparable<T> & new()>`.
+**R-7.23 (Declaration).** Classes, mixins and methods may have type parameters. A constraint is a mixin type, `new()` or `Transferable` (R-16.8); several are linked to `&`: `class Pool<T : Comparable<T> & new()>`.
 
 **R-7.24 (Definition test).** A generic hull shall be tested once for all type arguments; at type `T` values only:
 - the methods of the mixins from the constraints,

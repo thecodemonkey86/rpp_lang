@@ -29,6 +29,8 @@ Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschn
 - die gelesene Eingabe in ihrer Reihenfolge,
 - der Exit-Code und ob das Programm endet.
 
+Ein einzelner Aufruf, der auf Standard- oder Fehlerausgabe schreibt oder von der Standardeingabe liest, wird nicht mit einem solchen Aufruf eines anderen Threads verzahnt (R-16.18).
+
 Nicht beobachtbar sind Laufzeit, Speicherverbrauch, Adressen von Objekten und die Reihenfolge von Vorgängen, die keine der obigen Wirkungen haben.
 
 **R-12.5 (Zulässige Unterschiede).** Debug- und Releasemodus müssen dasselbe beobachtbare Verhalten zeigen. Unterscheiden dürfen sie sich nur in diesen Punkten:
@@ -46,7 +48,7 @@ Nicht beobachtbar sind Laufzeit, Speicherverbrauch, Adressen von Objekten und di
 
 Weil Programmfehler nicht gefangen werden können (Kapitel 9), führt keiner dieser Unterschiede dazu, dass ein Programm in beiden Modi verschiedene `catch`-Zweige nimmt.
 
-**R-12.6 (Kein undefiniertes Verhalten).** Für jedes übersetzte Programm legt die Spezifikation das beobachtbare Verhalten fest, bis auf die Punkte in R-12.5. Es gibt kein undefiniertes Verhalten: keine ungültigen Speicherzugriffe (Kapitel 5), keine Null-Dereferenzierung (Kapitel 6), keine uninitialisierten Werte (R-4.46), eine feste Auswertungsreihenfolge (R-8.2) und festgelegtes Verhalten bei Überlauf. Für Programme mit C-Code gilt das nur unter den Bedingungen aus R-15.16.
+**R-12.6 (Kein undefiniertes Verhalten).** Für jedes übersetzte Programm legt die Spezifikation das beobachtbare Verhalten fest, bis auf die Punkte in R-12.5. Es gibt kein undefiniertes Verhalten: keine ungültigen Speicherzugriffe (Kapitel 5), keine Null-Dereferenzierung (Kapitel 6), keine uninitialisierten Werte (R-4.46), eine feste Auswertungsreihenfolge (R-8.2) und festgelegtes Verhalten bei Überlauf. Für Programme mit C-Code gilt das nur unter den Bedingungen aus R-15.16. Ein Programm mit mehreren Threads kann mehrere erlaubte Verhalten haben: Jede Verzahnung, die die Reihenfolge aus R-16.18 einhält, ist erlaubt (Kapitel 16, V-16.8).
 
 **R-12.7 (Gleitkomma).** Gleitkommaoperationen werden in beiden Modi bitgenau nach IEEE 754 ausgeführt: jede Operation einzeln mit Rundung zum nächsten Wert, ohne Zusammenfassen zu einer FMA-Operation und ohne erweiterte Zwischengenauigkeit. Debug und Release liefern dieselben Bits. Mathematische Funktionen der Standardbibliothek (soweit vorhanden) liefern in beiden Modi dieselben Ergebnisse.
 
@@ -67,7 +69,7 @@ Eine Funktion zum vorzeitigen Beenden gibt es nicht (V-13.3). Ausgaben werden vo
 
 **R-12.11 (Freigabe).** Objekte werden deterministisch freigegeben, sobald ihr Besitzer sie aufgibt (Kapitel 5); es gibt keine Garbage Collection. Destruktoren laufen in der festgelegten Reihenfolge (V-7). Objekte in Zyklen aus `shared`-Verweisen werden nie freigegeben.
 
-**R-12.12 (Threads).** Version 1 hat keine Bibliothek für Threads; ein Programm läuft in einem Thread. Für spätere Versionen gelten schon jetzt: Jedes Objekt gehört zu genau einem Thread; an einen anderen Thread geht nur ein `own`-Wert, dessen Besitzbaum keine `shared`- oder `weak`-Verweise enthält (Kapitel 5, Abschnitt 7). Strings sind davon ausgenommen und brauchen dann einen atomaren Zähler.
+**R-12.12 (Threads).** Ein Programm beginnt in einem Thread und kann mit `rpp.sync` weitere starten (Kapitel 16). Jedes Objekt gehört zu genau einem Thread; an einen anderen Thread gehen nur Werte übertragbarer Typen (R-16.7), deren Besitzbaum keine `shared`- oder `weak`-Verweise enthält (Kapitel 5, Abschnitt 7). Strings sind davon ausgenommen und brauchen einen atomaren Zähler.
 
 ## 5. Konformitätstests
 

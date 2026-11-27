@@ -208,7 +208,7 @@ A value of type `C` It can be anywhere where `D` is required, this applies with 
 
 ## 12. Type 12 parameters
 
-**R-4.42 (Constraints).** A type parameter `T` is not applicable to any type `void`, even primitive types. With constraints `T : M₁ & … & Mₙ`, the type argument must be sub-type of each `Mᵢ`. In the body on `T` only operations are allowed which the constraints promise; `==` required `T : Equatable<T>`. Primitive types, `string` and enums without data fulfill `Equatable` by themselves.
+**R-4.42 (Constraints).** A type parameter `T` is not applicable to any type `void`, even primitive types. With constraints `T : M₁ & … & Mₙ`, the type argument must be sub-type of each `Mᵢ`. In the body on `T` only operations are allowed which the constraints promise; `==` required `T : Equatable<T>`. Primitive types, `string` and enums without data fulfill `Equatable` by themselves. The built-in constraint `Transferable` is fulfilled by every transferable type (R-16.7, R-16.8).
 
 **R-4.43 (Invariance).** Generic types are invariant: `List<Circle>` is not a subtype of `List<Shape>`, even if `Circle <: Shape`.
 

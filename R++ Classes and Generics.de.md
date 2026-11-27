@@ -96,7 +96,7 @@ Beispiele:
 
 ## 7. Typ-Parameter
 
-**R-7.23 (Deklaration).** Klassen, Mixins und Methoden können Typ-Parameter haben. Ein Constraint ist ein Mixin-Typ oder `new()`; mehrere werden mit `&` verbunden: `class Pool<T : Comparable<T> & new()>`.
+**R-7.23 (Deklaration).** Klassen, Mixins und Methoden können Typ-Parameter haben. Ein Constraint ist ein Mixin-Typ, `new()` oder `Transferable` (R-16.8); mehrere werden mit `&` verbunden: `class Pool<T : Comparable<T> & new()>`.
 
 **R-7.24 (Prüfung an der Definition).** Ein generischer Rumpf wird einmal für alle Typargumente geprüft. Auf Werten vom Typ `T` sind nur erlaubt:
 - die Methoden der Mixins aus den Constraints,

@@ -444,7 +444,7 @@ Aus Lemma 5.4, I-2 und I-4 folgt, dass `ziel(p)` für jeden geprüften Ort defin
 
 **Exceptions.** Beim Unwinding werden Sperren freigegeben und die Variablen jedes verlassenen Blocks freigegeben wie am normalen Blockende; Drop-Flags (`⊥`) verhindern doppelte Freigaben. Verlässt eine Exception einen Destruktor, endet das Programm (V-11).
 
-**Threads.** An einen anderen Thread geht nur ein `own`-Wert, dessen Besitzbaum keine `shared`- oder `weak`-Felder enthält, weil der Referenzzähler nicht atomar ist. Strings sind davon ausgenommen und brauchen einen atomaren Zähler.
+**Threads.** An einen anderen Thread geht nur ein `own`-Wert, dessen Besitzbaum keine `shared`- oder `weak`-Felder enthält, weil der Referenzzähler nicht atomar ist. Strings sind davon ausgenommen und brauchen einen atomaren Zähler. Kapitel 16 fasst das als übertragbare Typen (R-16.7); Threads eines Bereichs dürfen übertragbare Werte zusätzlich lesend leihen (R-16.12).
 
 **Primitive Borrows.** Parameter wie `mut i32 n` und von Lambdas veränderbar erfasste primitive Variablen funktionieren wie Borrows auf Objektorte; das Kalkül lässt sie zur Vereinfachung weg. Für die Sicherheit ändert sich nichts.
 

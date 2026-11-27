@@ -331,7 +331,7 @@ Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. 
 | B | `rpp.time` | `Duration`, monotone `Instant` (Ausbau von `ElapsedTimer`) | Rust `std::time`, Java `java.time` |
 | B | `rpp.encoding` | Base64, Hex, UTF-16 | Go, Rust |
 | B | `rpp.hash` | SHA-256 für die Prüfsummen in `rpp.lock` (Abschnitt 18, **festgelegt**, M9); offen: weitere Verfahren | Rust `sha2`, Go `crypto/sha256` |
-| C | `rpp.sync` | Channels; Werte wandern per `own` durch den Channel | Go, Rust |
+| C | `rpp.sync` | `Thread`, `Task`, `Scope`, Kanäle; Werte wandern per `own` durch den Kanal (Abschnitt 19, **festgelegt**, M11) | Go, Rust |
 | A | `rpp.process` | synchrones `Process::run` mit Ein- und Ausgabe als Text (Abschnitt 17, **festgelegt**, gebraucht für `rppcc build` und `rppcc test`, M8) | Go `os/exec`, Rust `std::process` |
 | C | `rpp.process` (Ausbau), `rpp.net` | nebenläufige Subprozesse mit Strömen; HTTP-Client (für das zentrale Verzeichnis) | Go `os/exec`, Rust `reqwest` |
 
@@ -764,3 +764,7 @@ public:
 ```
 
 `update` hängt Bytes an die Eingabe an, `updateText` die UTF-8-Darstellung eines Strings; beide dürfen beliebig oft und gemischt aufgerufen werden. `finishHex` schließt ab und liefert die Prüfsumme nach FIPS 180-4 als 64 Hexziffern in Kleinbuchstaben. Ein weiterer Aufruf von `update`, `updateText` oder `finishHex` danach ist ein Programmfehler (`fail`). `hex` und `hexText` rechnen die Prüfsumme in einem Schritt.
+
+## 19. rpp.sync: Threads und Kanäle (Ausbau)
+
+Das Paket `rpp.sync` stellt `Thread`, `Task<T>`, `Scope`, `Channel<T>`, `Sender<T>`, `Receiver<T>` und die eingebaute Einschränkung `Transferable` bereit. Seine Schnittstelle und alle Regeln stehen in Kapitel 16 („R++ Threads“, R-16.1 bis R-16.23); dieser Abschnitt führt es nur in der Standardbibliothek auf.

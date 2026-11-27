@@ -331,7 +331,7 @@ The first cut remains unchanged until the compiler translates itself, and the li
 | B | `rpp.time` | `Duration` monotone `Instant` (upgrading of `ElapsedTimer`) | Rust `std::time`, Java `java.time` |
 | B | `rpp.encoding` | Base64, Hex, UTF-16 | Go, Rust |
 | B | `rpp.hash` | SHA-256 for the checksums in `rpp.lock` (section 18, **specified**, M9); open: further algorithms | Rust `sha2`, Go `crypto/sha256` |
-| C | `rpp.sync` | Channels; Values wander per `own` through the channel | Go, Rust |
+| C | `rpp.sync` | `Thread`, `Task`, `Scope`, channels; values move by `own` through the channel (section 19, **specified**, M11) | Go, Rust |
 | A | `rpp.process` | synchronous `Process::run` with input and output as text (section 17, **defined**, used for `rppcc build` and `rppcc test`, M8) | Go `os/exec`, Rust `std::process` |
 | C | `rpp.process` (upgrading), `rpp.net` | concurrent subprocesses with streams; HTTP client (for the central directory) | Go `os/exec`, Rust `reqwest` |
 
@@ -764,3 +764,7 @@ public:
 ```
 
 `update` appends bytes to the input, `updateText` the UTF-8 encoding of a string; both may be called any number of times and mixed. `finishHex` finishes and returns the checksum according to FIPS 180-4 as 64 lowercase hex digits. Calling `update`, `updateText` or `finishHex` again afterwards is a program error (`fail`). `hex` and `hexText` compute the checksum in one step.
+
+## 19. rpp.sync: threads and channels (extension)
+
+The package `rpp.sync` provides `Thread`, `Task<T>`, `Scope`, `Channel<T>`, `Sender<T>`, `Receiver<T>` and the built-in constraint `Transferable`. Its interface and all rules are in Chapter 16 ("R++ Threads", R-16.1 to R-16.23); this section only lists it in the standard library.

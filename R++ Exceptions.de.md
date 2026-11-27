@@ -33,6 +33,7 @@ Alle Festlegungen sind entschieden (siehe „R++ Designentscheidungen“, Abschn
 | Abbruch | Aufruf von `fail(text)` (R-9.19) | beide | `FailError` |
 | Ressourcen | Stacküberlauf, fehlender Speicher (Kapitel 12, R-12.10) | beide | `StackOverflowError`, `OutOfMemoryError` |
 | C-Anbindung | ein Argument oder Ergebnis, das sich nicht umwandeln lässt, eine fehlende Bibliothek oder ein fehlendes Symbol beim Start (Kapitel 15) | beide (fehlende Bibliothek im Releasemodus: Fehler beim Bauen, R-12.5) | `NativeError` |
+| Threads | ein zweites `join`, ein Thread, der auf sich selbst wartet, eine nicht abgeholte Ausnahme bei der Freigabe eines Handles, eine Verklemmung, eine Kanalkapazität unter 1, ein Thread, der sich nicht starten lässt (Kapitel 16) | beide | `ThreadError` |
 
 **R-9.3 (Sprechweise in anderen Kapiteln).** Wo die Kapitel 4 bis 8 für diese Prüfungen sagen, dass „eine Exception geworfen wird“, ist ein Programmfehler nach R-9.2 gemeint. Programmfehler sind keine Klassen; ihre Namen (`IndexError`, `OverflowError`, `BorrowError` usw.) erscheinen nur in der Fehlermeldung.
 
@@ -54,7 +55,7 @@ public:
 }
 ```
 
-Eigene Exceptions erben direkt oder indirekt von `Exception` und können weitere Felder haben.
+Eigene Exceptions erben direkt oder indirekt von `Exception` und können weitere Felder haben. Weil eine Exception mit `join()` in einen anderen Thread gelangt, muss jede solche Klasse übertragbar sein (R-16.10): Kein Feld in ihrem Baum hat einen Typ mit `shared` oder `weak`.
 
 ## 3. throw
 

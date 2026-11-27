@@ -444,7 +444,7 @@ From Lemma 5.4, I-2 and I-4 it follows that `ziel(p)` is defined for each locati
 
 **Exceptions.** Unwinding releases locks and releases the variables of each abandoned block as at the normal block end; drop flags `⊥` If an exception leaves a destructor, the program ends.V-11).
 
-**Threads.** A different thread is provided only with a `own` value whose tree does not contain any `shared` or `weak` fields because the reference counter is not atomic, but strings are excluded and require an atomic counter.
+**Threads.** A different thread is provided only with a `own` value whose tree does not contain any `shared` or `weak` fields because the reference counter is not atomic, but strings are excluded and require an atomic counter. Chapter 16 states this as transferable types (R-16.7); threads of a scope may additionally borrow transferable values read-only (R-16.12).
 
 **Primitive Borrows.** Parameters such as `mut i32 n` and variably recorded primitive variables function like borrows on object locations; the calculation leaves them out for simplification.
 

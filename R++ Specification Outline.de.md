@@ -30,6 +30,7 @@ Stand: 22.11.2026, Entwurf 0.47. Grundlage ist das Dokument „R++ Designentsche
 | 13 | [Standardbibliothek](R%2B%2B%20Standard%20Library.de.md) | Mindestumfang: `string`, Arrays, Exceptions, `Func` | Entwurf 0.8 („R++ Standardbibliothek“), erster Schnitt für Selbstübersetzung, alles entschieden; Ausbau mit `rpp.random`, `Vectors`, `rpp.math`, `Text`, Datei-Operationen, `Deque`/`getOrPut` (Abschnitte 9–15) |
 | 14 | [Konformitätstests](R%2B%2B%20Conformance%20Tests.de.md) | Aufbau der Testsuite, Zuordnung zu Regeln | Entwurf 0.2 („R++ Konformitätstests“), alle Regeln genannt oder begründet |
 | 15 | [C-Anbindung](R%2B%2B%20C%20Interop.de.md) | `extern`-Klassen, Handles, Typen über die Grenze, Sicherheitsgrenze | Entwurf 0.1 („R++ C-Anbindung“), Regeln R-15.1 bis R-15.17, Ergänzungen V-15.1 bis V-15.9 angenommen |
+| 16 | [Threads](R%2B%2B%20Threads.de.md) | `rpp.sync`: Threads, Bereiche, Übergabe zwischen Threads, Kanäle, Reihenfolge | Entwurf 0.1 („R++ Threads“), Regeln R-16.1 bis R-16.23, Ergänzungen V-16.1 bis V-16.11 angenommen |
 
 ## 2. Lexikalische Struktur
 

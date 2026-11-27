@@ -29,6 +29,8 @@ All determinations have been decided (see “R++ Design Decisions”, Sections 1
 - the read input in its order,
 - the exit code and whether the program ends.
 
+A single call that writes to standard output or standard error, or reads from standard input, is not interleaved with such a call of another thread (R-16.18).
+
 Unobservable are runtime, memory usage, addresses of objects, and the sequence of operations that have none of the above effects.
 
 **R-12.5 (Allowed differences).** Debug and release modes must show the same observable behavior, and they may differ only in these points:
@@ -46,7 +48,7 @@ Unobservable are runtime, memory usage, addresses of objects, and the sequence o
 
 Because program errors cannot be caught (Chapter 9), none of these differences will cause a program to take different `catch` branches in both modes.
 
-**R-12.6 (No undefined behavior).** For each translated program, the specification specifies the observable behavior, except for the points in R-12.5. There is no undefined behavior: no invalid memory accesses (chapter 5), no zero dereference (chapter 6), no uninitialized values (R-4.46), a fixed evaluation order (R-8.2) and defined behavior at overflow. For programs with C code, this holds only under the conditions of R-15.16.
+**R-12.6 (No undefined behavior).** For each translated program, the specification specifies the observable behavior, except for the points in R-12.5. There is no undefined behavior: no invalid memory accesses (chapter 5), no zero dereference (chapter 6), no uninitialized values (R-4.46), a fixed evaluation order (R-8.2) and defined behavior at overflow. For programs with C code, this holds only under the conditions of R-15.16. A program with several threads may have several permitted behaviors: every interleaving that respects the order of R-16.18 is permitted (Chapter 16, V-16.8).
 
 **R-12.7 (floating-point).** Floating point operations are executed bit-accurately according to IEEE 754 in both modes: each operation individually with rounding to the next value, without summarizing to an FMA operation and without extended intermediate accuracy. Debug and release deliver the same bits. Mathematical functions of the standard library (if available) deliver the same results in both modes.
 
@@ -67,7 +69,7 @@ There is no premature quit function (V-13.3).
 
 **R-12.11 (Release).** Objects are released deterministically as soon as their owner abandons them (chapter 5); there is no garbage collection. Destructors run in the specified order (V-7); objects in cycles out `shared` references are never released.
 
-**R-12.12 (Threads).** Version 1 does not have a thread library; a program runs in a thread. For later versions, each object belongs to exactly one thread; another thread has only one `own` value whose tree contains no `shared` or `weak` references (Chapter 5, Section 7). Strings are exempt from this and then need an atomic counter.
+**R-12.12 (Threads).** A program starts in one thread and can start more with `rpp.sync` (Chapter 16). Each object belongs to exactly one thread; another thread receives only values of transferable types (R-16.7), whose tree contains no `shared` or `weak` references (Chapter 5, Section 7). Strings are exempt from this and need an atomic counter.
 
 ## 5. Conformance tests
 

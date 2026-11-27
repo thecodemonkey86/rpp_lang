@@ -33,6 +33,7 @@ All determinations have been decided (see “R++ Design Decisions”, Sections 1
 | Abortion | Call of `fail(text)` (R-9.19) | both | `FailError` |
 | Resources | Stack overflow, missing memory (Chapter 12, R-12.10) | both | `StackOverflowError`, `OutOfMemoryError` |
 | C interop | an argument or result that cannot be converted, a missing library or a missing symbol at start (Chapter 15) | both (missing library in release mode: build error, R-12.5) | `NativeError` |
+| Threads | a second `join`, a thread waiting for itself, an exception nobody retrieved at the release of a handle, a deadlock, a channel capacity below 1, a thread that cannot be started (Chapter 16) | both | `ThreadError` |
 
 **R-9.3 (Speaking in other chapters).** Where chapters 4 to 8 say for these checks that “an exception is thrown”, a program error is meant after R-9.2. Program errors are not classes; their names (`IndexError`, `OverflowError`, `BorrowError`, etc.) appear only in the error message.
 
@@ -54,7 +55,7 @@ public:
 }
 ```
 
-Own exceptions inherit directly or indirectly from `Exception` and may have further fields.
+Own exceptions inherit directly or indirectly from `Exception` and may have further fields. Because an exception can reach another thread through `join()`, every such class must be transferable (R-16.10): no field in its tree has a type with `shared` or `weak`.
 
 ## 3. Throw
 
