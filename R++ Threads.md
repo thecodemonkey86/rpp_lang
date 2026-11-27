@@ -134,7 +134,7 @@ Effects that are not ordered by these rules may happen in any order (V-16.8). A 
 
 **R-16.22 (Destructors).** A destructor runs in the thread that releases the object. An object therefore never runs code in two threads at the same time.
 
-**R-16.23 (Both modes).** Threads behave the same in debug and release mode (R-12.5). C code may be called from any thread; R-15.16 applies to each call.
+**R-16.23 (Both modes).** Threads behave the same in debug and release mode (R-12.5). C code may be called from any thread; R-15.16 applies to each call. How an implementation maps threads onto the system is up to it: it may run each thread as an operating system thread or as a lightweight thread (coroutine) with its own stack that a scheduler of the runtime places on fewer operating system threads, as long as R-16.18 and R-16.19 hold. With lightweight threads, waiting in `join()`, `send`, `receive`, at the end of `Thread::scope`, in `Thread::sleep` and in input and output lets other threads run; a thread that computes for a long time must not keep the others from running forever. This keeps the way open to many concurrent waits without new syntax such as `async` and `await`.
 
 ## 6. Example
 

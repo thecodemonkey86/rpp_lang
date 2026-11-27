@@ -134,7 +134,7 @@ Wirkungen, die diese Regeln nicht ordnen, dürfen in jeder Reihenfolge geschehen
 
 **R-16.22 (Destruktoren).** Ein Destruktor läuft in dem Thread, der das Objekt freigibt. Ein Objekt führt deshalb nie in zwei Threads gleichzeitig Code aus.
 
-**R-16.23 (Beide Modi).** Threads verhalten sich im Debug- und Releasemodus gleich (R-12.5). C-Code darf aus jedem Thread gerufen werden; R-15.16 gilt für jeden Aufruf.
+**R-16.23 (Beide Modi).** Threads verhalten sich im Debug- und Releasemodus gleich (R-12.5). C-Code darf aus jedem Thread gerufen werden; R-15.16 gilt für jeden Aufruf. Wie eine Implementierung Threads auf das System abbildet, ist ihr überlassen: Sie darf jeden Thread als Thread des Betriebssystems ausführen oder als leichten Thread (Koroutine) mit eigenem Stapel, den ein Scheduler der Laufzeit auf weniger Threads des Betriebssystems verteilt, solange R-16.18 und R-16.19 gelten. Bei leichten Threads lässt das Warten in `join()`, `send`, `receive`, am Ende von `Thread::scope`, in `Thread::sleep` und bei Ein- und Ausgabe andere Threads laufen; ein Thread, der lange rechnet, darf die anderen nicht für immer am Laufen hindern. Damit bleibt der Weg zu vielen gleichzeitigen Wartevorgängen offen, ohne neue Syntax wie `async` und `await`.
 
 ## 6. Beispiel
 
