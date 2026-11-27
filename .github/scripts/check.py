@@ -125,7 +125,7 @@ def build_native(source, executable):
     else:
         command = [
             "gcc", "-std=c17", "-D_POSIX_C_SOURCE=200809L", "-O1", "-pthread",
-            "-I", RUNTIME, source, RUNTIME / "rpp_rt.c", "-lm", "-o", executable,
+            "-I", RUNTIME, source, RUNTIME / "rpp_rt.c", "-lm", "-ldl", "-o", executable,
         ]
     subprocess.run(command, cwd=source.parent, check=True, timeout=1200)
 

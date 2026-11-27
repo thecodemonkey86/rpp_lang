@@ -185,6 +185,8 @@ pub struct LockEntry {
     pub name: String,
     pub version: Version,
     pub checksum: String,
+    /// `native: true` (R-15.15)
+    pub native: bool,
     pub line: u32,
     pub checksum_line: u32,
 }
@@ -210,7 +212,7 @@ pub fn parse_lock(text: &str) -> Result<Vec<LockEntry>, (u32, String)> {
             return bad(item, "An entry of rpp.lock requires name, version and checksum");
         }
         for (key, node) in item.entries() {
-            if !["name", "version", "checksum"].contains(&key.as_str()) {
+            if !["name", "version", "checksum", "native"].contains(&key.as_str()) {
                 return bad(node, &format!("Unknown entry '{key}' in rpp.lock"));
             }
         }
@@ -221,6 +223,11 @@ pub fn parse_lock(text: &str) -> Result<Vec<LockEntry>, (u32, String)> {
         let Some(v) = Version::parse(version) else {
             return bad(item.get("version").unwrap(), &format!("Invalid version '{version}' in rpp.lock"));
         };
+        let native = match item.get("native") {
+            None => false,
+            Some(n) if n.as_str() == Some("true") => true,
+            Some(n) => return bad(n, "native in rpp.lock must be true"),
+        };
         if out.iter().any(|e| e.name == name) {
             return bad(item, &format!("rpp.lock lists '{name}' twice"));
         }
@@ -228,6 +235,7 @@ pub fn parse_lock(text: &str) -> Result<Vec<LockEntry>, (u32, String)> {
             name: name.to_string(),
             version: v,
             checksum: sum.to_string(),
+            native,
             line: item.get("name").map_or(item.line, |n| n.line),
             checksum_line: item.get("checksum").map_or(item.line, |n| n.line),
         });
@@ -236,7 +244,7 @@ pub fn parse_lock(text: &str) -> Result<Vec<LockEntry>, (u32, String)> {
 }
 
 /// Text der Sperrdatei; `libs` ist nach Namen sortiert.
-pub fn format_lock(libs: &[(String, Version, String)]) -> String {
+pub fn format_lock(libs: &[(String, Version, String, bool)]) -> String {
     let mut out = String::from(
         "# rpp.lock: exact versions and checksums of the libraries from the registry (R-11.20).\n\
          # Written by the lock command; do not edit.\n",
@@ -246,8 +254,11 @@ pub fn format_lock(libs: &[(String, Version, String)]) -> String {
         return out;
     }
     out.push_str("libraries:\n");
-    for (name, version, sum) in libs {
+    for (name, version, sum, native) in libs {
         out.push_str(&format!("  - name: {name}\n    version: {version}\n    checksum: {sum}\n"));
+        if *native {
+            out.push_str("    native: true\n");
+        }
     }
     out
 }

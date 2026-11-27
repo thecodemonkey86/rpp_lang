@@ -1,0 +1,12 @@
+# Konformitätstest Kapitel 15 – muss abgelehnt werden.
+# Regel: R-15.14
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile in rpp.yaml (acme.calc bringt C-Code mit, das Programm erlaubt ihn nicht).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+dependencies:
+  - name: acme.calc # FEHLER
+    path: calc

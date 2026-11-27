@@ -2809,6 +2809,11 @@ private:
             err(e.line, e.col, "R-10.15", "Function values cannot be copied");
             return Ty::error();
         }
+        if (c.kind == TK::Named && p.defs[c.id].isHandle()) {
+            string hn = p.defs[c.id].name;
+            err(e.line, e.col, "R-15.10", "The handle type " + hn + " cannot be copied");
+            return Ty::error();
+        }
         if (c.kind == TK::Named && p.defs[c.id].kind == DefKind::Class) {
             i64 cur = c.id;
             bool has = false;
@@ -4646,6 +4651,15 @@ private:
         }
         i64 d = t.id;
         string dn = p.defs[d].name;
+        if (p.defs[d].isExtern) {
+            probeArgs(args);
+            if (p.defs[d].isHandle()) {
+                err(line, col, "R-15.10", "The handle type " + dn + " cannot be created with new; only C returns handles");
+            } else {
+                err(line, col, "R-15.2", "The extern class " + dn + " cannot be instantiated");
+            }
+            return Ty::error();
+        }
         if (p.defs[d].kind != DefKind::Class) {
             err(line, col, "R-7.5", dn + " is not a class");
             return Ty::error();

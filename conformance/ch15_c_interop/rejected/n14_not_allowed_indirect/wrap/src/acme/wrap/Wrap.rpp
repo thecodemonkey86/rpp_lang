@@ -1,0 +1,9 @@
+package acme.wrap;
+using acme.calc.Calc;
+
+export class Wrap {
+public:
+    static i32 answer() {
+        return Calc::answer();
+    }
+}

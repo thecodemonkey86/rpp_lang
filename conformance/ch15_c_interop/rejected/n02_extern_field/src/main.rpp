@@ -1,0 +1,9 @@
+extern("rpptest") class Lib {
+public:
+    i32 count = 0; // FEHLER
+    static i32 tl_add_i32(i32 a, i32 b);
+}
+
+i32 main(string[] args) {
+    return 0;
+}

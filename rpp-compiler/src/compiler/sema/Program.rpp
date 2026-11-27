@@ -26,6 +26,8 @@ public:
     // je Projekt: Standardbibliothek?, direkte Abhängigkeiten
     bool[] projStd = [];
     ProjDeps[] projDeps = [];
+    // je Projekt: native: true (R-15.13)
+    bool[] projNative = [];
 
 private:
     Map<string, i64> byFull = new Map<string, i64>();
@@ -62,6 +64,7 @@ public:
         }
         for (Project pr : ws.projects) {
             p.projStd.push(pr.isStd);
+            p.projNative.push(pr.native);
             ProjDeps d = new ProjDeps();
             for (i64 x : pr.deps) {
                 d.deps.push(x);
@@ -435,14 +438,24 @@ private:
                     kind = DefKind::Mixin;
                 } else if (decl.kind == "enum") {
                     kind = DefKind::Enum;
-                } else if (decl.kind != "class") {
+                } else if (decl.kind != "class" && decl.kind != "handle") {
                     continue;
                 }
                 ref Node nameNode = decl.kids[0];
                 TypeDef def = new TypeDef(kind, nameNode.text, pkg, project, f, d, decl.line, decl.col);
                 def.exported = flag(decl, "export");
                 def.isAbstract = flag(decl, "abstract");
-                if (kind != DefKind::Enum) {
+                // Kapitel 15: die Angabe extern steht am Ende des Knotens
+                ref Node lastKid = decl.kids[decl.kids.length - 1];
+                if (lastKid.kind == "extern") {
+                    def.isExtern = true;
+                    def.extLib = lastKid.text.substring(1, lastKid.text.length - 1);
+                    def.extLine = lastKid.line;
+                    def.extCol = lastKid.col;
+                }
+                if (decl.kind == "handle") {
+                    def.handleFree = decl.kids[1].text;
+                } else if (kind != DefKind::Enum) {
                     for (Node tp : decl.kids[1].kids) {
                         def.tparams.push(newTParam(tp.kids[0].text));
                     }
@@ -574,7 +587,25 @@ public:
                 ty = Ty::array(ty, size);
             }
         }
+        // vor :: und nach new löst der Checker Typnamen ohne diesen Weg auf
+        checkExternUse(file, ty, t.line, t.col);
         return ty;
+    }
+
+    // R-15.2: Eine extern-Klasse ist kein Typ für Werte; R-15.10: Handles gibt es nur als own.
+    void checkExternUse(i64 file, shared Ty ty, i32 line, i32 col) mut {
+        shared Ty t = ty;
+        while (t.kind == TK::Nullable || t.kind == TK::Vector || t.kind == TK::Array) {
+            t = t.args[0];
+        }
+        if (t.kind == TK::Named && defs[t.id].isExternClass()) {
+            string n = defs[t.id].name;
+            error(file, line, col, "R-15.2", "The extern class " + n + " cannot be used as a type");
+        } else if ((t.kind == TK::Shared || t.kind == TK::Weak) && t.args[0].kind == TK::Named && defs[t.args[0].id].isHandle()) {
+            string f = t.kind == TK::Shared ? "shared" : "weak";
+            string n = defs[t.args[0].id].name;
+            error(file, line, col, "R-15.10", "The handle type " + n + " exists only as own, not as " + f);
+        }
     }
 
 private:
@@ -841,6 +872,9 @@ private:
             ref Node decl = ws.files[file].unit.kids[defs[def].decl];
             if (decl.kind == "enum") {
                 enumVariants(ws, def, file, decl.kids[1]);
+                continue;
+            }
+            if (decl.kind == "handle") {
                 continue;
             }
             bool isMixin = defs[def].kind == DefKind::Mixin;
@@ -1382,8 +1416,18 @@ public:
 
 private:
     void checkDefs(Workspace ws) mut {
+        // R-15.3: Bibliothek und Symbol → Signatur der ersten Deklaration
+        Map<string, string> symbols = new Map<string, string>();
         for (i64 def = 0; def < defs.length; def++) {
             if (ws.projects[defs[def].project].isStd) {
+                continue;
+            }
+            if (defs[def].isExtern) {
+                checkExtern(ws, def, mut symbols);
+                if (defs[def].exported) {
+                    Diag[] ex = exportFindings(def);
+                    flush(ex);
+                }
                 continue;
             }
             Diag[] found = [];
@@ -1398,6 +1442,184 @@ private:
                 flush(ex);
             }
         }
+    }
+
+    // Kapitel 15: extern-Klassen und Handle-Typen
+    void checkExtern(Workspace ws, i64 def, mut Map<string, string> symbols) mut {
+        i64 file = defs[def].file;
+        string name = defs[def].name;
+        string lib = defs[def].extLib;
+        i32 dl = defs[def].line;
+        i32 dc = defs[def].col;
+        i32 el = defs[def].extLine;
+        i32 ec = defs[def].extCol;
+        // R-15.13
+        if (!projNative[defs[def].project]) {
+            error(file, dl, dc, "R-15.13", name
+                + " declares C functions, but the project is not native (native: true in rpp.yaml)");
+        }
+        // R-15.4
+        bool valid = lib.length > 0;
+        for (char ch : lib) {
+            bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+                || ch == '_' || ch == '-' || ch == '.';
+            if (!ok) {
+                valid = false;
+            }
+        }
+        if (!valid) {
+            error(file, el, ec, "R-15.4", "Invalid library name \"" + lib + "\"");
+        }
+        if (defs[def].handleFree != null) {
+            return;
+        }
+        // R-15.2
+        if (defs[def].isAbstract) {
+            error(file, dl, dc, "R-15.2", "An extern class cannot be abstract");
+        }
+        if (defs[def].tparams.length > 0) {
+            error(file, dl, dc, "R-15.2", "An extern class cannot have type parameters");
+        }
+        if (defs[def].baseType != null) {
+            error(file, dl, dc, "R-15.2", "An extern class cannot have a base class");
+        }
+        ref Node decl = ws.files[file].unit.kids[defs[def].decl];
+        for (Node m : decl.kids[kidIndex(decl, "members")].kids) {
+            string what = "";
+            i32 l = m.line;
+            i32 c = m.col;
+            if (m.kind == "field") {
+                what = "fields";
+                l = m.kids[1].line;
+                c = m.kids[1].col;
+            } else if (m.kind == "ctor") {
+                what = "constructors";
+            } else if (m.kind == "dtor") {
+                what = "a destructor";
+            } else if (m.kind == "copy") {
+                what = "copy";
+            } else if (m.kind == "import") {
+                what = "mixin imports";
+                ref Node first = m.kids[0].kids[0].kids[0];
+                l = first.line;
+                c = first.col;
+            }
+            if (what.length > 0) {
+                error(file, l, c, "R-15.2", "An extern class cannot have " + what);
+            }
+        }
+        for (i64 i = 0; i < defs[def].methods.length; i++) {
+            string mname = defs[def].methods[i].name;
+            i32 ml = defs[def].methods[i].line;
+            i32 mc = defs[def].methods[i].col;
+            bool isStatic = defs[def].methods[i].isStatic;
+            bool hasBody = defs[def].methods[i].hasBody;
+            bool mutThis = defs[def].methods[i].mutThis;
+            if (!isStatic || hasBody || defs[def].methods[i].tparams.length > 0 || mutThis) {
+                string why = "cannot have type parameters";
+                if (!isStatic) {
+                    why = "must be static";
+                } else if (hasBody) {
+                    why = "cannot have a body";
+                } else if (mutThis) {
+                    why = "cannot be mut";
+                }
+                error(file, ml, mc, "R-15.2", "Method " + mname + " of an extern class " + why);
+                continue;
+            }
+            // R-15.3: kein Überladen
+            bool twice = false;
+            for (i64 k = 0; k < i; k++) {
+                if (defs[def].methods[k].name == mname) {
+                    twice = true;
+                }
+            }
+            if (twice) {
+                error(file, ml, mc, "R-15.3", "The C symbol " + mname + " is declared more than once");
+                continue;
+            }
+            // R-15.6, R-15.9
+            (string rule, string reason) = externSignatureProblem(defs[def].methods[i]);
+            if (rule.length > 0) {
+                error(file, ml, mc, rule, "Method " + mname + ": " + reason);
+                continue;
+            }
+            string sig = externSignature(defs[def].methods[i]);
+            string key = lib + "\n" + mname;
+            string? other = symbols.get(key);
+            if (other == null) {
+                symbols.put(key, sig);
+            } else if (other != sig) {
+                error(file, ml, mc, "R-15.3", "The C symbol " + mname + " of library \"" + lib
+                    + "\" is already declared with a different signature");
+            }
+        }
+    }
+
+    // Textform einer Signatur zum Vergleich nach R-15.3
+    string externSignature(MethodInfo m) {
+        string[] ps = [];
+        for (PInfo p : m.params) {
+            string mode = "Read";
+            if (p.mode == Mode::Mut) {
+                mode = "Mut";
+            } else if (p.mode == Mode::Own) {
+                mode = "Own";
+            }
+            ps.push(mode + " " + show(p.ty));
+        }
+        return show(m.ret.ty) + "(" + string::join(", ", ps) + ")";
+    }
+
+    bool isByteArray(shared Ty t) {
+        if (t.kind == TK::Nullable) {
+            return isByteArray(t.args[0]);
+        }
+        return t.kind == TK::Vector && t.args[0].kind == TK::Prim && t.args[0].prim == "byte";
+    }
+
+    // Regel und Grund, falls die Signatur nicht nach C passt (R-15.6; byte[] nach R-15.9);
+    // ("", "") sonst
+    (string, string) externSignatureProblem(MethodInfo m) {
+        for (PInfo p : m.params) {
+            bool ok = false;
+            if (p.ty.kind == TK::Prim) {
+                ok = p.ty.prim != "char" && p.mode != Mode::Mut;
+            } else if (p.ty.kind == TK::Vector) {
+                ok = isByteArray(p.ty) && p.mode != Mode::Own;
+            } else if (p.ty.kind == TK::Named) {
+                ok = defs[p.ty.id].isHandle();
+            }
+            if (!ok) {
+                string mode = "";
+                if (p.mode == Mode::Mut) {
+                    mode = "mut ";
+                } else if (p.mode == Mode::Own) {
+                    mode = "own ";
+                }
+                string rule = isByteArray(p.ty) ? "R-15.9" : "R-15.6";
+                return (rule, "parameter " + p.name + " of type " + mode + show(p.ty) + " cannot be passed to C");
+            }
+        }
+        bool ok = false;
+        shared Ty t = m.ret.ty;
+        if (m.ret.kind == RetKind::Void) {
+            ok = true;
+        } else if (m.ret.kind == RetKind::Val) {
+            if (t.kind == TK::Prim) {
+                ok = t.prim != "char";
+            } else if (t.kind == TK::Nullable) {
+                shared Ty x = t.args[0];
+                ok = (x.kind == TK::Prim && x.prim == "string") || (x.kind == TK::Named && defs[x.id].isHandle());
+            } else if (t.kind == TK::Named) {
+                ok = defs[t.id].isHandle();
+            }
+        }
+        if (!ok) {
+            string rule = isByteArray(t) ? "R-15.9" : "R-15.6";
+            return (rule, "return type " + show(t) + " cannot be returned from C");
+        }
+        return ("", "");
     }
 
     Diag[] mixinFindings(i64 def) {

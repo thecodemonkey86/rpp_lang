@@ -312,6 +312,13 @@ fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) ->
         if p.registry_version.is_some() {
             flags.push_str(" verzeichnis");
         }
+        // R-15.15: native und ob das Projekt C-Code mitbringt
+        if p.native {
+            flags.push_str(" native");
+        }
+        if p.brings_c {
+            flags.push_str(" c-code");
+        }
         let dir = if p.single_file { input_dir(input) } else { p.dir.clone() };
         let _ = writeln!(out, "projekt {i} {} {kind}{flags} {}", p.name, slash_path(&dir));
         if let Some(m) = &p.main_file {
@@ -323,6 +330,13 @@ fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) ->
         if !p.deps.is_empty() {
             let deps: Vec<String> = p.deps.iter().map(|d| d.to_string()).collect();
             let _ = writeln!(out, "  abhängig {}", deps.join(" "));
+        }
+        let allowed: Vec<String> = p.deps.iter().zip(&p.dep_lines).filter(|(_, l)| l.1).map(|(d, _)| d.to_string()).collect();
+        if !allowed.is_empty() {
+            let _ = writeln!(out, "  allowNative {}", allowed.join(" "));
+        }
+        for np in &p.native_paths {
+            let _ = writeln!(out, "  nativePath {}", display_path(np, &dir));
         }
     }
     for f in &ws.files {
@@ -351,8 +365,8 @@ fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) ->
             if has_main { " main" } else { "" }
         );
     }
-    for (name, version, sum) in &ws.resolved {
-        let _ = writeln!(out, "gewählt {name} {version} {sum}");
+    for (name, version, sum, native) in &ws.resolved {
+        let _ = writeln!(out, "gewählt {name} {version} {sum}{}", if *native { " native" } else { "" });
     }
     let base = input_dir(input);
     for d in &ws.diags {

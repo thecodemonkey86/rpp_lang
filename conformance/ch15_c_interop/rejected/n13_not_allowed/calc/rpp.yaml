@@ -1,0 +1,8 @@
+name: acme.calc
+version: 1.0.0
+type: library
+sources:
+  - src
+native: true
+nativePaths:
+  - ../../../native/build

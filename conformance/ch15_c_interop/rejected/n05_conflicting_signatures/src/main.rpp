@@ -1,0 +1,13 @@
+extern("rpptest") class A {
+public:
+    static i32 tl_add_i32(i32 a, i32 b);
+}
+
+extern("rpptest") class B {
+public:
+    static i64 tl_add_i32(i64 a, i64 b); // FEHLER
+}
+
+i32 main(string[] args) {
+    return 0;
+}

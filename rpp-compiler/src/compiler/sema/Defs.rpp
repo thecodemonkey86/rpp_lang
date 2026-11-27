@@ -194,6 +194,13 @@ public:
     bool hasDtor = false;
     i32 line;
     i32 col;
+    // extern-Klasse oder Handle-Typ (Kapitel 15): Name der C-Bibliothek und seine Stelle
+    bool isExtern = false;
+    string extLib = "";
+    i32 extLine = 0;
+    i32 extCol = 0;
+    // bei einem Handle-Typ: die Freigabefunktion (R-15.5)
+    string? handleFree = null;
 
     constructor(DefKind kind, string name, string pkg, i64 project, i64 file, i64 decl, i32 line, i32 col) {
         this.kind = kind;
@@ -211,6 +218,16 @@ public:
             return name;
         }
         return pkg + "." + name;
+    }
+
+    // extern-Klasse (nicht Handle-Typ)
+    bool isExternClass() {
+        return isExtern && handleFree == null;
+    }
+
+    // Handle-Typ (R-15.5)
+    bool isHandle() {
+        return isExtern && handleFree != null;
     }
 }
 

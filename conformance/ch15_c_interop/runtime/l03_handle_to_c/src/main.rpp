@@ -1,0 +1,18 @@
+// own H übergibt den Besitz an C: R++ gibt das Handle danach nicht mehr frei.
+extern("rpptest") handle Counter(tl_counter_free);
+
+extern("rpptest") class Lib {
+public:
+    static own Counter tl_counter_new(i64 start);
+    static i64 tl_counter_consume(own Counter c);
+    static i64 tl_live_counters();
+    static i64 tl_freed_counters();
+}
+
+i32 main(string[] args) {
+    Counter c = Lib::tl_counter_new(5);
+    print(Lib::tl_counter_consume(c).toString());
+    print(Lib::tl_live_counters().toString());
+    print(Lib::tl_freed_counters().toString());
+    return 0;
+}

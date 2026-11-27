@@ -228,6 +228,29 @@ impl Parser {
     fn type_decl(&mut self) -> PResult<TopDecl> {
         let export = self.eat_k(K::Export);
         let span = self.span();
+        // extern("lib") vor einer Klasse oder einem Handle-Typ (Kapitel 15)
+        let mut ext = None;
+        if self.eat_k(K::Extern) {
+            self.expect_p(P::LParen)?;
+            let lib_span = self.span();
+            let T::Str(lib) = self.kind(0).clone() else { return self.fail("string") };
+            self.bump();
+            self.expect_p(P::RParen)?;
+            ext = Some((lib, lib_span));
+            if matches!(self.kind(0), T::Ident(n) if n == "handle") {
+                self.bump();
+                let name = self.ident()?;
+                self.expect_p(P::LParen)?;
+                let free = self.ident()?;
+                self.expect_p(P::RParen)?;
+                self.expect_p(P::Semi)?;
+                let decl = ClassDecl { export, ext, handle_free: Some(free), is_abstract: false, name, type_params: Vec::new(), base: None, members: Vec::new(), span };
+                return Ok(TopDecl::Class(decl));
+            }
+            if !self.is_k(K::Abstract) && !self.is_k(K::Class) {
+                return self.fail("'class' or 'handle'");
+            }
+        }
         if self.is_k(K::Abstract) || self.is_k(K::Class) {
             let is_abstract = self.eat_k(K::Abstract);
             self.expect_k(K::Class)?;
@@ -236,10 +259,11 @@ impl Parser {
             let base = if self.eat_p(P::Colon) { Some(self.type_name(TypeCtx::Plain)?) } else { None };
             self.expect_p(P::LBrace)?;
             let mut members = Vec::new();
+            let in_extern = ext.is_some();
             while !self.eat_p(P::RBrace) {
-                members.push(self.class_member()?);
+                members.push(self.class_member(in_extern)?);
             }
-            Ok(TopDecl::Class(ClassDecl { export, is_abstract, name, type_params, base, members, span }))
+            Ok(TopDecl::Class(ClassDecl { export, ext, handle_free: None, is_abstract, name, type_params, base, members, span }))
         } else if self.eat_k(K::Mixin) {
             let name = self.ident()?;
             let type_params = self.type_params_opt()?;
@@ -322,7 +346,7 @@ impl Parser {
 
     // ------------------------------------------------------------ Member
 
-    fn class_member(&mut self) -> PResult<ClassMember> {
+    fn class_member(&mut self, in_extern: bool) -> PResult<ClassMember> {
         let span = self.span();
         for (k, access) in [(K::Public, Access::Public), (K::Private, Access::Private), (K::Protected, Access::Protected)] {
             if self.is_k(k) {
@@ -360,7 +384,7 @@ impl Parser {
         if let Some(field) = self.attempt(|p| p.field_decl()) {
             return Ok(ClassMember::Field(field));
         }
-        Ok(ClassMember::Method(self.method_decl(false)?))
+        Ok(ClassMember::Method(self.method_decl(false, in_extern)?))
     }
 
     fn mixin_member(&mut self) -> PResult<ClassMember> {
@@ -369,7 +393,7 @@ impl Parser {
             self.expect_p(P::Semi)?;
             return Ok(ClassMember::Import(ty));
         }
-        Ok(ClassMember::Method(self.method_decl(true)?))
+        Ok(ClassMember::Method(self.method_decl(true, false)?))
     }
 
     fn field_decl(&mut self) -> PResult<FieldDecl> {
@@ -390,7 +414,8 @@ impl Parser {
     }
 
     /// methodDecl und abstractMethodDecl, im Mixin auch requirement.
-    fn method_decl(&mut self, in_mixin: bool) -> PResult<MethodDecl> {
+    /// In einer extern-Klasse darf jede Methode ohne Rumpf stehen; R-15.2 prüft die Semantik.
+    fn method_decl(&mut self, in_mixin: bool, in_extern: bool) -> PResult<MethodDecl> {
         let nodiscard = self.eat_k(K::Nodiscard);
         let mut modifier = None;
         if !in_mixin && self.eat_k(K::Abstract) {
@@ -407,7 +432,7 @@ impl Parser {
         let type_params = self.type_params_opt()?;
         let params = self.params()?;
         let mut_this = self.eat_k(K::Mut);
-        let without_body = modifier == Some(MethodModifier::Abstract) || (in_mixin && modifier.is_none());
+        let without_body = modifier == Some(MethodModifier::Abstract) || (in_mixin && modifier.is_none()) || in_extern;
         let body = if without_body && self.eat_p(P::Semi) {
             None
         } else if modifier == Some(MethodModifier::Abstract) {

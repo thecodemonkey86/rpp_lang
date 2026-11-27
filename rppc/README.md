@@ -25,7 +25,7 @@ The `rppc` workspace contains the R++ parser, semantic checker, interpreter, and
 
 ## Building and testing
 
-Prerequisite: Rust (tested with 1.83).
+Prerequisite: Rust (tested with 1.83). The interpreter uses the crates `libloading` and `libffi` for calls into C libraries (chapter 15); `libffi` is built from source and needs a C compiler.
 
 ```
 cargo build
@@ -54,6 +54,8 @@ cargo run -- test ..
 ```
 
 Runtime tests are executed in both modes and in the test mode (output, exit code, error output). Each runtime test runs in a fresh, empty working directory (V-14.3).
+
+Before the tests of a chapter with a folder `native/`, the test run compiles every `native/*.c` into a shared library in `native/build/` (`cl /LD` under Windows, `cc -shared` otherwise); under Windows `test` therefore has to run in the MSVC environment (`vcvars64.bat`). Runtime tests of such projects run as a separate `rppc run` process, so that a crash in C does not end the test run. The interpreter loads every library named by `extern` declarations before `main` and resolves all symbols (R-15.12); in release mode, a missing library or symbol counts as a build error.
 
 Use a source file or project directory for `PATH`. In a `run` command, arguments after the second `--` go to the R++ program. `Console::readLine()` reads from standard input, including from a pipe or redirected file.
 

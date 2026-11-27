@@ -8,3 +8,6 @@ license.workspace = true
 [dependencies]
 rpp-syntax = { path = "../rpp-syntax" }
 rpp-sema = { path = "../rpp-sema" }
+# C-Anbindung (Kapitel 15): Bibliotheken laden und Funktionen beliebiger Signatur aufrufen
+libffi = "4.1"
+libloading = "0.8"

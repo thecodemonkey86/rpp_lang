@@ -1,0 +1,6 @@
+using acme.calc.Calc;
+
+i32 main(string[] args) {
+    print(Calc::answer().toString());
+    return 0;
+}

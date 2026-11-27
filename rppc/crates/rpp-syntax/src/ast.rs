@@ -53,6 +53,10 @@ pub enum TopDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassDecl {
     pub export: bool,
+    /// `extern("lib")` (Kapitel 15): Name der C-Bibliothek und seine Stelle
+    pub ext: Option<(String, Span)>,
+    /// Handle-Typ `extern("lib") handle H(free);` (R-15.5): die Freigabefunktion
+    pub handle_free: Option<Ident>,
     pub is_abstract: bool,
     pub name: Ident,
     pub type_params: Vec<TypeParam>,

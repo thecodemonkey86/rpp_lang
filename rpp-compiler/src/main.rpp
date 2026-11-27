@@ -356,6 +356,13 @@ public:
 
     // C-Code erzeugen; bei Fehlern der Prüfung die Meldungen wie `diagnose`, Exit-Code 1
     static i32 genC(string stdDir, string input, string output, bool release) {
+        string[] libs = [];
+        string[] libDirs = [];
+        return genCWith(stdDir, input, output, release, null, mut libs, mut libDirs);
+    }
+
+    // wie genC; mit einer Werkzeugkette liefert es außerdem die C-Bibliotheken (Kapitel 15)
+    static i32 genCWith(string stdDir, string input, string output, bool release, Toolchain? tc, mut string[] libs, mut string[] libDirs) {
         Workspace ws = Workspace::load(input, stdDir, release);
         Program p = Program::build(ws);
         Checker c = new Checker(p);
@@ -376,6 +383,13 @@ public:
         CGen g = new CGen(c, release);
         string text = g.generate(ws);
         File::writeText(output, text);
+        if (tc != null) {
+            (string[] names, string[] dirs) = tc.nativeLibs(ws);
+            for (i64 i = 0; i < names.length; i++) {
+                libs.push(names[i]);
+                libDirs.push(dirs[i]);
+            }
+        }
         return 0;
     }
 
@@ -399,6 +413,13 @@ public:
             if (rv != null) {
                 flags = flags + " verzeichnis";
             }
+            // R-15.15: native und ob das Projekt C-Code mitbringt
+            if (p.native) {
+                flags = flags + " native";
+            }
+            if (p.bringsC) {
+                flags = flags + " c-code";
+            }
             print("projekt " + i.toString() + " " + p.name + " " + kind + flags + " " + p.dir);
             string? m = p.mainFile;
             if (m != null) {
@@ -413,6 +434,18 @@ public:
                     deps.push(d.toString());
                 }
                 print("  abhängig " + string::join(" ", deps));
+            }
+            string[] allowed = [];
+            for (i64 k = 0; k < p.deps.length; k++) {
+                if (k < p.depAllow.length && p.depAllow[k]) {
+                    allowed.push(p.deps[k].toString());
+                }
+            }
+            if (allowed.length > 0) {
+                print("  allowNative " + string::join(" ", allowed));
+            }
+            for (string np : p.nativePaths) {
+                print("  nativePath " + displayPath(np, new Path(p.dir)));
             }
             i++;
         }
@@ -436,7 +469,8 @@ public:
             print("datei " + displayPath(f.path, new Path(ws.projects[f.project].dir)) + " projekt=" + f.project.toString() + " paket=" + pkg + " erwartet=" + exp + " typen=" + f.typeNames() + mainMark);
         }
         for (i64 k = 0; k < ws.resolvedNames.length; k++) {
-            print("gewählt " + ws.resolvedNames[k] + " " + ws.resolvedVersions[k] + " " + ws.resolvedSums[k]);
+            print("gewählt " + ws.resolvedNames[k] + " " + ws.resolvedVersions[k] + " " + ws.resolvedSums[k]
+                + (ws.resolvedNative[k] ? " native" : ""));
         }
         Path baseDir = inputDir(input);
         for (Diag d : ws.diags) {
@@ -502,7 +536,7 @@ public:
             discard reportDiags(ws.diags, input);
             return 1;
         }
-        string text = Registry::formatLock(ws.resolvedNames, ws.resolvedVersions, ws.resolvedSums);
+        string text = Registry::formatLock(ws.resolvedNames, ws.resolvedVersions, ws.resolvedSums, ws.resolvedNative);
         if (toStdout) {
             Console::write(text);
             return 0;
@@ -757,11 +791,19 @@ public:
         string work = tc.freshDir("rppcc-build");
         try {
             string cFile = Path::join(work, programStem(input) + ".c");
-            i32 code = Main::genC(tc.stdDir, input, cFile, release);
+            string[] libs = [];
+            string[] libDirs = [];
+            i32 code = Main::genCWith(tc.stdDir, input, cFile, release, tc, mut libs, mut libDirs);
             if (code != 0) {
                 return code;
             }
-            tc.link(cFile, "", exe, work, release);
+            // R-15.12: im Releasemodus wird gegen die C-Bibliotheken gebunden; im Debugmodus
+            // lädt das Programm sie beim Start
+            if (!release) {
+                libs = [];
+                libDirs = [];
+            }
+            tc.link(cFile, "", exe, work, release, libs, libDirs);
         } finally {
             Dir::removeAll(work);
         }

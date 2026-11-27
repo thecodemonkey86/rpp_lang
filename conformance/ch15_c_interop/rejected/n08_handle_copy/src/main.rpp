@@ -1,0 +1,12 @@
+extern("rpptest") handle Counter(tl_counter_free);
+
+extern("rpptest") class Lib {
+public:
+    static own Counter tl_counter_new(i64 start);
+}
+
+i32 main(string[] args) {
+    Counter c = Lib::tl_counter_new(1);
+    Counter d = copy(c); // FEHLER
+    return 0;
+}

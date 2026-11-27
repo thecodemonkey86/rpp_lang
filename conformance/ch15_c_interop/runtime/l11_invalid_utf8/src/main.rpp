@@ -1,0 +1,11 @@
+// Ein String aus C, der kein gültiges UTF-8 ist, ist ein Programmfehler.
+extern("rpptest") class Text {
+public:
+    static string tl_invalid_utf8();
+}
+
+i32 main(string[] args) {
+    print("vorher");
+    print(Text::tl_invalid_utf8());
+    return 0;
+}

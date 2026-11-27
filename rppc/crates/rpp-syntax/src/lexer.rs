@@ -37,7 +37,7 @@ keywords! {
     Byte = "byte", Case = "case", Cast = "cast", Catch = "catch", Char = "char",
     Class = "class", Const = "const", Constructor = "constructor", Continue = "continue",
     Copy = "copy", Default = "default", Destructor = "destructor", Discard = "discard",
-    Do = "do", Else = "else", Enum = "enum", Export = "export", F32 = "f32", F64 = "f64",
+    Do = "do", Else = "else", Enum = "enum", Export = "export", Extern = "extern", F32 = "f32", F64 = "f64",
     False = "false", Finally = "finally", For = "for", I8 = "i8", I16 = "i16", I32 = "i32",
     I64 = "i64", If = "if", Import = "import", Mixin = "mixin", Mut = "mut", New = "new",
     Nodiscard = "nodiscard", Null = "null", Override = "override", Own = "own",

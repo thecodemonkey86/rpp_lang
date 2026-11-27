@@ -20,7 +20,7 @@ export enum Sym {
     None,
     Abstract, As, Base, Bool, Break, Byte, Case, Cast, Catch, Char,
     Class, Const, Constructor, Continue, Copy, Default, Destructor, Discard, Do, Else,
-    Enum, Export, F32, F64, False, Finally, For, I8, I16, I32,
+    Enum, Export, Extern, F32, F64, False, Finally, For, I8, I16, I32,
     I64, If, Import, Mixin, Mut, New, Nodiscard, Null, Override, Own,
     Package, Private, Protected, Public, Ref, Return, Shared, Static, String, Switch,
     This, Throw, True, Try, Ui8, Ui16, Ui32, Ui64, Using, Var,
@@ -37,7 +37,7 @@ public:
     static string[] texts() {
         return [
             "", "abstract", "as", "base", "bool", "break", "byte", "case", "cast", "catch", "char", "class",
-            "const", "constructor", "continue", "copy", "default", "destructor", "discard", "do", "else", "enum", "export", "f32",
+            "const", "constructor", "continue", "copy", "default", "destructor", "discard", "do", "else", "enum", "export", "extern", "f32",
             "f64", "false", "finally", "for", "i8", "i16", "i32", "i64", "if", "import", "mixin", "mut",
             "new", "nodiscard", "null", "override", "own", "package", "private", "protected", "public", "ref", "return", "shared",
             "static", "string", "switch", "this", "throw", "true", "try", "ui8", "ui16", "ui32", "ui64", "using",

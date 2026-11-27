@@ -1,0 +1,8 @@
+extern("native/build/rpptest.dll") class Lib { // FEHLER
+public:
+    static i32 tl_add_i32(i32 a, i32 b);
+}
+
+i32 main(string[] args) {
+    return 0;
+}

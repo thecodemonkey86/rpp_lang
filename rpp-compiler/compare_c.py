@@ -16,6 +16,9 @@ FR++-Programme (fr-model/tests) und N Zufallsprogramme aus frpp/gen.py dazu, nac
 übersetzt wie in fr-model/compare.py; verglichen werden die, die rppc annimmt.
 Mit --exe RPPCC erzeugt der übersetzte Compiler den C-Code statt des Interpreters (schneller);
 --cflags gibt dem C-Compiler weitere Schalter, etwa "/DRPP_NATCHECK" (bzw. "-DRPP_NATCHECK").
+Tests aus Kapiteln mit einem Ordner native/ (Kapitel 15) binden im Releasemodus die C-Bibliotheken
+aus native/build, die rppc test bzw. rppcc test vorher gebaut hat; „Erwartet (release): Fehler beim
+Bauen“ verlangt, dass das Binden scheitert.
 """
 
 import os
@@ -63,19 +66,36 @@ def runtime_header(path):
     modes = []
     args = []
     stdin = ""
+    build_error = set()
     for line in text.splitlines()[:12]:
         l = line.strip().lstrip("/").lstrip("#").strip()
         if l.startswith("Erwartet (debug):"):
             modes.append("debug")
         elif l.startswith("Erwartet (release):"):
             modes.append("release")
+            if "Fehler beim Bauen" in l:
+                build_error.add("release")
         elif l.startswith("Erwartet:"):
             modes += ["debug", "release"]
         elif l.startswith("Argumente:"):
             args = l[len("Argumente:"):].split()
         elif l.startswith("Eingabe:"):
             stdin = unquote(l[len("Eingabe:"):])
-    return sorted(set(modes)), args, stdin
+    return sorted(set(modes)), args, stdin, build_error
+
+
+def native_libs(path):
+    """C-Bibliotheken eines Tests aus Kapitel 15: (Ordner, Namen) aus KAPITEL/native/build,
+    gebaut von `rppc test` bzw. `rppcc test`. Gebunden wird nur im Releasemodus (R-15.12)."""
+    if not path.is_dir():
+        return None, []
+    build = path.parent.parent / "native" / "build"
+    if not (path.parent.parent / "native").is_dir():
+        return None, []
+    if not build.is_dir():
+        raise SystemExit(f"{build} fehlt: zuerst `rppc test` oder `rppcc test` laufen lassen")
+    names = sorted(f.stem for f in (path.parent.parent / "native").glob("*.c"))
+    return build, names
 
 
 def run_in_fresh_dir(cmd, stdin):
@@ -96,9 +116,13 @@ class Compiler:
         self.build = build
         self.rt_obj = None
 
-    def compile(self, c_file, exe):
+    def compile(self, c_file, exe, lib_dir=None, libs=()):
+        if lib_dir is not None:
+            for name in libs:
+                shutil.copyfile(lib_dir / (name + ".dll"), exe.parent / (name + ".dll"))
         if self.gcc:
-            cmd = [GCC, "-std=c17", "-O1", "-w", *self.cflags.split(), "-I", str(RUNTIME), str(c_file), str(RUNTIME / "rpp_rt.c"), "-o", str(exe), "-lm", "-lwinmm", "-Wl,--stack,16777216"]
+            linked = [f"-L{lib_dir}"] + [f"-l{n}" for n in libs] if lib_dir is not None else []
+            cmd = [GCC, "-std=c17", "-O1", "-w", *self.cflags.split(), "-I", str(RUNTIME), str(c_file), str(RUNTIME / "rpp_rt.c"), "-o", str(exe), *linked, "-lm", "-lwinmm", "-Wl,--stack,16777216"]
             p = subprocess.run(cmd, capture_output=True)
             return p.returncode == 0, (p.stdout + p.stderr).decode("utf-8", errors="replace")
         if self.rt_obj is None:
@@ -109,8 +133,11 @@ class Compiler:
             if p.returncode != 0:
                 raise SystemExit("Could not compile the C runtime:\n" + (p.stdout + p.stderr).decode("cp1252", errors="replace"))
         obj = exe.with_suffix(".obj")
+        linked = "".join(f' "{n}.lib"' for n in libs)
+        if lib_dir is not None:
+            linked = f' /LIBPATH:"{lib_dir}"' + linked
         bat = self.build / "cc.bat"
-        bat.write_text(f'@echo off\ncall "{VCVARS}" >nul\ncl /nologo /std:c17 /O1 /W1 /wd4101 /wd4102 {self.cflags} /I "{RUNTIME}" "{c_file}" "{self.rt_obj}" /Fo:"{obj}" /Fe:"{exe}" /link /STACK:16777216\n', encoding="cp1252")
+        bat.write_text(f'@echo off\ncall "{VCVARS}" >nul\ncl /nologo /std:c17 /O1 /W1 /wd4101 /wd4102 {self.cflags} /I "{RUNTIME}" "{c_file}" "{self.rt_obj}" /Fo:"{obj}" /Fe:"{exe}" /link /STACK:16777216{linked}\n', encoding="cp1252")
         p = subprocess.run(["cmd", "/c", str(bat)], capture_output=True)
         return p.returncode == 0, (p.stdout + p.stderr).decode("cp1252", errors="replace")
 
@@ -188,7 +215,8 @@ def main():
         todo += fr_programs(frdir, fr_count)
     try:
         for path in todo:
-            modes, args, stdin = runtime_header(path)
+            modes, args, stdin, build_error = runtime_header(path)
+            lib_dir, libs = native_libs(path)
             if not modes:
                 modes = ["debug", "release"]
             try:
@@ -208,7 +236,20 @@ def main():
                     diff += 1
                     print(f"MISMATCH {rel} ({mode}): C code generation failed\n{gen.stdout.decode('utf-8', 'replace')}{gen.stderr.decode('utf-8', 'replace')}")
                     continue
-                ok, msg = comp.compile(c_file, exe)
+                if mode == "release" and lib_dir is not None:
+                    ok, msg = comp.compile(c_file, exe, lib_dir, libs)
+                else:
+                    ok, msg = comp.compile(c_file, exe)
+                if mode in build_error:
+                    # R-15.12: das Programm darf sich in diesem Modus nicht bauen lassen
+                    if ok:
+                        diff += 1
+                        print(f"MISMATCH {rel} ({mode}): expected a build error")
+                    else:
+                        same += 1
+                        if verbose:
+                            print(f"match {rel} ({mode}): build error")
+                    continue
                 if not ok:
                     diff += 1
                     print(f"MISMATCH {rel} ({mode}): C compilation failed\n{msg[:3000]}")

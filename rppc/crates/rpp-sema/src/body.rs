@@ -226,6 +226,15 @@ impl<'p> Checker<'p> {
         self.p.show(t)
     }
 
+    /// Typname vor `::` oder nach `new`: auch eine extern-Klasse (R-15.2).
+    fn resolve_owner(&mut self, t: &ast::Type) -> Ty {
+        let before = self.p.owner_position;
+        self.p.owner_position = true;
+        let r = self.resolve(t);
+        self.p.owner_position = before;
+        r
+    }
+
     fn resolve(&mut self, t: &ast::Type) -> Ty {
         let scope = self.ctx.tparams.clone();
         if self.quiet > 0 {
@@ -1728,7 +1737,7 @@ impl<'p> Checker<'p> {
                     ast::PatternName::Static(sr) => {
                         let owner = match &sr.owner {
                             ast::StaticOwner::Named(tn) => {
-                                let t = self.resolve(&ast::Type { ownership: None, base: ast::BaseType::Named(tn.clone()), suffixes: vec![], span: sr.span });
+                                let t = self.resolve_owner(&ast::Type { ownership: None, base: ast::BaseType::Named(tn.clone()), suffixes: vec![], span: sr.span });
                                 match t {
                                     Ty::Named(d, _) => Some(d),
                                     _ => None,
@@ -1828,7 +1837,7 @@ impl<'p> Checker<'p> {
             }
             E::Array(items) => self.array_literal(items, expected, e.span),
             E::New { ty, args } => {
-                let t = self.resolve(&ast::Type { ownership: None, base: ast::BaseType::Named(ty.clone()), suffixes: vec![], span: e.span });
+                let t = self.resolve_owner(&ast::Type { ownership: None, base: ast::BaseType::Named(ty.clone()), suffixes: vec![], span: e.span });
                 self.last_target = None;
                 let r = self.new_object(&t, args, e.span);
                 self.record_call(e);
@@ -1841,6 +1850,11 @@ impl<'p> Checker<'p> {
                 match t.unformed().core() {
                     Ty::Func(..) => {
                         self.err(e.span, "R-10.15", "Function values cannot be copied");
+                        Ty::Error
+                    }
+                    Ty::Named(d, _) if self.p.defs[*d].is_handle() => {
+                        let name = self.p.defs[*d].name.clone();
+                        self.err(e.span, "R-15.10", format!("The handle type {name} cannot be copied"));
                         Ty::Error
                     }
                     Ty::Named(d, _) if self.p.defs[*d].kind == DefKind::Class => {
@@ -2813,7 +2827,7 @@ impl<'p> Checker<'p> {
                 self.err(sr.member.span, "R-13.3", format!("{}::{} does not exist", prim_name(*p), sr.member.name));
                 return (Ty::Error, plain);
             }
-            ast::StaticOwner::Named(tn) => self.resolve(&ast::Type { ownership: None, base: ast::BaseType::Named(tn.clone()), suffixes: vec![], span: sr.span }),
+            ast::StaticOwner::Named(tn) => self.resolve_owner(&ast::Type { ownership: None, base: ast::BaseType::Named(tn.clone()), suffixes: vec![], span: sr.span }),
         };
         let Ty::Named(d, _) = &owner else {
             if !owner.is_error() {
@@ -2884,7 +2898,7 @@ impl<'p> Checker<'p> {
                 Ty::Error
             }
             ast::StaticOwner::Named(tn) => {
-                let owner = self.resolve(&ast::Type { ownership: None, base: ast::BaseType::Named(tn.clone()), suffixes: vec![], span: sr.span });
+                let owner = self.resolve_owner(&ast::Type { ownership: None, base: ast::BaseType::Named(tn.clone()), suffixes: vec![], span: sr.span });
                 let Ty::Named(d, _) = &owner else { return Ty::Error };
                 let d = *d;
                 if self.p.defs[d].kind == DefKind::Enum {
@@ -3259,6 +3273,17 @@ impl<'p> Checker<'p> {
             }
             Ty::Named(d, targs) => {
                 let def = self.p.defs[*d].clone();
+                if def.ext.is_some() {
+                    for a in args {
+                        self.probe(|c| c.expr(&a.expr, None));
+                    }
+                    if def.is_handle() {
+                        self.err(span, "R-15.10", format!("The handle type {} cannot be created with new; only C returns handles", def.name));
+                    } else {
+                        self.err(span, "R-15.2", format!("The extern class {} cannot be instantiated", def.name));
+                    }
+                    return Ty::Error;
+                }
                 match def.kind {
                     DefKind::Class => {}
                     _ => {

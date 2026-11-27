@@ -27,12 +27,12 @@ mkdir -p "$build/stage0" "$build/stage1"
 
 echo "Stage 0: building the seed with $cc"
 # shellcheck disable=SC2086
-"$cc" $flags -I "$runtime" "$here/rppcc.c" "$runtime/rpp_rt.c" -lm -o "$build/stage0/rppcc"
+"$cc" $flags -I "$runtime" "$here/rppcc.c" "$runtime/rpp_rt.c" -lm -ldl -o "$build/stage0/rppcc"
 
 echo "Stage 1: the seed compiles rpp-compiler"
 "$build/stage0/rppcc" c --release "$root/rppc/std" "$compiler" "$build/gen1.c"
 # shellcheck disable=SC2086
-"$cc" $flags -I "$runtime" "$build/gen1.c" "$runtime/rpp_rt.c" -lm -o "$build/stage1/rppcc"
+"$cc" $flags -I "$runtime" "$build/gen1.c" "$runtime/rpp_rt.c" -lm -ldl -o "$build/stage1/rppcc"
 
 echo "Stage 2: stage 1 compiles rpp-compiler again"
 "$build/stage1/rppcc" c --release "$root/rppc/std" "$compiler" "$build/gen2.c"

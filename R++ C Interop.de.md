@@ -176,7 +176,7 @@ dependencies:
 
 ## 7. Änderungen an anderen Kapiteln
 
-Mit diesem Kapitel haben sich die folgenden Stellen geändert (eingetragen am 27.11.2026). `RPP.g4` folgt mit der Umsetzung in M10, zusammen mit dem Parser von `rppc` und `rppcc`.
+Mit diesem Kapitel haben sich die folgenden Stellen geändert (eingetragen am 27.11.2026). `RPP.g4` und die Parser von `rppc` und `rppcc` folgten mit der Umsetzung in M10 (27.11.2026).
 
 | Stelle | Änderung |
 |---|---|

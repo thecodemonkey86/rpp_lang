@@ -1,0 +1,12 @@
+# Konformitätstest Kapitel 15 – Laufzeit.
+# Regel: R-15.1, R-15.2, R-15.6, R-15.11
+# Erwartet: Ausgabe "7\n-6000000000\n-5\n-200\n0\n0\n6\n18446744073709551615\n240\n36"; Exit-Code 0
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+native: true
+nativePaths:
+  - ../../native/build

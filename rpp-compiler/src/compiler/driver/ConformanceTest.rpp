@@ -57,6 +57,8 @@ public:
     string? stdout = null;
     i32? exit = null;
     string[] stderrContains = [];
+    // Fehler beim Bauen: das Programm lässt sich in diesem Modus nicht bauen (R-15.12)
+    bool buildError = false;
 }
 
 class Marker {
@@ -90,6 +92,14 @@ public:
         if (!Dir::exists(conformance)) {
             print("No conformance tests in " + conformance);
             return 2;
+        }
+        if (runtime) {
+            try {
+                buildNativeLibs(conformance);
+            } catch (ToolchainError x) {
+                print("C test libraries: " + x.message);
+                return 1;
+            }
         }
         string[] chapters = [];
         i64[] passed = [];
@@ -160,6 +170,21 @@ private:
             return rel.toString();
         }
         return path;
+    }
+
+    // Kapitel 15: die C-Testbibliotheken KAPITEL/native/NAME.c nach KAPITEL/native/build übersetzen
+    void buildNativeLibs(string conformance) {
+        for (DirEntry ch : Dir::entries(conformance)) {
+            string nd = Path::join(ch.path, "native");
+            if (ch.kind != FileType::Directory || !Dir::exists(nd)) {
+                continue;
+            }
+            for (DirEntry f : Dir::entries(nd)) {
+                if (f.kind != FileType::Directory && Path::extension(f.name) == "c") {
+                    tc.sharedLib(f.path, Path::join(nd, "build"), f.name.substring(0, f.name.length - 2));
+                }
+            }
+        }
     }
 
     // ================================================================ Tests finden
@@ -438,6 +463,8 @@ private:
                 e.exit = i32::tryParse(part.substring(10, part.length).trim());
             } else if (part.startsWith("Fehlerausgabe enthält ")) {
                 e.stderrContains.push(unquote(part.substring(22, part.length)));
+            } else if (part == "Fehler beim Bauen") {
+                e.buildError = true;
             }
         }
         return e;
@@ -486,14 +513,24 @@ private:
             }
             string name = mode == 0 ? "debug" : "release";
             string exe = "";
+            bool buildError = e.buildError;
             try {
                 string? built = build(u.path, mode == 1);
                 if (built == null) {
+                    if (buildError) {
+                        continue;
+                    }
                     return new Outcome(1, name + ": compilation failed: " + lastError);
                 }
                 exe = built;
             } catch (ToolchainError x) {
+                if (buildError) {
+                    continue;
+                }
                 return new Outcome(1, name + ": " + x.message);
+            }
+            if (buildError) {
+                return new Outcome(1, name + ": expected a build error");
             }
             // V-14.3: jeder Lauf in einem frischen, leeren Arbeitsverzeichnis, das danach gelöscht wird
             string dir = Path::join(work, "run-" + name);
@@ -555,7 +592,14 @@ private:
         string cFile = Path::join(work, "test.c");
         File::writeText(cFile, g.generate(ws));
         string exe = Path::join(work, tc.exeName("test"));
-        tc.link(cFile, runtimeObj, exe, work, false);
+        string[] libs = [];
+        string[] libDirs = [];
+        if (release) {
+            (string[] names, string[] dirs) = tc.nativeLibs(ws);
+            libs = names;
+            libDirs = dirs;
+        }
+        tc.link(cFile, runtimeObj, exe, work, false, libs, libDirs);
         return exe;
     }
 }

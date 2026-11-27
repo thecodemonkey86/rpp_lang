@@ -1,0 +1,12 @@
+# Konformitätstest Kapitel 15 – muss abgelehnt werden.
+# Regel: R-15.3
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (ein C-Symbol hat genau eine Deklaration in einer Klasse).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+native: true
+nativePaths:
+  - ../../native/build

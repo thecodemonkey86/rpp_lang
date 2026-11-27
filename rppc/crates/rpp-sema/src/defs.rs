@@ -139,9 +139,31 @@ pub struct TypeDef {
     pub copy: Option<Span>,
     pub has_dtor: bool,
     pub span: Span,
+    /// extern-Klasse oder Handle-Typ (Kapitel 15)
+    pub ext: Option<ExternInfo>,
+}
+
+/// Angaben zu einer extern-Klasse oder einem Handle-Typ (R-15.1, R-15.5).
+#[derive(Debug, Clone)]
+pub struct ExternInfo {
+    /// Name der C-Bibliothek
+    pub lib: String,
+    pub lib_span: Span,
+    /// bei einem Handle-Typ: die Freigabefunktion
+    pub handle_free: Option<String>,
 }
 
 impl TypeDef {
+    /// extern-Klasse (nicht Handle-Typ)
+    pub fn is_extern_class(&self) -> bool {
+        self.ext.as_ref().is_some_and(|e| e.handle_free.is_none())
+    }
+
+    /// Handle-Typ (R-15.5)
+    pub fn is_handle(&self) -> bool {
+        self.ext.as_ref().is_some_and(|e| e.handle_free.is_some())
+    }
+
     pub fn full_name(&self) -> String {
         if self.package.is_empty() {
             self.name.clone()
@@ -168,6 +190,8 @@ pub struct Program {
     pub rt: crate::rt::RuntimeInfo,
     by_full: HashMap<String, DefId>,
     pending: Vec<PendingArgs>,
+    /// Ein Typname steht vor `::` oder nach `new`: eine extern-Klasse ist dort erlaubt (R-15.2).
+    pub owner_position: bool,
 }
 
 /// Was im Rumpf einer Methode als Typ-Parameter sichtbar ist.
@@ -254,7 +278,7 @@ impl Program {
     // ------------------------------------------------------------ Aufbau
 
     pub fn build(ws: Workspace) -> Program {
-        let mut p = Program { ws, defs: Vec::new(), tparams: Vec::new(), diags: Vec::new(), rt: Default::default(), by_full: HashMap::new(), pending: Vec::new() };
+        let mut p = Program { ws, defs: Vec::new(), tparams: Vec::new(), diags: Vec::new(), rt: Default::default(), by_full: HashMap::new(), pending: Vec::new(), owner_position: false };
         p.diags.append(&mut p.ws.diags);
         p.collect();
         p.resolve_headers();
@@ -277,6 +301,14 @@ impl Program {
             let project = self.ws.files[f].project;
             let decls = self.ws.files[f].unit.decls.clone();
             for (d, decl) in decls.iter().enumerate() {
+                let ext = match decl {
+                    TopDecl::Class(c) => c.ext.as_ref().map(|(lib, lib_span)| ExternInfo {
+                        lib: lib.clone(),
+                        lib_span: *lib_span,
+                        handle_free: c.handle_free.as_ref().map(|i| i.name.clone()),
+                    }),
+                    _ => None,
+                };
                 let (kind, name, export, is_abstract, tps, span) = match decl {
                     TopDecl::Class(c) => (DefKind::Class, &c.name, c.export, c.is_abstract, &c.type_params[..], c.span),
                     TopDecl::Mixin(m) => (DefKind::Mixin, &m.name, m.export, false, &m.type_params[..], m.span),
@@ -303,6 +335,7 @@ impl Program {
                     copy: None,
                     has_dtor: false,
                     span,
+                    ext,
                 };
                 let full = def.full_name();
                 if let Some(&other) = self.by_full.get(&full) {
@@ -387,7 +420,34 @@ impl Program {
                 }
             };
         }
+        if !self.owner_position {
+            self.check_extern_use(file, &ty, t.span);
+        }
         ty
+    }
+
+    /// R-15.2: Eine extern-Klasse ist kein Typ für Werte; R-15.10: Handles gibt es nur als own.
+    fn check_extern_use(&mut self, file: usize, ty: &Ty, span: Span) {
+        let mut t = ty;
+        while let Ty::Nullable(x) | Ty::Vector(x) | Ty::Array(x, _) = t {
+            t = x;
+        }
+        match t {
+            Ty::Named(d, _) if self.defs[*d].is_extern_class() => {
+                let name = self.defs[*d].name.clone();
+                self.error(file, span, "R-15.2", format!("The extern class {name} cannot be used as a type"));
+            }
+            Ty::Formed(form, x) => {
+                if let Ty::Named(d, _) = x.as_ref() {
+                    if self.defs[*d].is_handle() {
+                        let name = self.defs[*d].name.clone();
+                        let f = if *form == Form::Shared { "shared" } else { "weak" };
+                        self.error(file, span, "R-15.10", format!("The handle type {name} exists only as own, not as {f}"));
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn resolve_type_arg(&mut self, file: usize, scope: &[ParamId], a: &TypeArg, span: Span) -> Ty {
@@ -987,8 +1047,17 @@ impl Program {
     }
 
     fn check_defs(&mut self) {
+        // R-15.3: (Bibliothek, Symbol) → Signatur der ersten Deklaration
+        let mut symbols: HashMap<(String, String), String> = HashMap::new();
         for def in 0..self.defs.len() {
             if self.is_std_file(self.defs[def].file) {
+                continue;
+            }
+            if self.defs[def].ext.is_some() {
+                self.check_extern(def, &mut symbols);
+                if self.defs[def].export {
+                    self.check_export(def);
+                }
                 continue;
             }
             match self.defs[def].kind {
@@ -999,6 +1068,146 @@ impl Program {
             if self.defs[def].export {
                 self.check_export(def);
             }
+        }
+    }
+
+    /// Kapitel 15: extern-Klassen und Handle-Typen.
+    fn check_extern(&mut self, def: DefId, symbols: &mut HashMap<(String, String), String>) {
+        let d = self.defs[def].clone();
+        let file = d.file;
+        let Some(ext) = d.ext.clone() else { return };
+        // R-15.13
+        if !self.ws.projects[d.project].native {
+            self.error(file, d.span, "R-15.13", format!(
+                "{} declares C functions, but the project is not native (native: true in rpp.yaml)", d.name));
+        }
+        // R-15.4
+        let valid = !ext.lib.is_empty() && ext.lib.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+        if !valid {
+            self.error(file, ext.lib_span, "R-15.4", format!("Invalid library name \"{}\"", ext.lib));
+        }
+        if ext.handle_free.is_some() {
+            return;
+        }
+        // R-15.2
+        if d.is_abstract {
+            self.error(file, d.span, "R-15.2", "An extern class cannot be abstract");
+        }
+        if !d.tparams.is_empty() {
+            self.error(file, d.span, "R-15.2", "An extern class cannot have type parameters");
+        }
+        if d.base.is_some() {
+            self.error(file, d.span, "R-15.2", "An extern class cannot have a base class");
+        }
+        if let TopDecl::Class(c) = self.decl(def) {
+            for m in &c.members {
+                let what = match m {
+                    ClassMember::Field(f) => Some((f.name.span, "fields")),
+                    ClassMember::Constructor(k) => Some((k.span, "constructors")),
+                    ClassMember::Destructor(_, s) => Some((*s, "a destructor")),
+                    ClassMember::Copy(_, _, s) => Some((*s, "copy")),
+                    ClassMember::Import(tn) => Some((tn.name.span(), "mixin imports")),
+                    _ => None,
+                };
+                if let Some((span, what)) = what {
+                    self.error(file, span, "R-15.2", format!("An extern class cannot have {what}"));
+                }
+            }
+        }
+        for (i, m) in d.methods.iter().enumerate() {
+            if !m.is_static || m.has_body || !m.tparams.is_empty() || m.mut_this {
+                let why = if !m.is_static {
+                    "must be static"
+                } else if m.has_body {
+                    "cannot have a body"
+                } else if m.mut_this {
+                    "cannot be mut"
+                } else {
+                    "cannot have type parameters"
+                };
+                self.error(file, m.span, "R-15.2", format!("Method {} of an extern class {why}", m.name));
+                continue;
+            }
+            // R-15.3: kein Überladen
+            if d.methods[..i].iter().any(|o| o.name == m.name) {
+                self.error(file, m.span, "R-15.3", format!("The C symbol {} is declared more than once", m.name));
+                continue;
+            }
+            // R-15.6
+            if let Some((rule, why)) = self.extern_signature_problem(m) {
+                self.error(file, m.span, rule, format!("Method {}: {why}", m.name));
+                continue;
+            }
+            let sig = self.extern_signature(m);
+            match symbols.get(&(ext.lib.clone(), m.name.clone())) {
+                Some(other) if *other != sig => {
+                    self.error(file, m.span, "R-15.3", format!(
+                        "The C symbol {} of library \"{}\" is already declared with a different signature", m.name, ext.lib));
+                }
+                Some(_) => {}
+                None => {
+                    symbols.insert((ext.lib.clone(), m.name.clone()), sig);
+                }
+            }
+        }
+    }
+
+    /// Textform einer Signatur zum Vergleich nach R-15.3.
+    fn extern_signature(&self, m: &MethodInfo) -> String {
+        let ps: Vec<String> = m.params.iter().map(|p| format!("{:?} {}", p.mode, self.show(&p.ty))).collect();
+        format!("{}({})", self.show(&m.ret.ty()), ps.join(", "))
+    }
+
+    /// R-15.6: erlaubte Typen an der Grenze zu C.
+    /// Regel und Grund, falls die Signatur nicht nach C passt (R-15.6; byte[] nach R-15.9).
+    fn extern_signature_problem(&self, m: &MethodInfo) -> Option<(&'static str, String)> {
+        use rpp_syntax::ast::Primitive as P;
+        for p in &m.params {
+            let ok = match &p.ty {
+                Ty::Prim(P::Char) => false,
+                Ty::Prim(_) => p.mode != Mode::Mut,
+                Ty::Vector(el) => matches!(el.as_ref(), Ty::Prim(P::Byte)) && p.mode != Mode::Own,
+                Ty::Named(d, _) => self.defs[*d].is_handle(),
+                _ => false,
+            };
+            if !ok {
+                let mode = match p.mode {
+                    Mode::Mut => "mut ",
+                    Mode::Own => "own ",
+                    Mode::Read => "",
+                };
+                let rule = if self.is_byte_array(&p.ty) { "R-15.9" } else { "R-15.6" };
+                return Some((rule, format!("parameter {} of type {mode}{} cannot be passed to C", p.name, self.show(&p.ty))));
+            }
+        }
+        let ok = match &m.ret {
+            Ret::Void => true,
+            Ret::Ref(..) => false,
+            Ret::Val(t) => match t {
+                Ty::Prim(P::Char) => false,
+                Ty::Prim(_) => true,
+                Ty::Nullable(x) => match x.as_ref() {
+                    Ty::Prim(P::String) => true,
+                    Ty::Named(d, _) => self.defs[*d].is_handle(),
+                    _ => false,
+                },
+                Ty::Named(d, _) => self.defs[*d].is_handle(),
+                _ => false,
+            },
+        };
+        if !ok {
+            let rule = if self.is_byte_array(&m.ret.ty()) { "R-15.9" } else { "R-15.6" };
+            return Some((rule, format!("return type {} cannot be returned from C", self.show(&m.ret.ty()))));
+        }
+        None
+    }
+
+    fn is_byte_array(&self, t: &Ty) -> bool {
+        use rpp_syntax::ast::Primitive as P;
+        match t {
+            Ty::Nullable(x) => self.is_byte_array(x),
+            Ty::Vector(el) => matches!(el.as_ref(), Ty::Prim(P::Byte)),
+            _ => false,
         }
     }
 

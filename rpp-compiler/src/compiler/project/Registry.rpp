@@ -17,6 +17,8 @@ public:
     string name;
     string version;
     string checksum;
+    // native: true (R-15.15)
+    bool native = false;
     i32 line;
     i32 checksumLine;
 
@@ -223,7 +225,7 @@ public:
             }
             for (i64 k = 0; k < item.keys.length; k++) {
                 string key = item.keys[k];
-                if (key != "name" && key != "version" && key != "checksum") {
+                if (key != "name" && key != "version" && key != "checksum" && key != "native") {
                     throw new LockError(item.items[k].line, "Unknown entry '" + key + "' in rpp.lock");
                 }
             }
@@ -236,18 +238,27 @@ public:
             if (v == null) {
                 throw new LockError(item.lineOf("version"), "Invalid version '" + version + "' in rpp.lock");
             }
+            bool native = false;
+            if (item.has("native")) {
+                if (!item.isStrAt("native") || item.strOf("native") != "true") {
+                    throw new LockError(item.lineOf("native"), "native in rpp.lock must be true");
+                }
+                native = true;
+            }
             for (LockEntry e : out) {
                 if (e.name == name) {
                     throw new LockError(item.line, "rpp.lock lists '" + name + "' twice");
                 }
             }
-            out.push(new LockEntry(name, v, item.strOf("checksum"), item.lineOf("name"), item.lineOf("checksum")));
+            LockEntry entry = new LockEntry(name, v, item.strOf("checksum"), item.lineOf("name"), item.lineOf("checksum"));
+            entry.native = native;
+            out.push(entry);
         }
         return out;
     }
 
-    // Text der Sperrdatei; names ist sortiert, versions und sums gehören dazu
-    static string formatLock(string[] names, string[] versions, string[] sums) {
+    // Text der Sperrdatei; names ist sortiert, versions, sums und natives gehören dazu
+    static string formatLock(string[] names, string[] versions, string[] sums, bool[] natives) {
         string out = "# rpp.lock: exact versions and checksums of the libraries from the registry (R-11.20).\n"
             + "# Written by the lock command; do not edit.\n";
         if (names.length == 0) {
@@ -256,6 +267,9 @@ public:
         out += "libraries:\n";
         for (i64 i = 0; i < names.length; i++) {
             out += "  - name: " + names[i] + "\n    version: " + versions[i] + "\n    checksum: " + sums[i] + "\n";
+            if (natives[i]) {
+                out += "    native: true\n";
+            }
         }
         return out;
     }

@@ -1,0 +1,18 @@
+extern("rpptest") class Text {
+public:
+    static string tl_greet(string name);
+    static i64 tl_byte_length(string s);
+    static string tl_unicode();
+    static string? tl_maybe(bool give);
+}
+
+i32 main(string[] args) {
+    print(Text::tl_greet("Welt"));
+    print(Text::tl_byte_length("grüße").toString());
+    print(Text::tl_unicode());
+    string? a = Text::tl_maybe(true);
+    print(a ?? "null");
+    string? b = Text::tl_maybe(false);
+    print(b ?? "null");
+    return 0;
+}

@@ -84,7 +84,7 @@ Beim Aufbau des Parsers ist ein Fehler im Interpreter aufgefallen und behoben: E
 
 ```
 cl /std:c17 /O2 /I runtime OUTPUT.c runtime/rpp_rt.c /link /STACK:16777216
-gcc -std=c17 -O2 -I runtime OUTPUT.c runtime/rpp_rt.c -lm
+gcc -std=c17 -O2 -I runtime OUTPUT.c runtime/rpp_rt.c -lm -ldl
 ```
 
 Der Codegenerator folgt dem Debug-Interpreter von `rppc`, der Referenz nach R-12.3: Jeder Ausdruck wird zu C-Code, der dieselben Schritte in derselben Reihenfolge ausführt (`eval`, `eval_store`, `transfer`, `temp`, `convert`, `args`). Ein Wert (`rv`) trägt wie `Value` im Interpreter seine Art und bei Objekten die Besitzform am Verweis; Freigabe, Destruktoren (V-7), Sperren (V-1), Unwinding mit `finally`, Programmfehler, Stacktrace und Exit-Codes (R-12.9) verhalten sich wie dort. Fehler laufen als Status durch die Aufrufe; jede Anweisung und jeder Gültigkeitsbereich hat eine Aufräummarke. Generics werden nicht vervielfältigt; Typargumente stehen wie im Interpreter am Objekt (R-7.26). Der Modus (debug oder release) wird beim Erzeugen gewählt.
@@ -132,6 +132,17 @@ rppcc withdraw [--registry VERZEICHNIS] NAME VERSION  # Version als zurückgezog
 Die Teile: `src/compiler/project/Registry.rpp` (Versionen, Prüfsummen, Form von `rpp.lock`; Gegenstück `rppc/crates/rpp-sema/src/registry.rs`) und `Workspace.resolve` in `Project.rpp` (Auswahl nach Minimal Version Selection, Prüfung gegen `rpp.lock`, Laden der gewählten Versionen; Gegenstück `project.rs`). Die Prüfsummen rechnet `rpp.hash.Sha256` aus der Standardbibliothek (R-13.46), in R++ geschrieben. `publish` vergleicht die exportierte Schnittstelle mit der Vorversion in der Form von `defs` (exportierte Typen, ihre `public`- und `protected`-Teile, ohne Positionen); entfallene oder geänderte Zeilen verlangen eine neue Hauptversion, neue Zeilen eine neue Nebenversion.
 
 `compare.py` prüft die Auflösung in den Teilen `project` (Projekte mit Version, gewählte Bibliotheken mit Prüfsumme, Meldungen; dazu 38 Grenzfälle für Verzeichnis und `rpp.lock`) und `lock` (Text von `lock --stdout`). `.github/scripts/check.py registry` spielt `publish`, `withdraw` und `lock` einmal ganz durch.
+
+## C-Anbindung (M10)
+
+`extern("lib") class` und `extern("lib") handle` (Kapitel 15) prüfen `Program.rpp` und `Checker.rpp` wie `rppc` (`defs.rs`, `body.rs`); die Projekteinträge `native`, `nativePaths` und `allowNative` stehen in `Project.rpp`, die Zeile `native: true` von `rpp.lock` in `Registry.rpp`.
+
+`CGen.rpp` erzeugt je `extern`-Methode einen Wrapper. Er wandelt die Argumente um (Zeichenketten als UTF-8 mit abschließender NUL, `byte[]` als Zeiger und Länge, Handles als ihr C-Zeiger), leert die Ausgabe des Programms (R-15.11), ruft die C-Funktion und wandelt das Ergebnis zurück. Ein Handle-Objekt trägt seinen Zeiger; sein Destruktor ruft die Freigabefunktion genau einmal.
+
+- Debugmodus: das Programm ruft jede Funktion über einen Zeiger, den `rt_native_load` vor `main` aus den Bibliotheken füllt (Suche: `nativePaths` des deklarierenden Projekts, dann des Programms, dann das System). Fehlt eine Bibliothek oder ein Symbol, endet das Programm mit `NativeError` und Exit-Code 2.
+- Releasemodus: die C-Datei deklariert je Symbol einen Prototyp und hält alle in der Tabelle `rpp_native_symbols`, damit der Linker ein fehlendes Symbol meldet, auch wenn das Programm es nie ruft (R-15.12). `build` bindet die Bibliotheken: MSVC mit `/LIBPATH` und `NAME.lib`, gcc und clang mit `-L`, `-l` und `-Wl,-rpath`. Unter Windows wird die DLL neben das Programm kopiert.
+
+Außerhalb von Windows nutzt die Laufzeit `dlopen`; jedes Programm bindet deshalb `-ldl`. C-Funktionen dürfen nicht mit `rt_` oder `rpp_` beginnen; diese Namen gehören der Laufzeit. `rppcc test` übersetzt die Testbibliothek `conformance/ch15_c_interop/native/rpptest.c` wie `rppc test` (`Toolchain.sharedLib`).
 
 ## Bootstrap ohne Rust
 

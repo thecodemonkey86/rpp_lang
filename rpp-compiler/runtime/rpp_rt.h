@@ -734,6 +734,18 @@ int rt_no_method(rv* ret, rv self, rv* args);
 void rt_set_mtargs(const RTy** t);
 const RTy** rt_take_mtargs(void);
 
+/* C-Anbindung (Kapitel 15) */
+extern int (*rt_native_load)(void);              /* Debugmodus: lädt die Bibliotheken vor main */
+void* rt_native_open(const char* lib, const char* file, const char* const* dirs, int ndirs);
+void* rt_native_sym(void* h, const char* lib, const char* name);
+void rt_native_flush(void);
+int rt_native_str(const char** out, rv v, const char* param, const char* fn);
+int rt_native_ret_str(rv* out, const char* s, int nullable, const char* fn);
+uint8_t* rt_native_bytes(rv v, size_t* len);
+void rt_native_bytes_end(rv v, uint8_t* b, size_t len, int write);
+int rt_native_handle(rv* out, const RClass* c, void* p, int nullable, const char* fn);
+int rt_native_give(rv v);
+
 /* Start */
 int rt_main(int argc, char** argv, int (*body)(rv* ret, rv args), int release);
 

@@ -1,0 +1,10 @@
+extern("rpptest") class Lib {
+public:
+    static i32 tl_add_i32(i32 a, i32 b);
+    static i32 tl_does_not_exist();
+}
+
+i32 main(string[] args) {
+    print("main");
+    return Lib::tl_add_i32(0, 0);
+}

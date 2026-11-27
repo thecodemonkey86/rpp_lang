@@ -28,7 +28,13 @@ jobs:
       - name: Run syntax tests
         run: cargo run --locked --manifest-path rppc/Cargo.toml -- syntaxtest .
       - name: Run language conformance tests
-        run: cargo run --locked --manifest-path rppc/Cargo.toml -- test .
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            & ./.github/scripts/enter-msvc.ps1
+          }
+          cargo run --locked --manifest-path rppc/Cargo.toml -- test .
+          exit $LASTEXITCODE
       - name: Check English CLI output
         run: python .github/scripts/check.py cli
       - name: Build and run native smoke tests

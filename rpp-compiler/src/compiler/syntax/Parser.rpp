@@ -19,6 +19,8 @@ export class Parser {
 private:
     Token[] toks;
     i64 pos = 0;
+    // innerhalb der Mitglieder einer extern-Klasse (Kapitel 15)
+    bool inExtern = false;
     // weitester Fehler: Position (Token) und was dort erwartet wurde; -1 solange keiner. Die
     // Meldung entsteht erst in error() (sie hängt nur vom Token an farPos ab).
     i64 farPos = -1;
@@ -211,10 +213,38 @@ private:
         bool exp = eatK(Sym::Export);
         i32 l = line();
         i32 c = col();
+        // extern("lib") vor einer Klasse oder einem Handle-Typ (Kapitel 15)
+        Node? ext = null;
+        if (eatK(Sym::Extern)) {
+            expectP(Sym::LParen);
+            if (toks[pos].kind != Kind::Str) {
+                throw failure("string");
+            }
+            ext = new Node("extern", "\"" + toks[pos].text + "\"", toks[pos].line, toks[pos].col);
+            bump();
+            expectP(Sym::RParen);
+            if (toks[pos].kind == Kind::Ident && toks[pos].text == "handle") {
+                bump();
+                // die Angabe extern steht am Ende des Knotens (wie in rppc)
+                Node h = new Node("handle", flag("", exp, "export"), l, c);
+                h.add(ident());
+                expectP(Sym::LParen);
+                h.add(ident());
+                expectP(Sym::RParen);
+                expectP(Sym::Semi);
+                h.add(ext);
+                return h;
+            }
+            if (!isK(Sym::Abstract) && !isK(Sym::Class)) {
+                throw failure("'class' or 'handle'");
+            }
+        }
         if (isK(Sym::Abstract) || isK(Sym::Class)) {
             bool abs = eatK(Sym::Abstract);
             expectK(Sym::Class);
             Node n = new Node("class", flag(flag("", exp, "export"), abs, "abstract"), l, c);
+            bool wasExtern = inExtern;
+            inExtern = ext != null;
             n.add(ident());
             n.add(typeParamsOpt());
             if (eatP(Sym::Colon)) {
@@ -227,7 +257,11 @@ private:
             while (!eatP(Sym::RBrace)) {
                 ms.add(classMember());
             }
+            inExtern = wasExtern;
             n.add(ms);
+            if (ext != null) {
+                n.add(ext);
+            }
             return n;
         }
         if (eatK(Sym::Mixin)) {
@@ -460,7 +494,8 @@ private:
         Node tps = typeParamsOpt();
         Node ps = params();
         bool mutThis = eatK(Sym::Mut);
-        bool without = modifier == "abstract" || (inMixin && modifier.length == 0);
+        // in einer extern-Klasse darf jede Methode ohne Rumpf stehen; R-15.2 prüft die Semantik
+        bool without = modifier == "abstract" || (inMixin && modifier.length == 0) || inExtern;
         Node m = node("method", flag(flag(flag("", nd, "nodiscard"), modifier.length > 0, modifier), mutThis, "mut"));
         m.add(ret);
         m.add(name);

@@ -1,0 +1,17 @@
+extern("rpptest") class Num {
+public:
+    static f64 tl_scale(f64 x, f32 factor);
+    static f32 tl_half(f32 x);
+    static bool tl_and(bool a, bool b);
+    static bool tl_is_positive(f64 x);
+    static f64 tl_mix(i32 a, f64 b, i64 c, f32 d, bool e, f64 f, ui8 g, f64 h, f64 i, f64 j);
+}
+
+i32 main(string[] args) {
+    print(Num::tl_scale(1.5, 2.5).toString());
+    print(Num::tl_half(2.5).toString());
+    print(Num::tl_and(true, false).toString());
+    print(Num::tl_is_positive(0.5).toString());
+    print(Num::tl_mix(1, 2.5, 3, 4.0, true, 5.0, 6, 7.0, 8.0, 18.0).toString());
+    return 0;
+}

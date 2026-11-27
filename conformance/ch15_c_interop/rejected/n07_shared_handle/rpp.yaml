@@ -1,0 +1,12 @@
+# Konformitätstest Kapitel 15 – muss abgelehnt werden.
+# Regel: R-15.10
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (ein Handle gibt es nur als own).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+native: true
+nativePaths:
+  - ../../native/build

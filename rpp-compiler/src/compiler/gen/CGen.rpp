@@ -123,6 +123,10 @@ private:
     // Ergebnisse von overridden (Schlüssel owner * 1000000 + member)
     i64[] ovKeys = [];
     bool[] ovVals = [];
+    // C-Anbindung (Kapitel 15): schon deklarierte C-Symbole (Releasemodus), Funktion zum
+    // Laden der Bibliotheken (Debugmodus)
+    string[] cSymbols = [];
+    bool hasNatives = false;
 
 public:
     constructor(own Checker c, bool release) {
@@ -135,6 +139,18 @@ public:
         prepare(ws);
         for (i64 d = 0; d < c.p.defs.length; d++) {
             genDef(ws, d);
+        }
+        if (hasNatives && !release) {
+            genNativeLoad(ws);
+        }
+        if (cSymbols.length > 0) {
+            // R-15.12: jedes deklarierte Symbol wird gebunden, auch wenn das Programm es nie
+            // aufruft (sonst entfernte der C-Compiler die unbenutzte Hülle samt Verweis)
+            string[] refs = [];
+            for (string sym : cSymbols) {
+                refs.push("(void (*)(void))&" + sym);
+            }
+            funcs.append("void (*const rpp_native_symbols[])(void) = { " + string::join(", ", refs) + " };\n\n");
         }
         for (i64 fi = 0; fi < ws.files.length; fi++) {
             if (c.p.projStd[ws.files[fi].project]) {
@@ -172,6 +188,13 @@ private:
             layouts.push(computeLayout(d));
             bool[] nat = [];
             DefKind dk = c.p.defs[d].kind;
+            if (c.p.defs[d].isExtern) {
+                hasNatives = true;
+            }
+            if (c.p.defs[d].isHandle()) {
+                natives.push(nat);
+                continue;
+            }
             string full = c.p.defs[d].fullName();
             bool nativeClass = full == "rpp.io.Console" || full == "rpp.io.File" || full == "rpp.io.Dir" || full == "rpp.io.Path" || full == "rpp.text.StringBuilder" || full == "rpp.collections.Map" || full == "rpp.collections.Set" || full == "rpp.fmt.Fmt" || full == "rpp.env.Env" || full == "rpp.io.SaveFile" || full == "rpp.io.TextReader" || full == "rpp.text.StringView" || full == "rpp.math.Math" || full == "rpp.env.ElapsedTimer" || full == "rpp.process.Process";
             if (dk != DefKind::Enum) {
@@ -926,6 +949,16 @@ private:
         if (dk == DefKind::Enum) {
             return;
         }
+        if (c.p.defs[d].isHandle()) {
+            genHandle(d);
+            return;
+        }
+        if (c.p.defs[d].isExternClass()) {
+            for (i64 mi = 0; mi < c.p.defs[d].methods.length; mi++) {
+                MethodInfo em = c.p.defs[d].methods[mi].substituted(new Subst());
+                genExternCall(d, em);
+            }
+        }
         i64 fileIdx = c.p.defs[d].file;
         i64 declIdx = c.p.defs[d].decl;
         ref Node decl = ws.files[fileIdx].unit.kids[declIdx];
@@ -1035,6 +1068,257 @@ private:
         }
         emit("XR: return st;");
         endFn(header);
+    }
+
+    // ================================================================ C-Anbindung (Kapitel 15)
+
+    // C-Typ eines Parameters oder Rückgabewerts einer extern-Methode (R-15.6)
+    string cType(shared Ty t, Mode mode) {
+        shared Ty x = t;
+        if (x.kind == TK::Nullable) {
+            x = x.args[0];
+        }
+        if (x.kind == TK::Prim) {
+            string p = x.prim;
+            if (p == "i8") { return "int8_t"; }
+            if (p == "i16") { return "int16_t"; }
+            if (p == "i32") { return "int32_t"; }
+            if (p == "i64") { return "int64_t"; }
+            if (p == "ui8" || p == "byte") { return "uint8_t"; }
+            if (p == "ui16") { return "uint16_t"; }
+            if (p == "ui32") { return "uint32_t"; }
+            if (p == "ui64") { return "uint64_t"; }
+            if (p == "f32") { return "float"; }
+            if (p == "f64") { return "double"; }
+            if (p == "bool") { return "_Bool"; }
+            if (p == "string") { return "const char*"; }
+        }
+        if (x.kind == TK::Vector) {
+            return mode == Mode::Mut ? "uint8_t*" : "const uint8_t*";
+        }
+        return "void*";
+    }
+
+    // Parameterliste der C-Funktion (byte[] wird zu Zeiger und Länge)
+    string cParams(MethodInfo m) {
+        string[] ps = [];
+        for (PInfo p : m.params) {
+            ps.push(cType(p.ty, p.mode));
+            if (p.ty.kind == TK::Vector) {
+                ps.push("size_t");
+            }
+        }
+        if (ps.length == 0) {
+            return "void";
+        }
+        return string::join(", ", ps);
+    }
+
+    string cRet(MethodInfo m) {
+        if (m.ret.kind == RetKind::Void) {
+            return "void";
+        }
+        return cType(m.ret.ty, Mode::Read);
+    }
+
+    // Ausdruck für die aufzurufende Funktion: im Releasemodus das Symbol selbst (einmal
+    // deklariert), im Debugmodus der beim Start geladene Zeiger; immer mit dem Typ der Deklaration
+    string cCallee(string sym, string ptrVar, string ret, string params) mut {
+        string fnTy = "(" + ret + " (*)(" + params + "))";
+        if (release) {
+            if (!hasStr(cSymbols, sym)) {
+                cSymbols.push(sym);
+                protos.append("extern " + ret + " " + sym + "(" + params + ");\n");
+            }
+            return "(" + fnTy + "&" + sym + ")";
+        }
+        data.append("static void* " + ptrVar + ";\n");
+        return "(" + fnTy + ptrVar + ")";
+    }
+
+    // Hülle M_d_member einer Methode einer extern-Klasse: wandelt die Argumente um, leert die
+    // Ausgaben, ruft C auf und wandelt das Ergebnis um (R-15.6 bis R-15.11)
+    void genExternCall(i64 d, MethodInfo m) mut {
+        string name = "M_" + d.toString() + "_" + m.member.toString();
+        string header = "static int " + name + "(rv* ret, rv self, rv* args)";
+        string ret = cRet(m);
+        string fn = cCallee(m.name, "NF_" + d.toString() + "_" + m.member.toString(), ret, cParams(m));
+        string sym = cstr(m.name);
+        StringBuilder b = new StringBuilder();
+        b.append(header + " {\n    int st = ST_OK;\n    (void)self;\n    *ret = rv_void();\n");
+        string[] cargs = [];
+        // erst die Umwandlungen, die scheitern können (string), dann die Puffer
+        for (i64 i = 0; i < m.params.length; i++) {
+            string a = "args[" + i.toString() + "]";
+            string v = "a" + i.toString();
+            shared Ty t = m.params[i].ty;
+            if (t.kind == TK::Prim && t.prim == "string") {
+                b.append("    const char* " + v + " = NULL;\n");
+                b.append("    if ((st = rt_native_str(&" + v + ", " + a + ", " + cstr(m.params[i].name) + ", " + sym + ")) != ST_OK) goto XD;\n");
+            }
+        }
+        for (i64 i = 0; i < m.params.length; i++) {
+            string a = "args[" + i.toString() + "]";
+            string v = "a" + i.toString();
+            shared Ty t = m.params[i].ty;
+            string ct = cType(t, m.params[i].mode);
+            if (t.kind == TK::Prim) {
+                string p = t.prim;
+                if (p == "string") {
+                    cargs.push(v);
+                } else if (p == "f32") {
+                    cargs.push(a + ".v.f32");
+                } else if (p == "f64") {
+                    cargs.push(a + ".v.f");
+                } else if (p == "bool") {
+                    cargs.push("(_Bool)(" + a + ".v.i != 0)");
+                } else if (p.startsWith("ui") || p == "byte") {
+                    cargs.push("(" + ct + ")" + a + ".v.u");
+                } else {
+                    cargs.push("(" + ct + ")" + a + ".v.i");
+                }
+            } else if (t.kind == TK::Vector) {
+                b.append("    size_t n" + i.toString() + ";\n");
+                b.append("    uint8_t* " + v + " = rt_native_bytes(" + a + ", &n" + i.toString() + ");\n");
+                cargs.push(v);
+                cargs.push("n" + i.toString());
+            } else {
+                cargs.push("rv_o(" + a + ")->native");
+            }
+        }
+        b.append("    rt_native_flush();\n");
+        string callExpr = fn + "(" + string::join(", ", cargs) + ")";
+        if (ret == "void") {
+            b.append("    " + callExpr + ";\n");
+        } else {
+            b.append("    " + ret + " r = " + callExpr + ";\n");
+        }
+        // Puffer zurückschreiben (mut byte[]) und freigeben; own H geht an C
+        for (i64 i = 0; i < m.params.length; i++) {
+            string a = "args[" + i.toString() + "]";
+            shared Ty t = m.params[i].ty;
+            if (t.kind == TK::Vector) {
+                string w = m.params[i].mode == Mode::Mut ? "1" : "0";
+                b.append("    rt_native_bytes_end(" + a + ", a" + i.toString() + ", n" + i.toString() + ", " + w + ");\n");
+            } else if (t.kind == TK::Named && m.params[i].mode == Mode::Own) {
+                b.append("    st = rt_combine(st, rt_native_give(" + a + "));\n");
+                b.append("    " + a + " = rv_moved();\n");
+            }
+        }
+        if (m.ret.kind != RetKind::Void) {
+            shared Ty rt0 = m.ret.ty;
+            string nullable = rt0.kind == TK::Nullable ? "1" : "0";
+            shared Ty x = rt0.kind == TK::Nullable ? rt0.args[0] : rt0;
+            if (x.kind == TK::Prim) {
+                string p = x.prim;
+                if (p == "string") {
+                    b.append("    if (st == ST_OK) st = rt_native_ret_str(ret, r, " + nullable + ", " + sym + ");\n");
+                } else if (p == "f32") {
+                    b.append("    *ret = rv_f32(r);\n");
+                } else if (p == "f64") {
+                    b.append("    *ret = rv_f64(r);\n");
+                } else if (p == "bool") {
+                    b.append("    *ret = rv_bool(r != 0);\n");
+                } else if (p == "byte") {
+                    b.append("    *ret = rv_byte(r);\n");
+                } else if (p.startsWith("ui")) {
+                    b.append("    *ret = rv_uint((uint64_t)r, " + ctag(p) + ");\n");
+                } else {
+                    b.append("    *ret = rv_int((int64_t)r, " + ctag(p) + ");\n");
+                }
+            } else if (x.kind == TK::Named) {
+                b.append("    if (st == ST_OK) st = rt_native_handle(ret, &CL_" + x.id.toString() + ", r, " + nullable + ", " + sym + ");\n");
+            }
+        }
+        b.append("XD:\n");
+        for (i64 i = 0; i < m.params.length; i++) {
+            shared Ty t = m.params[i].ty;
+            if (t.kind != TK::Prim || t.prim == "string") {
+                b.append("    st = rt_combine(st, rt_drop(args[" + i.toString() + "]));\n");
+            }
+        }
+        b.append("    return st;\n}\n\n");
+        funcs.append(b.toString());
+        protos.append(header + ";\n");
+    }
+
+    // Handle-Typ (R-15.5, R-15.10): das Objekt hält den Zeiger in native; der Destruktor ruft
+    // die Freigabefunktion genau einmal
+    void genHandle(i64 d) mut {
+        string ds = d.toString();
+        string freeName = c.p.defs[d].handleFree ?? "";
+        string fn = cCallee(freeName, "NH_" + ds, "void", "void*");
+        string z = "static int Z_" + ds + "(RObj* o)";
+        funcs.append(z + " {\n    void* p = o->native;\n    o->native = NULL;\n    if (p) " + fn + "(p);\n    return ST_OK;\n}\n\n");
+        protos.append(z + ";\n");
+        string i = "static int I_" + ds + "(RObj* o)";
+        funcs.append(i + " {\n    (void)o;\n    return ST_OK;\n}\n\n");
+        protos.append(i + ";\n");
+        string k = "static int K_" + ds + "_i(RObj* o, rv* args)";
+        funcs.append(k + " {\n    (void)o; (void)args;\n    return ST_OK;\n}\n\n");
+        protos.append(k + ";\n");
+    }
+
+    // Debugmodus: N_LOAD lädt vor main alle Bibliotheken und löst jedes Symbol auf (R-15.12,
+    // V-15.5), in der Reihenfolge der Deklarationen wie im Interpreter
+    void genNativeLoad(Workspace ws) mut {
+        i64 prog = -1;
+        for (i64 p = 0; p < ws.projects.length && prog < 0; p++) {
+            if (!ws.projects[p].isStd) {
+                prog = p;
+            }
+        }
+        StringBuilder b = new StringBuilder();
+        b.append("#if defined(_WIN32)\n#define RPP_LIB(n) n \".dll\"\n#elif defined(__APPLE__)\n#define RPP_LIB(n) \"lib\" n \".dylib\"\n#else\n#define RPP_LIB(n) \"lib\" n \".so\"\n#endif\n");
+        b.append("static int N_LOAD(void) {\n");
+        string[] libs = [];
+        for (i64 d = 0; d < c.p.defs.length; d++) {
+            if (!c.p.defs[d].isExtern) {
+                continue;
+            }
+            string lib = c.p.defs[d].extLib;
+            i64 li = -1;
+            for (i64 k = 0; k < libs.length; k++) {
+                if (libs[k] == lib) {
+                    li = k;
+                }
+            }
+            if (li < 0) {
+                li = libs.length;
+                libs.push(lib);
+                data.append("static void* NL_" + li.toString() + ";\n");
+                string[] dirs = [];
+                for (string x : ws.projects[c.p.defs[d].project].nativePaths) {
+                    dirs.push(x);
+                }
+                if (prog >= 0) {
+                    for (string x : ws.projects[prog].nativePaths) {
+                        if (!hasStr(dirs, x)) {
+                            dirs.push(x);
+                        }
+                    }
+                }
+                string[] quoted = [];
+                for (string x : dirs) {
+                    quoted.push(cstr(x));
+                }
+                quoted.push("NULL");
+                string ls = li.toString();
+                b.append("    static const char* const ND_" + ls + "[] = { " + string::join(", ", quoted) + " };\n");
+                b.append("    if (!(NL_" + ls + " = rt_native_open(" + cstr(lib) + ", RPP_LIB(" + cstr(lib) + "), ND_" + ls + ", " + dirs.length.toString() + "))) return ST_FATAL;\n");
+            }
+            string lv = "NL_" + li.toString();
+            string? free = c.p.defs[d].handleFree;
+            if (free != null) {
+                b.append("    if (!(NH_" + d.toString() + " = rt_native_sym(" + lv + ", " + cstr(lib) + ", " + cstr(free) + "))) return ST_FATAL;\n");
+            } else {
+                for (MethodInfo m : c.p.defs[d].methods) {
+                    b.append("    if (!(NF_" + d.toString() + "_" + m.member.toString() + " = rt_native_sym(" + lv + ", " + cstr(lib) + ", " + cstr(m.name) + "))) return ST_FATAL;\n");
+                }
+            }
+        }
+        b.append("    return ST_OK;\n}\n\n");
+        funcs.append(b.toString());
     }
 
     void genFieldInit(i64 d, Node members) mut {
@@ -1421,7 +1705,7 @@ private:
                 baseRef = "&CL_" + b.toString();
             }
             string dtor = "NULL";
-            if (c.p.defs[d].hasDtor) {
+            if (c.p.defs[d].hasDtor || c.p.defs[d].isHandle()) {
                 dtor = "Z_" + d.toString();
             }
             string copyRef = "NULL";
@@ -1485,7 +1769,11 @@ private:
         if (release) {
             rel = "1";
         }
-        t.append("int main(int argc, char** argv) { return rt_main(argc, argv, MAIN, " + rel + "); }\n");
+        string load = "";
+        if (hasNatives && !release) {
+            load = "rt_native_load = N_LOAD; ";
+        }
+        t.append("int main(int argc, char** argv) { " + load + "return rt_main(argc, argv, MAIN, " + rel + "); }\n");
         funcs.append(t.toString());
     }
 
@@ -3678,7 +3966,7 @@ private:
         string fn = "M_" + m.owner.toString() + "_" + m.member.toString();
         if (!exact && !m.isStatic && !(recvIsClass(callee) && !overridden(m.owner, m.member))) {
             fn = dispatchName(m);
-        } else if (m.isStatic && !m.hasBody) {
+        } else if (m.isStatic && !m.hasBody && !c.p.defs[m.owner].isExternClass()) {
             fn = dispatchName(m);
         }
         string rview = recv;

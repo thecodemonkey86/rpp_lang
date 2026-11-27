@@ -119,6 +119,18 @@ impl D {
 
     fn decl(&mut self, d: &TopDecl) {
         match d {
+            TopDecl::Class(c) if c.handle_free.is_some() => {
+                // die Angabe extern steht am Ende des Knotens
+                self.open("handle", &flags(&[(c.export, "export")]), Some(c.span));
+                self.id(&c.name);
+                if let Some(f) = &c.handle_free {
+                    self.id(f);
+                }
+                if let Some((lib, span)) = &c.ext {
+                    self.line("extern", &format!("\"{lib}\""), Some(*span));
+                }
+                self.close();
+            }
             TopDecl::Class(c) => {
                 self.open("class", &flags(&[(c.export, "export"), (c.is_abstract, "abstract")]), Some(c.span));
                 self.id(&c.name);
@@ -129,6 +141,9 @@ impl D {
                     self.close();
                 }
                 self.members(&c.members);
+                if let Some((lib, span)) = &c.ext {
+                    self.line("extern", &format!("\"{lib}\""), Some(*span));
+                }
                 self.close();
             }
             TopDecl::Mixin(m) => {

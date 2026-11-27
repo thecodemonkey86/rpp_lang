@@ -1,0 +1,25 @@
+extern("rpptest") class Bytes {
+public:
+    static ui32 tl_sum_bytes(byte[] data);
+    static i64 tl_length(byte[] data);
+    static void tl_fill(mut byte[] data, byte value);
+}
+
+i32 main(string[] args) {
+    byte[] data = [cast<byte>(cast<ui8>(1)), cast<byte>(cast<ui8>(2)), cast<byte>(cast<ui8>(3))];
+    print(Bytes::tl_sum_bytes(data).toString());
+    byte[] empty = [];
+    print(Bytes::tl_length(empty).toString());
+    byte[] buf = [cast<byte>(cast<ui8>(0)), cast<byte>(cast<ui8>(0)), cast<byte>(cast<ui8>(0)), cast<byte>(cast<ui8>(0))];
+    Bytes::tl_fill(mut buf, cast<byte>(cast<ui8>(10)));
+    string line = "";
+    for (byte b : buf) {
+        if (line.length > 0) {
+            line += " ";
+        }
+        line += cast<ui8>(b).toString();
+    }
+    print(line);
+    print(Bytes::tl_sum_bytes(buf).toString());
+    return 0;
+}

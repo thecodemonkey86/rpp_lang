@@ -1,0 +1,28 @@
+// Ganzzahlen und byte in beide Richtungen, auch mit mehr Parametern als Registern
+extern("rpptest") class Ints {
+public:
+    static i32 tl_add_i32(i32 a, i32 b);
+    static i64 tl_mul_i64(i64 a, i64 b);
+    static i8 tl_neg_i8(i8 a);
+    static i16 tl_twice_i16(i16 a);
+    static ui8 tl_inc_u8(ui8 a);
+    static ui16 tl_inc_u16(ui16 a);
+    static ui32 tl_xor_u32(ui32 a, ui32 b);
+    static ui64 tl_max_u64();
+    static byte tl_not_byte(byte b);
+    static i64 tl_sum8(i8 a, i16 b, i32 c, i64 d, ui8 e, ui16 f, ui32 g, ui64 h);
+}
+
+i32 main(string[] args) {
+    print(Ints::tl_add_i32(3, 4).toString());
+    print(Ints::tl_mul_i64(-3, 2000000000).toString());
+    print(Ints::tl_neg_i8(5).toString());
+    print(Ints::tl_twice_i16(-100).toString());
+    print(Ints::tl_inc_u8(255).toString());
+    print(Ints::tl_inc_u16(65535).toString());
+    print(Ints::tl_xor_u32(5, 3).toString());
+    print(Ints::tl_max_u64().toString());
+    print(cast<ui8>(Ints::tl_not_byte(cast<byte>(cast<ui8>(15)))).toString());
+    print(Ints::tl_sum8(1, 2, 3, 4, 5, 6, 7, 8).toString());
+    return 0;
+}

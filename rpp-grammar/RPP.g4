@@ -36,7 +36,7 @@ packageDecl     : PACKAGE qualifiedName ';' ;
 usingDecl       : USING (identifier '=')? qualifiedName ';' ;
 qualifiedName   : identifier ('.' identifier)* ;
 // export macht einen Typ in anderen Projekten nutzbar.
-typeDecl        : EXPORT? (classDecl | mixinDecl | enumDecl) ;
+typeDecl        : EXPORT? (classDecl | externClassDecl | handleDecl | mixinDecl | enumDecl) ;
 mainDecl        : I32 MAIN '(' STRING '[' ']' identifier ')' block ;
 
 // "main" ist kein reserviertes Wort und darf auch als Name vorkommen.
@@ -81,6 +81,20 @@ constructorDecl
 destructorDecl  : DESTRUCTOR '(' ')' block ;
 copyDecl        : COPY '(' param ')' block ;
 mixinImport     : IMPORT typeName ';' ;
+
+// C-Anbindung (Kapitel 15). Die Grammatik erlaubt in einer extern-Klasse alle Member und
+// Methoden ohne Rumpf; welche davon zulässig sind, prüft R-15.2. "handle" ist nur hier ein
+// Schlüsselwort (V-15.1) und sonst ein gewöhnlicher Name.
+externSpec      : EXTERN '(' StringLiteral ')' ;
+externClassDecl
+    : externSpec ABSTRACT? CLASS identifier typeParams? (':' typeName)? '{' externMember* '}'
+    ;
+externMember    : classMember | externMethodDecl ;
+externMethodDecl
+    : NODISCARD? (STATIC | VIRTUAL | OVERRIDE)? returnType identifier typeParams?
+      '(' paramList? ')' MUT? ';'
+    ;
+handleDecl      : externSpec {self._input.LT(1).text == "handle"}? Identifier identifier '(' identifier ')' ';' ;
 
 mixinDecl       : MIXIN identifier typeParams? '{' mixinMember* '}' ;
 mixinMember     : methodDecl | requirement | mixinImport ;
@@ -277,7 +291,7 @@ CAST : 'cast' ;           CATCH : 'catch' ;         CHAR : 'char' ;
 CLASS : 'class' ;         CONST : 'const' ;         CONSTRUCTOR : 'constructor' ;
 CONTINUE : 'continue' ;   COPY : 'copy' ;           DEFAULT : 'default' ;
 DESTRUCTOR : 'destructor' ; DISCARD : 'discard' ;  DO : 'do' ;             ELSE : 'else' ;
-ENUM : 'enum' ;           EXPORT : 'export' ;       F32 : 'f32' ;
+ENUM : 'enum' ;           EXPORT : 'export' ;       EXTERN : 'extern' ;       F32 : 'f32' ;
 F64 : 'f64' ;
 FALSE : 'false' ;         FINALLY : 'finally' ;     FOR : 'for' ;
 I8 : 'i8' ;               I16 : 'i16' ;             I32 : 'i32' ;

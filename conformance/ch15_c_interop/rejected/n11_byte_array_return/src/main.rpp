@@ -1,0 +1,8 @@
+extern("rpptest") class Lib {
+public:
+    static byte[] tl_bytes(); // FEHLER
+}
+
+i32 main(string[] args) {
+    return 0;
+}

@@ -1,0 +1,12 @@
+// Ein String mit U+0000 lässt sich nicht an C übergeben.
+extern("rpptest") class Text {
+public:
+    static i64 tl_byte_length(string s);
+}
+
+i32 main(string[] args) {
+    print("vorher");
+    string s = "a\u{0}b";
+    print(Text::tl_byte_length(s).toString());
+    return 0;
+}

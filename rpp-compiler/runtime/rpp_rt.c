@@ -4402,6 +4402,13 @@ static void print_trace(RTrace t) {
 }
 
 static void run_main(MainArgs* m) {
+    /* R-15.12: im Debugmodus alle C-Bibliotheken vor main laden */
+    if (rt_native_load && rt_native_load() != ST_OK) {
+        fprintf(stderr, "%s: %s\n", fatal_name ? fatal_name : "?", fatal_msg ? fatal_msg : "");
+        fflush(stderr);
+        m->exit = 2;
+        return;
+    }
     RObj* v = rt_vec_new(m->argc);
 #ifdef _WIN32
     /* Argumente als UTF-8 (argv ist auf Windows in der ANSI-Codepage) */
@@ -4546,4 +4553,172 @@ int rt_main(int argc, char** argv, int (*body)(rv*, rv), int release) {
     else pthread_join(t, NULL);
 #endif
     return m.exit;
+}
+
+/* ================================================================ C-Anbindung (Kapitel 15)
+ *
+ * Der erzeugte Code ruft C-Funktionen über eigene Hüllfunktionen auf (eine je Methode einer
+ * extern-Klasse). Im Releasemodus ruft die Hülle die Funktion direkt auf, und die Bibliothek
+ * wird beim Bauen gebunden; im Debugmodus lädt das Programm vor main alle Bibliotheken und
+ * löst alle Symbole auf (R-15.12, V-15.5). Diese Hilfen wandeln Werte um und melden Fehler
+ * als NativeError (R-15.11).
+ */
+
+int (*rt_native_load)(void) = NULL;
+
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
+
+static int native_exists(const char* path) {
+#ifdef _WIN32
+    wchar_t* w = u8w(path);
+    DWORD a = GetFileAttributesW(w);
+    xfree(w);
+    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat s;
+    return stat(path, &s) == 0 && S_ISREG(s.st_mode);
+#endif
+}
+
+static void* native_open_path(const char* path, char** err) {
+#ifdef _WIN32
+    wchar_t* w = u8w(path);
+    HMODULE h = LoadLibraryW(w);
+    xfree(w);
+    if (!h) {
+        Buf b = { 0 };
+        buf_fmt(&b, "error %lu", (unsigned long)GetLastError());
+        *err = b.p;
+    }
+    return (void*)h;
+#else
+    void* h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!h) {
+        const char* e = dlerror();
+        Buf b = { 0 };
+        buf_str(&b, e ? e : "unknown error");
+        *err = b.p;
+    }
+    return h;
+#endif
+}
+
+/* Lädt die Bibliothek lib (Dateiname file): zuerst in den Ordnern dirs (nativePaths, R-15.4),
+ * dann über die Suche des Systems. NULL mit NativeError, wenn das nicht gelingt. */
+void* rt_native_open(const char* lib, const char* file, const char* const* dirs, int ndirs) {
+    for (int i = 0; i < ndirs; i++) {
+        Buf p = { 0 };
+        buf_str(&p, dirs[i]);
+        buf_str(&p, "/");
+        buf_str(&p, file);
+        if (native_exists(p.p)) {
+            char* err = NULL;
+            void* h = native_open_path(p.p, &err);
+            if (h) {
+                xfree(p.p);
+                return h;
+            }
+            rt_fatal("NativeError", "Cannot load C library \"%s\" (%s): %s", lib, p.p, err);
+            xfree(err);
+            xfree(p.p);
+            return NULL;
+        }
+        xfree(p.p);
+    }
+    char* err = NULL;
+    void* h = native_open_path(file, &err);
+    if (!h) {
+        rt_fatal("NativeError", "Cannot load C library \"%s\" (%s): %s", lib, file, err);
+        xfree(err);
+    }
+    return h;
+}
+
+void* rt_native_sym(void* h, const char* lib, const char* name) {
+#ifdef _WIN32
+    void* f = (void*)GetProcAddress((HMODULE)h, name);
+#else
+    void* f = dlsym(h, name);
+#endif
+    if (!f) rt_fatal("NativeError", "Symbol %s not found in C library \"%s\"", name, lib);
+    return f;
+}
+
+/* V-15.6: Ausgaben vor jedem Aufruf leeren */
+void rt_native_flush(void) {
+    fflush(stdout);
+    fflush(stderr);
+}
+
+/* R-15.7: string als UTF-8 mit abschließender 0; U+0000 im Text ist ein NativeError */
+int rt_native_str(const char** out, rv v, const char* param, const char* fn) {
+    RStr* s = rt_s(v);
+    if ((int64_t)strlen(s->data) != s->len) {
+        return rt_fatal("NativeError", "The string argument %s of %s contains the character U+0000", param, fn);
+    }
+    *out = s->data;
+    return ST_OK;
+}
+
+/* R-15.8: Rückgabe const char*: kopieren; NULL nur bei string? */
+int rt_native_ret_str(rv* out, const char* s, int nullable, const char* fn) {
+    if (!s) {
+        if (nullable) {
+            *out = rv_null();
+            return ST_OK;
+        }
+        return rt_fatal("NativeError", "%s returned NULL instead of a string", fn);
+    }
+    int64_t n = (int64_t)strlen(s);
+    if (!utf8_valid((const unsigned char*)s, n)) {
+        return rt_fatal("NativeError", "%s returned a string that is not valid UTF-8", fn);
+    }
+    *out = rt_str_from(s, n);
+    return ST_OK;
+}
+
+/* R-15.9: byte[] als Zeiger und Länge; der Puffer ist eine Kopie, bei mut wird er nach dem
+ * Aufruf zurückgeschrieben (rt_native_bytes_end) */
+static uint8_t native_empty[1];
+
+uint8_t* rt_native_bytes(rv v, size_t* len) {
+    RObj* o = rv_o(v);
+    int64_t n = o->len;
+    *len = (size_t)n;
+    if (n == 0) return native_empty;
+    uint8_t* b = (uint8_t*)xmalloc((size_t)n);
+    for (int64_t i = 0; i < n; i++) b[i] = (uint8_t)o->slots[i].v.u;
+    return b;
+}
+
+void rt_native_bytes_end(rv v, uint8_t* b, size_t len, int write) {
+    if (b == native_empty) return;
+    if (write) {
+        RObj* o = rv_o(v);
+        for (size_t i = 0; i < len && (int64_t)i < o->len; i++) o->slots[i] = rv_byte(b[i]);
+    }
+    xfree(b);
+}
+
+/* R-15.10: ein neues Handle-Objekt; NULL nur bei H? */
+int rt_native_handle(rv* out, const RClass* c, void* p, int nullable, const char* fn) {
+    if (!p) {
+        if (nullable) {
+            *out = rv_null();
+            return ST_OK;
+        }
+        return rt_fatal("NativeError", "%s returned NULL instead of a handle", fn);
+    }
+    RObj* o = rt_obj_new(c, NULL, 0);
+    o->native = p;
+    *out = rv_obj(o, F_OWN);
+    return ST_OK;
+}
+
+/* own H: der Besitz geht an C; das Objekt wird ohne Freigabefunktion aufgegeben */
+int rt_native_give(rv v) {
+    if (v.tag == RT_OBJ) rv_o(v)->native = NULL;
+    return rt_drop(v);
 }

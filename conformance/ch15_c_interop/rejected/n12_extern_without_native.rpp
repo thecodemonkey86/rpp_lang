@@ -1,0 +1,11 @@
+// Konformitätstest Kapitel 15 – muss abgelehnt werden.
+// Regel: R-15.13
+// Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (nur ein Projekt mit native: true darf C deklarieren).
+extern("rpptest") class Lib { // FEHLER
+public:
+    static i32 tl_add_i32(i32 a, i32 b);
+}
+
+i32 main(string[] args) {
+    return 0;
+}

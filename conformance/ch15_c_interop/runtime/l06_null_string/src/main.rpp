@@ -1,0 +1,12 @@
+// NULL für einen Rückgabetyp string ist ein Programmfehler.
+extern("rpptest") class Text {
+public:
+    static string tl_null_string();
+}
+
+i32 main(string[] args) {
+    print("vorher");
+    string s = Text::tl_null_string();
+    print(s);
+    return 0;
+}

@@ -1,0 +1,13 @@
+# Konformitätstest Kapitel 15 – Laufzeit.
+# Regel: R-15.11
+# Erwartet: Ausgabe "eins\nzwei\ndrei\nvier"; Exit-Code 0
+# Ausgaben von R++ und C erscheinen in der Reihenfolge, in der sie entstehen (V-15.6).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+native: true
+nativePaths:
+  - ../../native/build

@@ -187,6 +187,51 @@ class RPPListener(ParseTreeListener):
         pass
 
 
+    # Enter a parse tree produced by RPPParser#externSpec.
+    def enterExternSpec(self, ctx:RPPParser.ExternSpecContext):
+        pass
+
+    # Exit a parse tree produced by RPPParser#externSpec.
+    def exitExternSpec(self, ctx:RPPParser.ExternSpecContext):
+        pass
+
+
+    # Enter a parse tree produced by RPPParser#externClassDecl.
+    def enterExternClassDecl(self, ctx:RPPParser.ExternClassDeclContext):
+        pass
+
+    # Exit a parse tree produced by RPPParser#externClassDecl.
+    def exitExternClassDecl(self, ctx:RPPParser.ExternClassDeclContext):
+        pass
+
+
+    # Enter a parse tree produced by RPPParser#externMember.
+    def enterExternMember(self, ctx:RPPParser.ExternMemberContext):
+        pass
+
+    # Exit a parse tree produced by RPPParser#externMember.
+    def exitExternMember(self, ctx:RPPParser.ExternMemberContext):
+        pass
+
+
+    # Enter a parse tree produced by RPPParser#externMethodDecl.
+    def enterExternMethodDecl(self, ctx:RPPParser.ExternMethodDeclContext):
+        pass
+
+    # Exit a parse tree produced by RPPParser#externMethodDecl.
+    def exitExternMethodDecl(self, ctx:RPPParser.ExternMethodDeclContext):
+        pass
+
+
+    # Enter a parse tree produced by RPPParser#handleDecl.
+    def enterHandleDecl(self, ctx:RPPParser.HandleDeclContext):
+        pass
+
+    # Exit a parse tree produced by RPPParser#handleDecl.
+    def exitHandleDecl(self, ctx:RPPParser.HandleDeclContext):
+        pass
+
+
     # Enter a parse tree produced by RPPParser#mixinDecl.
     def enterMixinDecl(self, ctx:RPPParser.MixinDeclContext):
         pass

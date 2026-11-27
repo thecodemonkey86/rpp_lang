@@ -1,0 +1,12 @@
+# Konformitätstest Kapitel 15 – Laufzeit.
+# Regel: R-15.8
+# Erwartet: Ausgabe "vorher"; Exit-Code 2; Fehlerausgabe enthält "NativeError"
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+native: true
+nativePaths:
+  - ../../native/build

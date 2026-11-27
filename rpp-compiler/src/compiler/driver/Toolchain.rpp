@@ -14,6 +14,8 @@ using rpp.env.Env;
 using rpp.env.Os;
 using rpp.process.Process;
 using rpp.process.ProcessResult;
+using compiler.project.Workspace;
+using compiler.syntax.Node;
 
 // Fehler der Werkzeugkette; die Meldung ist für die Fehlerausgabe gedacht
 export class ToolchainError : Exception {
@@ -118,28 +120,134 @@ public:
         return obj;
     }
 
+    // Dateiname einer C-Bibliothek auf dieser Plattform (R-15.4)
+    string libFile(string lib) {
+        if (windows) {
+            return lib + ".dll";
+        }
+        if (Env::os() == Os::MacOS) {
+            return "lib" + lib + ".dylib";
+        }
+        return "lib" + lib + ".so";
+    }
+
+    // C-Bibliotheken der extern-Deklarationen eines Programms (Kapitel 15): Namen und je Name
+    // der Ordner aus nativePaths, in dem die Bibliothek liegt ("": Suche des Systems).
+    // Gesucht wird in den nativePaths des deklarierenden Projekts, dann in denen des Programms.
+    (string[], string[]) nativeLibs(Workspace ws) {
+        string[] names = [];
+        string[] dirs = [];
+        i64 prog = -1;
+        for (i64 p = 0; p < ws.projects.length && prog < 0; p++) {
+            if (!ws.projects[p].isStd) {
+                prog = p;
+            }
+        }
+        for (i64 fi = 0; fi < ws.files.length; fi++) {
+            i64 proj = ws.files[fi].project;
+            for (Node d : ws.files[fi].unit.kids) {
+                if ((d.kind != "class" && d.kind != "handle") || d.kids.length == 0) {
+                    continue;
+                }
+                ref Node last = d.kids[d.kids.length - 1];
+                if (last.kind != "extern") {
+                    continue;
+                }
+                string lib = last.text.substring(1, last.text.length - 1);
+                bool known = false;
+                for (string n : names) {
+                    if (n == lib) {
+                        known = true;
+                    }
+                }
+                if (known) {
+                    continue;
+                }
+                string[] search = [];
+                for (string x : ws.projects[proj].nativePaths) {
+                    search.push(x);
+                }
+                if (prog >= 0) {
+                    for (string x : ws.projects[prog].nativePaths) {
+                        search.push(x);
+                    }
+                }
+                string found = "";
+                for (string x : search) {
+                    if (found.length == 0 && File::exists(Path::join(x, libFile(lib)))) {
+                        found = x;
+                    }
+                }
+                names.push(lib);
+                dirs.push(found);
+            }
+        }
+        return (names, dirs);
+    }
+
     // Übersetzt eine erzeugte C-Datei zu einem Programm. runtimeObj ist eine Objektdatei aus
-    // compileRuntime oder "" (dann wird die Laufzeit mitübersetzt).
-    void link(string cFile, string runtimeObj, string exe, string dir, bool optimize) {
+    // compileRuntime oder "" (dann wird die Laufzeit mitübersetzt). libs und libDirs sind die
+    // C-Bibliotheken, gegen die gebunden wird (Releasemodus, R-15.12); unter Windows wird die
+    // DLL neben das Programm kopiert, sonst findet das Programm sie über rpath.
+    void link(string cFile, string runtimeObj, string exe, string dir, bool optimize, string[] libs, string[] libDirs) {
         string runtime = runtimeObj.length > 0 ? runtimeObj : Path::join(runtimeDir, "rpp_rt.c");
         string[] args = [];
         if (msvc) {
             args = ["/nologo", "/std:c17", "/utf-8", optimize ? "/O2" : "/O1", "/I", native(runtimeDir), native(cFile), native(runtime),
                     "/Fe" + native(exe), "/Fo" + native(dir) + "\\", "/link", "/STACK:16777216"];
+            for (i64 i = 0; i < libs.length; i++) {
+                if (libDirs[i].length > 0) {
+                    args.push("/LIBPATH:" + native(libDirs[i]));
+                }
+                args.push(libs[i] + ".lib");
+            }
         } else {
             args = gccFlags(optimize);
             args.push(cFile);
             args.push(runtime);
             args.push("-o");
             args.push(exe);
+            for (i64 i = 0; i < libs.length; i++) {
+                if (libDirs[i].length > 0) {
+                    args.push("-L" + libDirs[i]);
+                    if (!windows) {
+                        args.push("-Wl,-rpath," + libDirs[i]);
+                    }
+                }
+                args.push("-l" + libs[i]);
+            }
             args.push("-lm");
             if (windows) {
                 args.push("-lwinmm");
                 args.push("-lshell32");
                 args.push("-Wl,--stack,16777216");
+            } else {
+                args.push("-ldl");
             }
         }
         invoke(args, dir);
+        if (windows) {
+            string exeDir = Path::parent(Path::absolute(exe));
+            for (i64 i = 0; i < libs.length; i++) {
+                if (libDirs[i].length > 0 && Path::absolute(libDirs[i]) != exeDir) {
+                    discard File::copyFile(Path::join(libDirs[i], libFile(libs[i])), Path::join(exeDir, libFile(libs[i])));
+                }
+            }
+        }
+    }
+
+    // Übersetzt eine C-Datei zu einer gemeinsam genutzten Bibliothek NAME in outDir (für die
+    // Testbibliothek von Kapitel 15): NAME.dll mit NAME.lib unter Windows, sonst libNAME.so
+    // bzw. libNAME.dylib
+    void sharedLib(string source, string outDir, string name) {
+        Dir::create(outDir);
+        string[] args = [];
+        if (msvc) {
+            args = ["/nologo", "/LD", "/O2", "/std:c17", "/utf-8", native(source), "/Fe" + native(Path::join(outDir, name + ".dll")), "/Fo" + native(outDir) + "\\"];
+        } else {
+            args = ["-std=c17", "-O2", "-shared", "-fPIC", source, "-o", Path::join(outDir, libFile(name))];
+        }
+        invoke(args, outDir);
     }
 
 private:

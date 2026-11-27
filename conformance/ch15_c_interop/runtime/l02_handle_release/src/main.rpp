@@ -1,0 +1,33 @@
+// Ein Handle wird genau einmal freigegeben, wenn R++ es aufgibt.
+extern("rpptest") handle Counter(tl_counter_free);
+
+extern("rpptest") class Lib {
+public:
+    static own Counter? tl_counter_new(i64 start);
+    static own Counter? tl_counter_none();
+    static i64 tl_counter_next(mut Counter c);
+    static i64 tl_live_counters();
+    static i64 tl_freed_counters();
+}
+
+class Scope {
+public:
+    static void work() {
+        Counter? c = Lib::tl_counter_new(10);
+        if (c != null) {
+            print(Lib::tl_counter_next(mut c).toString());
+            print(Lib::tl_counter_next(mut c).toString());
+        }
+        print(Lib::tl_live_counters().toString());
+    }
+}
+
+i32 main(string[] args) {
+    Scope::work();
+    print(Lib::tl_live_counters().toString());
+    Counter? none = Lib::tl_counter_none();
+    print(none == null ? "null" : "handle");
+    print(Lib::tl_live_counters().toString());
+    print(Lib::tl_freed_counters().toString());
+    return 0;
+}

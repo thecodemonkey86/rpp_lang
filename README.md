@@ -85,6 +85,22 @@ rpp-compiler/build/rppcc withdraw --registry registry acme.json 1.4.0
 
 `publish` checks the library, refuses to overwrite a published version, and compares the exported interface with the previous version: removed or changed parts need a new major version, new parts a new minor version. [Registry rules](R%2B%2B%20Packages%20and%20Projects.md#5a-the-registry-in-the-file-system), [example with a lock file](conformance/ch11_projects/runtime/l02_registry)
 
+### Call C libraries
+
+A project with `native: true` may declare `extern` classes: static methods without a body that name functions of a C library. `extern ... handle` wraps a C pointer that R++ owns and releases once with the named function. Permitted types are integers, floats, `bool`, `string`, `byte[]` and handles; the library is searched in `nativePaths`, then by the system.
+
+```cpp
+extern("rpptest") handle Counter(tl_counter_free);
+
+extern("rpptest") class Lib {
+public:
+    static own Counter? tl_counter_new(i64 start);
+    static i64 tl_counter_next(mut Counter c);
+}
+```
+
+Both modes behave the same: debug mode loads the library at start, release mode links it when building. A dependency that brings C code needs `allowNative: true` in the dependency entry of the project that uses it, and `rpp.lock` marks it with `native: true`. C code runs outside the guarantees of R++. [C interop rules](R%2B%2B%20C%20Interop.md), [example with a handle](conformance/ch15_c_interop/runtime/l02_handle_release)
+
 ## Build a native executable
 
 `rppcc` builds native executables through C. You do not need Rust for this: the repository contains the compiler's own generated C code as a seed in [`rpp-compiler/bootstrap/rppcc.c`](rpp-compiler/bootstrap/). The bootstrap script compiles the seed with a C17 toolchain, lets the result compile `rppcc` from source twice, and checks that both generations produce the same C code.

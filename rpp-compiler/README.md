@@ -84,7 +84,7 @@ When building the parser, an error in the interpreter was noticed and fixed: A `
 
 ```
 cl /std:c17 /O2 /I runtime OUTPUT.c runtime/rpp_rt.c /link /STACK:16777216
-gcc -std=c17 -O2 -I runtime OUTPUT.c runtime/rpp_rt.c -lm
+gcc -std=c17 -O2 -I runtime OUTPUT.c runtime/rpp_rt.c -lm -ldl
 ```
 
 The code generator follows the debug interpreter of `rppc`, the reference to R-12.3: each expression becomes C-code that performs the same steps in the same order (`eval`, `eval_store`, `transfer`, `temp`, `convert`, `args`). A value (`rv`) bears its kind in the interpreter as `Value` and the ownership mode in objects at the reference; release, destructors (V-7), locks (V-1), unwinding with `finally`, program errors, stacktrace and exit codes (R-12.9) behave as there. Errors run as status through the invocations; each statement and scope has a cleanup mark. Generics are not duplicated; type arguments stand on the object as in the interpreter (R-7.26). The mode (debug or release) is selected when generating.
@@ -132,6 +132,17 @@ rppcc withdraw [--registry DIR] NAME VERSION   # mark a version as withdrawn
 The parts: `src/compiler/project/Registry.rpp` (versions, checksums, form of `rpp.lock`; counterpart `rppc/crates/rpp-sema/src/registry.rs`) and `Workspace.resolve` in `Project.rpp` (Minimal Version Selection, checking against `rpp.lock`, loading the selected versions; counterpart `project.rs`). The checksums are computed by `rpp.hash.Sha256` from the standard library (R-13.46), written in R++. `publish` compares the exported interface with the previous version in the form of `defs` (exported types, their `public` and `protected` parts, without positions); removed or changed lines require a new major version, new lines a new minor version.
 
 `compare.py` checks resolution in the stages `project` (projects with versions, selected libraries with checksums, diagnostics; plus 38 edge cases for the registry and `rpp.lock`) and `lock` (text of `lock --stdout`). `.github/scripts/check.py registry` runs `publish`, `withdraw` and `lock` once end to end.
+
+## C interop (M10)
+
+`extern("lib") class` and `extern("lib") handle` (chapter 15) are checked in `Program.rpp` and `Checker.rpp` like in `rppc` (`defs.rs`, `body.rs`); the project entries `native`, `nativePaths` and `allowNative` are in `Project.rpp`, the line `native: true` of `rpp.lock` in `Registry.rpp`.
+
+`CGen.rpp` generates one wrapper per `extern` method. It converts the arguments (strings as UTF-8 with a terminating NUL, `byte[]` as pointer and length, handles as their C pointer), flushes the program's output (R-15.11), calls the C function and converts the result back. A handle object carries its pointer; its destructor calls the release function once.
+
+- Debug mode: the program looks up every function through a pointer that `rt_native_load` fills before `main` from the libraries (search: `nativePaths` of the declaring project, then of the program, then the system). A missing library or symbol ends the program with `NativeError` and exit code 2.
+- Release mode: the C file declares a prototype per symbol and keeps all of them in the table `rpp_native_symbols`, so the linker reports a missing symbol even if the program never calls it (R-15.12). `build` links the libraries: MSVC with `/LIBPATH` and `NAME.lib`, gcc and clang with `-L`, `-l` and `-Wl,-rpath`. Under Windows, the DLL is copied next to the program.
+
+Outside Windows the runtime uses `dlopen`, so every program links `-ldl`. C functions must not use names starting with `rt_` or `rpp_`, which belong to the runtime. `rppcc test` compiles the test library `conformance/ch15_c_interop/native/rpptest.c` like `rppc test` does (`Toolchain.sharedLib`).
 
 ## Bootstrap without Rust
 

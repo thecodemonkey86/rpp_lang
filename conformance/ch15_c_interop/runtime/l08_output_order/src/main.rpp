@@ -1,0 +1,12 @@
+extern("rpptest") class Out {
+public:
+    static void tl_print(string text);
+}
+
+i32 main(string[] args) {
+    print("eins");
+    Out::tl_print("zwei");
+    print("drei");
+    Out::tl_print("vier");
+    return 0;
+}

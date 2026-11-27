@@ -25,7 +25,7 @@ Rust-Workspace der ersten R++-Implementierung (siehe „R++ Implementierungsplan
 
 ## Bauen und testen
 
-Voraussetzung: Rust (getestet mit 1.83). Es gibt keine fremden Crates.
+Voraussetzung: Rust (getestet mit 1.83). Für Aufrufe in C-Bibliotheken (Kapitel 15) nutzt der Interpreter die Crates `libloading` und `libffi`; `libffi` wird aus den Quellen gebaut und braucht einen C-Compiler.
 
 ```
 cargo build
@@ -53,7 +53,9 @@ Konformitätstests semantisch prüfen (übersetzen oder ablehnen, Warnungen nur 
 cargo run -- test ..
 ```
 
-Laufzeittests werden dabei in beiden Modi und im Prüfmodus ausgeführt (Ausgabe, Exit-Code, Fehlerausgabe). Jeder Laufzeittest läuft in einem frischen, leeren Arbeitsverzeichnis (V-14.3). Stand 23.11.2026: 293 bestanden, 0 fehlgeschlagen.
+Laufzeittests werden dabei in beiden Modi und im Prüfmodus ausgeführt (Ausgabe, Exit-Code, Fehlerausgabe). Jeder Laufzeittest läuft in einem frischen, leeren Arbeitsverzeichnis (V-14.3).
+
+Vor den Tests eines Kapitels mit einem Ordner `native/` übersetzt der Testlauf jede Datei `native/*.c` zu einer gemeinsam genutzten Bibliothek in `native/build/` (`cl /LD` unter Windows, sonst `cc -shared`); unter Windows muss `test` deshalb in der MSVC-Umgebung laufen (`vcvars64.bat`). Laufzeittests solcher Projekte laufen als eigener Prozess `rppc run`, damit ein Absturz in C den Testlauf nicht beendet. Der Interpreter lädt vor `main` jede Bibliothek, die `extern`-Deklarationen nennen, und löst alle Symbole auf (R-15.12); im Releasemodus gilt eine fehlende Bibliothek oder ein fehlendes Symbol als Fehler beim Bauen. Stand 23.11.2026: 293 bestanden, 0 fehlgeschlagen.
 
 Ein Programm ausführen. `Console::readLine()` liest bei Bedarf von der Standardeingabe, auch aus einer Pipe oder Datei. Argumente nach `--` gehen an das Programm.
 

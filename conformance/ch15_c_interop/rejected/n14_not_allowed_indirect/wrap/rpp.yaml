@@ -1,0 +1,9 @@
+name: acme.wrap
+version: 1.0.0
+type: library
+sources:
+  - src
+dependencies:
+  - name: acme.calc
+    path: ../calc
+    allowNative: true

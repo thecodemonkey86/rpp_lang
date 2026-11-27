@@ -1,0 +1,6 @@
+using acme.wrap.Wrap;
+
+i32 main(string[] args) {
+    print(Wrap::answer().toString());
+    return 0;
+}

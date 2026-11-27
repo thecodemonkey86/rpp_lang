@@ -1,0 +1,14 @@
+# Konformitätstest Kapitel 15 – Laufzeit.
+# Regel: R-15.12
+# Erwartet (debug): Exit-Code 2; Fehlerausgabe enthält "NativeError"
+# Erwartet (release): Fehler beim Bauen
+# Das Symbol fehlt in der Bibliothek; main beginnt nicht, auch wenn es nie aufgerufen wird.
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+native: true
+nativePaths:
+  - ../../native/build

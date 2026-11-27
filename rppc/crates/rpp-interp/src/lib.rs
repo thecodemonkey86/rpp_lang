@@ -15,6 +15,7 @@
 //!   einem Programmfehler.
 
 mod console;
+pub mod ffi;
 mod literals;
 mod stdlib;
 mod save_file;
@@ -188,6 +189,8 @@ struct Ctor {
 struct Interp {
     save_files: HashMap<*const Obj, save_file::SaveFile>,
     text_readers: HashMap<*const Obj, std::io::BufReader<std::fs::File>>,
+    /// geladene C-Bibliotheken (Kapitel 15)
+    natives: Option<Rc<ffi::Natives>>,
     p: &'static Program,
     literals: Vec<FileLiterals>,
     release: bool,
@@ -347,7 +350,7 @@ impl Interp {
             virtual_methods: HashMap::new(), statics: HashMap::new(), fatals: Cell::new(0),
             binding: Cell::new(false), locked_args: Vec::new(), check: false,
             pending_targs: Vec::new(), heap: Vec::new(), shared_used: false,
-            save_files: HashMap::new(), text_readers: HashMap::new(),
+            save_files: HashMap::new(), text_readers: HashMap::new(), natives: None,
         }
     }
 
@@ -630,6 +633,19 @@ impl Interp {
                 }
                 r
             }
+            Some(d) if self.p.defs[d].is_handle() => {
+                // R-15.10: Freigabefunktion genau einmal
+                let ptr = match o.slots.borrow().first() {
+                    Some(Value::U64(v)) => *v as usize,
+                    _ => 0,
+                };
+                if ptr != 0 {
+                    if let Some(n) = self.natives.clone() {
+                        n.free(d, ptr);
+                    }
+                }
+                Ok(())
+            }
             Some(d) => {
                 let lay = self.layout(d);
                 let levels: Vec<usize> = (0..lay.levels.len()).rev().collect();
@@ -638,6 +654,165 @@ impl Interp {
         };
         o.alive.set(false);
         result
+    }
+
+    /// Aufruf einer Methode einer extern-Klasse (R-15.11).
+    fn call_c(&mut self, m: &MethodInfo, args: &mut [Value]) -> R<Value> {
+        use ffi::{CRet, CResult, CVal};
+        let Some(natives) = self.natives.clone() else { return Err(self.internal("C-Bibliotheken nicht geladen")) };
+        let Some(addr) = natives.func(m.owner, &m.name) else { return Err(self.internal(format!("Symbol {} nicht geladen", m.name))) };
+        // 2. Argumente nach C umwandeln (R-15.6 bis R-15.10)
+        let mut cargs: Vec<CVal> = Vec::new();
+        let mut strings: Vec<std::ffi::CString> = Vec::new();
+        let mut buffers: Vec<(Vec<u8>, Option<ORef>)> = Vec::new();
+        let mut moved: Vec<ORef> = Vec::new();
+        // erst alle Puffer anlegen, dann Zeiger nehmen (die Vektoren dürfen sich danach nicht mehr bewegen)
+        enum Pending {
+            Val(CVal),
+            Str(usize),
+            Bytes(usize),
+        }
+        let mut pending = Vec::new();
+        for (p, v) in m.params.iter().zip(args.iter()) {
+            let item = match (&p.ty, v) {
+                (Ty::Prim(P::String), Value::Str(s)) => {
+                    let Ok(c) = std::ffi::CString::new(s.as_bytes()) else {
+                        return Err(self.fatal("NativeError", format!(
+                            "The string argument {} of {} contains the character U+0000", p.name, m.name)));
+                    };
+                    strings.push(c);
+                    Pending::Str(strings.len() - 1)
+                }
+                (Ty::Vector(_), Value::Obj(o, _)) => {
+                    let bytes: Vec<u8> = o.slots.borrow().iter().map(|x| match x {
+                        Value::Byte(b) => *b,
+                        _ => 0,
+                    }).collect();
+                    buffers.push((bytes, (p.mode == Mode::Mut).then(|| o.clone())));
+                    Pending::Bytes(buffers.len() - 1)
+                }
+                (Ty::Named(..), Value::Obj(o, _)) => {
+                    let ptr = match o.slots.borrow().first() {
+                        Some(Value::U64(x)) => *x as usize,
+                        _ => 0,
+                    };
+                    if p.mode == Mode::Own {
+                        moved.push(o.clone());
+                    }
+                    Pending::Val(CVal::Ptr(ptr as *mut std::ffi::c_void))
+                }
+                (_, Value::I8(x)) => Pending::Val(CVal::I8(*x)),
+                (_, Value::I16(x)) => Pending::Val(CVal::I16(*x)),
+                (_, Value::I32(x)) => Pending::Val(CVal::I32(*x)),
+                (_, Value::I64(x)) => Pending::Val(CVal::I64(*x)),
+                (_, Value::U8(x)) => Pending::Val(CVal::U8(*x)),
+                (_, Value::U16(x)) => Pending::Val(CVal::U16(*x)),
+                (_, Value::U32(x)) => Pending::Val(CVal::U32(*x)),
+                (_, Value::U64(x)) => Pending::Val(CVal::U64(*x)),
+                (_, Value::F32(x)) => Pending::Val(CVal::F32(*x)),
+                (_, Value::F64(x)) => Pending::Val(CVal::F64(*x)),
+                (_, Value::Bool(x)) => Pending::Val(CVal::U8(*x as u8)),
+                (_, Value::Byte(x)) => Pending::Val(CVal::U8(*x)),
+                _ => return Err(self.internal(format!("Argument {} von {} lässt sich nicht nach C umwandeln", p.name, m.name))),
+            };
+            pending.push(item);
+        }
+        for item in pending {
+            match item {
+                Pending::Val(v) => cargs.push(v),
+                Pending::Str(i) => cargs.push(CVal::Ptr(strings[i].as_ptr() as *mut std::ffi::c_void)),
+                Pending::Bytes(i) => {
+                    let len = buffers[i].0.len();
+                    cargs.push(CVal::Ptr(buffers[i].0.as_mut_ptr() as *mut std::ffi::c_void));
+                    cargs.push(CVal::Size(len));
+                }
+            }
+        }
+        let ret_ty = m.ret.ty();
+        let cret = match ret_ty.core() {
+            Ty::Void => CRet::Void,
+            Ty::Prim(P::I8) => CRet::I8,
+            Ty::Prim(P::I16) => CRet::I16,
+            Ty::Prim(P::I32) => CRet::I32,
+            Ty::Prim(P::I64) => CRet::I64,
+            Ty::Prim(P::Ui8 | P::Bool | P::Byte) => CRet::U8,
+            Ty::Prim(P::Ui16) => CRet::U16,
+            Ty::Prim(P::Ui32) => CRet::U32,
+            Ty::Prim(P::Ui64) => CRet::U64,
+            Ty::Prim(P::F32) => CRet::F32,
+            Ty::Prim(P::F64) => CRet::F64,
+            _ => CRet::Ptr,
+        };
+        // 3. Ausgaben leeren (V-15.6)
+        {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+        }
+        // 4. Aufruf
+        // SAFETY: Die Signatur folgt aus der geprüften Deklaration (R-15.6); dass C sich daran
+        // hält, ist die Bedingung aus R-15.16.
+        let r = unsafe { ffi::call(addr, &cargs, cret) };
+        // Ergebnis umwandeln, Leihen beenden
+        for (bytes, target) in &buffers {
+            if let Some(o) = target {
+                let mut slots = o.slots.borrow_mut();
+                for (slot, b) in slots.iter_mut().zip(bytes) {
+                    *slot = Value::Byte(*b);
+                }
+            }
+        }
+        for o in moved {
+            // own H: der Besitz ging an C; R++ gibt das Handle nicht mehr frei
+            o.slots.borrow_mut().clear();
+            o.alive.set(false);
+        }
+        let nullable = matches!(ret_ty, Ty::Nullable(_));
+        Ok(match (ret_ty.core(), r) {
+            (Ty::Void, _) => Value::Void,
+            (Ty::Prim(P::String), CResult::Ptr(ptr)) => {
+                if ptr == 0 {
+                    if nullable {
+                        Value::Null
+                    } else {
+                        return Err(self.fatal("NativeError", format!("{} returned NULL instead of a string", m.name)));
+                    }
+                } else {
+                    // SAFETY: C liefert einen nullterminierten String (R-15.8, R-15.16).
+                    let c = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+                    match c.to_str() {
+                        Ok(s) => Value::Str(Rc::from(s)),
+                        Err(_) => return Err(self.fatal("NativeError", format!("{} returned a string that is not valid UTF-8", m.name))),
+                    }
+                }
+            }
+            (Ty::Named(d, _), CResult::Ptr(ptr)) => {
+                if ptr == 0 {
+                    if nullable {
+                        Value::Null
+                    } else {
+                        return Err(self.fatal("NativeError", format!("{} returned NULL instead of a handle", m.name)));
+                    }
+                } else {
+                    let o = Rc::new(Obj { class: Some(*d), slots: RefCell::new(vec![Value::U64(ptr as u64)]), rc: Cell::new(0), alive: Cell::new(true), dying: Cell::new(false), lock: Cell::new(0), targs: RefCell::new(Vec::new()), index: Default::default() });
+                    self.register(&o);
+                    Value::Obj(o, Form::Own)
+                }
+            }
+            (Ty::Prim(P::Bool), CResult::U(x)) => Value::Bool(x != 0),
+            (Ty::Prim(P::Byte), CResult::U(x)) => Value::Byte(x as u8),
+            (Ty::Prim(P::Ui8), CResult::U(x)) => Value::U8(x as u8),
+            (Ty::Prim(P::Ui16), CResult::U(x)) => Value::U16(x as u16),
+            (Ty::Prim(P::Ui32), CResult::U(x)) => Value::U32(x as u32),
+            (Ty::Prim(P::Ui64), CResult::U(x)) => Value::U64(x),
+            (Ty::Prim(P::I8), CResult::I(x)) => Value::I8(x as i8),
+            (Ty::Prim(P::I16), CResult::I(x)) => Value::I16(x as i16),
+            (Ty::Prim(P::I32), CResult::I(x)) => Value::I32(x as i32),
+            (Ty::Prim(P::I64), CResult::I(x)) => Value::I64(x),
+            (Ty::Prim(P::F32), CResult::F32(x)) => Value::F32(x),
+            (Ty::Prim(P::F64), CResult::F64(x)) => Value::F64(x),
+            _ => return Err(self.internal(format!("Ergebnis von {} lässt sich nicht umwandeln", m.name))),
+        })
     }
 
     /// V-7: zuerst die Destruktoren (von der Klasse zur Basis), dann die Felder in
@@ -731,6 +906,16 @@ impl Interp {
             self.console.write_stderr("Missing main");
             return 2;
         };
+        // R-15.12: alle C-Bibliotheken vor main laden und alle Symbole auflösen
+        if self.p.defs.iter().any(|d| d.ext.is_some()) {
+            match ffi::load(self.p) {
+                Ok(n) => self.natives = Some(Rc::new(n)),
+                Err((msg, _)) => {
+                    self.console.write_stderr(&format!("NativeError: {msg}\n"));
+                    return 2;
+                }
+            }
+        }
         let argv: Vec<Value> = args.iter().map(|a| Value::Str(Rc::from(a.as_str()))).collect();
         let vec = self.new_vec(argv);
         let frame = Frame { scope_start: self.scopes.len(), env: Vec::new(), this: None, class: None, file, label: FrameLabel::Bare("main"), locks: Vec::new(), mtargs: Vec::new() };
@@ -2472,6 +2657,9 @@ impl Interp {
     }
 
     fn call_method(&mut self, m: &MethodInfo, this: Option<Value>, args: &mut [Value]) -> R<Value> {
+        if m.owner != usize::MAX && self.p.defs[m.owner].is_extern_class() {
+            return self.call_c(m, args);
+        }
         if let Some(v) = this.as_ref().filter(|v| prim_of_value(v).is_some()) {
             if let Some(r) = self.prim_mixin(&m.name, v, args) {
                 return r;

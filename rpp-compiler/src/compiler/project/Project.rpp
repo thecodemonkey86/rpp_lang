@@ -38,6 +38,15 @@ public:
     string? yaml = null;
     // gewählte Version einer Bibliothek aus dem Verzeichnis (R-11.19)
     string? registryVersion = null;
+    // native: true (R-15.13): das Projekt darf extern-Klassen deklarieren
+    bool native = false;
+    // nativePaths (R-15.4): Ordner, in denen C-Bibliotheken zuerst gesucht werden
+    string[] nativePaths = [];
+    // je Eintrag in deps: Zeile der Abhängigkeit und ob allowNative: true gesetzt ist (R-15.14)
+    i32[] depLines = [];
+    bool[] depAllow = [];
+    // bringt C-Code mit (R-15.14, V-15.8): native oder eine Abhängigkeit mit C-Code
+    bool bringsC = false;
 
     constructor(string name, ProjectKind kind, string dir) {
         this.name = name;
@@ -76,7 +85,7 @@ public:
     // Namen der Klassen, Mixins und Enums, mit Komma getrennt; "-" ohne
     string typeNames() {
         Func<Node, string?> typeName = own (Node d) =>
-            d.kind == "class" || d.kind == "mixin" || d.kind == "enum" ? d.kids[0].text : null;
+            d.kind == "class" || d.kind == "handle" || d.kind == "mixin" || d.kind == "enum" ? d.kids[0].text : null;
         string[] names = unit.mapNotNull(typeName);
         if (names.length == 0) {
             return "-";
@@ -157,6 +166,8 @@ public:
     string[] resolvedNames = [];
     string[] resolvedVersions = [];
     string[] resolvedSums = [];
+    // native je gewählter Bibliothek (R-15.15)
+    bool[] resolvedNative = [];
 
     // Lädt eine einzelne .rpp-Datei oder ein Verzeichnis mit rpp.yaml; die
     // Standardbibliothek kommt aus stdDir.
@@ -208,6 +219,7 @@ private:
             Set<string> stack = new Set<string>();
             discard ws.loadProject(path, mut stack, false, "", "", 0);
             ws.resolve();
+            ws.checkNative();
             return ws;
         }
         i64 idx = ws.projects.length;
@@ -355,7 +367,7 @@ private:
             diag(yamlPath, e.line, "R-11.13", e.message);
             return -1;
         }
-        string[] known = ["name", "version", "type", "main", "sources", "dependencies", "registry", "symbols"];
+        string[] known = ["name", "version", "type", "main", "sources", "dependencies", "registry", "symbols", "native", "nativePaths"];
         for (i64 i = 0; i < doc.keys.length; i++) {
             if (!contains(known, doc.keys[i])) {
                 diag(yamlPath, doc.items[i].line, "R-11.13", "Unknown entry '" + doc.keys[i] + "'");
@@ -417,6 +429,28 @@ private:
         p.mainFile = mainFile;
         p.yaml = yamlPath;
         projects.push(p);
+        // R-15.13: native, R-15.4: nativePaths
+        if (doc.has("native")) {
+            if (doc.isStrAt("native") && doc.strOf("native") == "true") {
+                projects[idx].native = true;
+            } else if (!doc.isStrAt("native") || doc.strOf("native") != "false") {
+                diag(yamlPath, doc.lineOf("native"), "R-11.13", "native must be true or false");
+            }
+        }
+        i64 npi = doc.indexOf("nativePaths");
+        if (npi >= 0) {
+            if (doc.items[npi].kind != YKind::List) {
+                diag(yamlPath, doc.items[npi].line, "R-11.13", "nativePaths must be a list of directories");
+            } else {
+                for (YNode np : doc.items[npi].items) {
+                    if (np.kind == YKind::Str) {
+                        projects[idx].nativePaths.push(Path::absolute(Path::join(dir, np.text)));
+                    } else {
+                        diag(yamlPath, np.line, "R-11.13", "An entry of nativePaths must be a path");
+                    }
+                }
+            }
+        }
         if (idx == 1 && !inRegistry && doc.has("registry")) {
             hasRegistryEntry = true;
             registryYaml = yamlPath;
@@ -426,6 +460,8 @@ private:
 
         stack.add(dir);
         i64[] deps = [];
+        i32[] depLines = [];
+        bool[] depAllow = [];
         i64 di = doc.indexOf("dependencies");
         if (di >= 0 && doc.items[di].kind != YKind::List) {
             diag(yamlPath, doc.items[di].line, "R-11.13", "dependencies must be a list");
@@ -433,6 +469,15 @@ private:
         if (di >= 0 && doc.items[di].kind == YKind::List) {
             for (YNode dep : doc.items[di].items) {
                 string depName = dep.strOf("name");
+                bool allow = false;
+                if (dep.has("allowNative")) {
+                    if (dep.isStrAt("allowNative") && dep.strOf("allowNative") == "true") {
+                        allow = true;
+                    } else if (!dep.isStrAt("allowNative") || dep.strOf("allowNative") != "false") {
+                        diag(yamlPath, dep.lineOf("allowNative"), "R-11.13", "allowNative must be true or false");
+                    }
+                }
+                i64 before = deps.length;
                 if (inRegistry && dep.has("path")) {
                     // schon bei der Auflösung gemeldet (R-11.27)
                     continue;
@@ -470,10 +515,16 @@ private:
                 } else {
                     diag(yamlPath, dep.line, "R-11.15", "A dependency requires path or version");
                 }
+                if (deps.length > before) {
+                    depLines.push(dep.line);
+                    depAllow.push(allow);
+                }
             }
         }
         stack.remove(dir);
         projects[idx].deps = deps;
+        projects[idx].depLines = depLines;
+        projects[idx].depAllow = depAllow;
 
         string[] symbols = [];
         string mode = "debug";
@@ -744,6 +795,7 @@ private:
         string regDir = reg ?? "";
         Map<string, i64> index = new Map<string, i64>();
         Map<string, string> sums = new Map<string, string>();
+        Map<string, bool> natives = new Map<string, bool>();
         for (string name : order) {
             string v = selected.get(name) ?? "";
             if (failed.contains(name + "@" + v)) {
@@ -764,13 +816,18 @@ private:
             string pdir = projects[i].dir;
             try {
                 string sum = Registry::checksum(pdir);
+                bool native = projects[i].native;
                 for (LockEntry e : lock) {
                     if (e.name == name && e.checksum != sum) {
                         diag(lockPath, e.checksumLine, "R-11.20", "The checksum of '" + name + "' " + v
                             + " does not match rpp.lock: the library has changed");
+                    } else if (e.name == name && e.native != native) {
+                        diag(lockPath, e.line, "R-15.15", "rpp.lock and '" + name + "' " + v
+                            + " disagree about native; run the lock command");
                     }
                 }
                 sums.put(name, sum);
+                natives.put(name, native);
                 resolvedNames.push(name);
             } catch (Exception e) {
                 diag(Path::join(pdir, "rpp.yaml"), 1, "R-11.29", "Could not compute the checksum: " + e.message);
@@ -780,6 +837,7 @@ private:
         for (string name : resolvedNames) {
             resolvedVersions.push(selected.get(name) ?? "");
             resolvedSums.push(sums.get(name) ?? "");
+            resolvedNative.push(natives.get(name) ?? false);
         }
         Link[] noLinks = [];
         Link[] all = replace(mut links, noLinks);
@@ -832,12 +890,71 @@ private:
         links.clear();
         for (i64 i = 0; i < projects.length; i++) {
             i64[] kept = [];
-            for (i64 d : projects[i].deps) {
+            i32[] keptLines = [];
+            bool[] keptAllow = [];
+            for (i64 k = 0; k < projects[i].deps.length; k++) {
+                i64 d = projects[i].deps[k];
                 if (d != PENDING) {
                     kept.push(d);
+                    keptLines.push(k < projects[i].depLines.length ? projects[i].depLines[k] : 0);
+                    keptAllow.push(k < projects[i].depAllow.length && projects[i].depAllow[k]);
                 }
             }
             projects[i].deps = kept;
+            projects[i].depLines = keptLines;
+            projects[i].depAllow = keptAllow;
+        }
+    }
+
+    // R-15.14, V-15.8: Welche Projekte bringen C-Code mit, und hat jede Abhängigkeit auf ein
+    // solches Projekt allowNative: true?
+    void checkNative() mut {
+        i64 n = projects.length;
+        // Projekt, aus dem der C-Code stammt; -1: keiner. Bis zum Fixpunkt rechnen, weil
+        // Abhängigkeiten auf früher oder später geladene Projekte zeigen.
+        i64[] source = [];
+        for (i64 p = 0; p < n; p++) {
+            source.push(projects[p].native ? p : -1);
+        }
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (i64 p = 0; p < n; p++) {
+                if (source[p] >= 0) {
+                    continue;
+                }
+                for (i64 d : projects[p].deps) {
+                    if (d >= 0 && d < n && source[d] >= 0) {
+                        source[p] = source[d];
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        for (i64 p = 0; p < n; p++) {
+            projects[p].bringsC = source[p] >= 0;
+        }
+        for (i64 p = 0; p < n; p++) {
+            string? yaml = projects[p].yaml;
+            if (yaml == null) {
+                continue;
+            }
+            for (i64 k = 0; k < projects[p].deps.length; k++) {
+                i64 d = projects[p].deps[k];
+                i32 line = k < projects[p].depLines.length ? projects[p].depLines[k] : 1;
+                bool allow = k < projects[p].depAllow.length && projects[p].depAllow[k];
+                string name = projects[d].name;
+                i64 s = source[d];
+                if (s >= 0 && !allow) {
+                    string origin = s == d ? "" : " (through '" + projects[s].name + "')";
+                    diag(yaml, line, "R-15.14", "'" + name + "' brings C code" + origin + "; allow it with allowNative: true");
+                } else if (s < 0 && allow) {
+                    Diag w = new Diag(yaml, line, 0, "R-15.14", "allowNative is set, but '" + name + "' brings no C code");
+                    w.warning = true;
+                    diags.push(w);
+                }
+            }
         }
     }
 }

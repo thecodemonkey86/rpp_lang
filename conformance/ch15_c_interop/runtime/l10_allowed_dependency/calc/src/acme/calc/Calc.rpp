@@ -1,0 +1,13 @@
+package acme.calc;
+
+extern("rpptest") class CalcC {
+public:
+    static i32 tl_add_i32(i32 a, i32 b);
+}
+
+export class Calc {
+public:
+    static i32 answer() {
+        return CalcC::tl_add_i32(40, 2);
+    }
+}

@@ -31,6 +31,14 @@ pub struct Project {
     pub yaml: Option<PathBuf>,
     /// gewählte Version einer Bibliothek aus dem Verzeichnis (R-11.19)
     pub registry_version: Option<Version>,
+    /// `native: true` (R-15.13): das Projekt darf extern-Klassen deklarieren
+    pub native: bool,
+    /// `nativePaths` (R-15.4): Ordner, in denen C-Bibliotheken zuerst gesucht werden
+    pub native_paths: Vec<PathBuf>,
+    /// je Eintrag in `deps`: Zeile der Abhängigkeit und ob `allowNative: true` gesetzt ist (R-15.14)
+    pub dep_lines: Vec<(u32, bool)>,
+    /// bringt C-Code mit (R-15.14, V-15.8): native oder eine Abhängigkeit mit C-Code
+    pub brings_c: bool,
 }
 
 #[derive(Debug)]
@@ -56,7 +64,8 @@ pub struct Workspace {
     /// Releasemodus: Symbol `release` statt `debug` (R-11.24)
     pub release: bool,
     /// Bibliotheken aus dem Verzeichnis mit Version und Prüfsumme, nach Namen sortiert
-    pub resolved: Vec<(String, Version, String)>,
+    /// (Name, Version, Prüfsumme, native nach R-15.15)
+    pub resolved: Vec<(String, Version, String, bool)>,
     /// Anforderungen `version` aus dem Programm und seinen lokalen Abhängigkeiten
     reqs: Vec<Req>,
     /// Plätze in `Project::deps`, die auf eine Bibliothek aus dem Verzeichnis zeigen
@@ -91,7 +100,7 @@ struct Link {
 /// Platzhalter in `Project::deps`, bis die Bibliothek aus dem Verzeichnis geladen ist
 const PENDING: usize = usize::MAX;
 
-const KEYS: &[&str] = &["name", "version", "type", "main", "sources", "dependencies", "registry", "symbols"];
+const KEYS: &[&str] = &["name", "version", "type", "main", "sources", "dependencies", "registry", "symbols", "native", "nativePaths"];
 const REQUIRED: &[&str] = &["name", "version", "type", "sources"];
 
 fn host_os() -> &'static str {
@@ -198,6 +207,7 @@ impl Workspace {
             let mut stack = Vec::new();
             ws.load_project(input, &mut stack, None);
             ws.resolve();
+            ws.check_native();
         } else {
             let idx = ws.projects.len();
             ws.projects.push(Project {
@@ -210,6 +220,10 @@ impl Workspace {
                 main_file: None,
                 yaml: None,
                 registry_version: None,
+                native: false,
+                native_paths: Vec::new(),
+                dep_lines: Vec::new(),
+                brings_c: false,
             });
             ws.parse_file(input, idx, None, &[]);
             let has_main = ws.files.last().is_some_and(|f| {
@@ -235,6 +249,10 @@ impl Workspace {
             main_file: None,
             yaml: None,
             registry_version: None,
+            native: false,
+            native_paths: Vec::new(),
+            dep_lines: Vec::new(),
+            brings_c: false,
         });
         self.load_sources(&canonical(std_dir), idx, &[]);
     }
@@ -349,7 +367,33 @@ impl Workspace {
             main_file,
             yaml: Some(yaml_path.clone()),
             registry_version: None,
+            native: false,
+            native_paths: Vec::new(),
+            dep_lines: Vec::new(),
+            brings_c: false,
         });
+        // R-15.13: native, R-15.4: nativePaths
+        if let Some(n) = doc.get("native") {
+            match n.as_str() {
+                Some("true") => self.projects[idx].native = true,
+                Some("false") => {}
+                _ => self.diag(&yaml_path, n.line, "R-11.13", "native must be true or false"),
+            }
+        }
+        if let Some(list) = doc.get("nativePaths") {
+            if !is_list(list) {
+                self.diag(&yaml_path, list.line, "R-11.13", "nativePaths must be a list of directories");
+            }
+            for p in list.as_list() {
+                match p.as_str() {
+                    Some(rel) => {
+                        let path = normalize(&dir.join(rel));
+                        self.projects[idx].native_paths.push(path);
+                    }
+                    None => self.diag(&yaml_path, p.line, "R-11.13", "An entry of nativePaths must be a path"),
+                }
+            }
+        }
         if idx == 1 && !self.in_registry {
             self.registry_entry =
                 doc.get("registry").map(|r| (yaml_path.clone(), r.line, r.as_str().map(str::to_string)));
@@ -357,12 +401,25 @@ impl Workspace {
 
         stack.push(dir.clone());
         let mut deps = Vec::new();
+        let mut dep_lines = Vec::new();
         if let Some(list) = doc.get("dependencies") {
             if !is_list(list) {
                 self.diag(&yaml_path, list.line, "R-11.13", "dependencies must be a list");
             }
             for dep in list.as_list() {
                 let dep_name = dep.get("name").and_then(Node::as_str).unwrap_or("").to_string();
+                let allow = match dep.get("allowNative") {
+                    None => false,
+                    Some(a) => match a.as_str() {
+                        Some("true") => true,
+                        Some("false") => false,
+                        _ => {
+                            self.diag(&yaml_path, a.line, "R-11.13", "allowNative must be true or false");
+                            false
+                        }
+                    },
+                };
+                let before = deps.len();
                 if self.in_registry && dep.get("path").is_some() {
                     // schon bei der Auflösung gemeldet (R-11.27)
                     continue;
@@ -399,10 +456,14 @@ impl Workspace {
                 } else {
                     self.diag(&yaml_path, dep.line, "R-11.15", "A dependency requires path or version");
                 }
+                if deps.len() > before {
+                    dep_lines.push((dep.line, allow));
+                }
             }
         }
         stack.pop();
         self.projects[idx].deps = deps;
+        self.projects[idx].dep_lines = dep_lines;
 
         let mode = if self.release { "release" } else { "debug" };
         let mut symbols: Vec<String> = Vec::new();
@@ -653,13 +714,17 @@ impl Workspace {
             let pdir = self.projects[i].dir.clone();
             match registry::checksum(&pdir) {
                 Ok(sum) => {
+                    let native = self.projects[i].native;
                     if let Some(e) = lock.as_ref().and_then(|l| l.iter().find(|e| &e.name == name)) {
                         if e.checksum != sum {
                             self.diag(&lock_path, e.checksum_line, "R-11.20", format!(
                                 "The checksum of '{name}' {v} does not match rpp.lock: the library has changed"));
+                        } else if e.native != native {
+                            self.diag(&lock_path, e.line, "R-15.15", format!(
+                                "rpp.lock and '{name}' {v} disagree about native; run the lock command"));
                         }
                     }
-                    self.resolved.push((name.clone(), v, sum));
+                    self.resolved.push((name.clone(), v, sum, native));
                 }
                 Err(e) => self.diag(&pdir.join("rpp.yaml"), 1, "R-11.29", format!("Could not compute the checksum: {e}")),
             }
@@ -709,10 +774,64 @@ impl Workspace {
         state.insert(p, 2);
     }
 
+    /// R-15.14, V-15.8: Welche Projekte bringen C-Code mit, und hat jede Abhängigkeit auf
+    /// ein solches Projekt `allowNative: true`?
+    fn check_native(&mut self) {
+        let n = self.projects.len();
+        // Abhängigkeiten zeigen auf Projekte, die früher oder später geladen wurden; bis zum Fixpunkt rechnen.
+        let mut source: Vec<Option<usize>> = (0..n).map(|p| self.projects[p].native.then_some(p)).collect();
+        loop {
+            let mut changed = false;
+            for p in 0..n {
+                if source[p].is_some() {
+                    continue;
+                }
+                if let Some(s) = self.projects[p].deps.iter().find_map(|&d| source.get(d).copied().flatten()) {
+                    source[p] = Some(s);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for p in 0..n {
+            self.projects[p].brings_c = source[p].is_some();
+        }
+        for p in 0..n {
+            let Some(yaml) = self.projects[p].yaml.clone() else { continue };
+            for (k, &d) in self.projects[p].deps.clone().iter().enumerate() {
+                let (line, allow) = self.projects[p].dep_lines.get(k).copied().unwrap_or((1, false));
+                let name = self.projects[d].name.clone();
+                match source[d] {
+                    Some(s) if !allow => {
+                        let origin = if s == d { String::new() } else { format!(" (through '{}')", self.projects[s].name) };
+                        self.diag(&yaml, line, "R-15.14", format!(
+                            "'{name}' brings C code{origin}; allow it with allowNative: true"));
+                    }
+                    None if allow => {
+                        self.diags.push(Diag { warning: true, ..Diag::error(&yaml, rpp_syntax::Span { line, col: 0 }, "R-15.14", format!(
+                            "allowNative is set, but '{name}' brings no C code")) });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     fn drop_pending(&mut self) {
         self.links.clear();
         for p in &mut self.projects {
-            p.deps.retain(|&d| d != PENDING);
+            let mut lines = std::mem::take(&mut p.dep_lines).into_iter();
+            let mut kept = Vec::new();
+            p.deps.retain(|&d| {
+                let line = lines.next().unwrap_or((0, false));
+                if d != PENDING {
+                    kept.push(line);
+                }
+                d != PENDING
+            });
+            p.dep_lines = kept;
         }
     }
 }

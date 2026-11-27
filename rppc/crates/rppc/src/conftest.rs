@@ -159,8 +159,66 @@ fn judge(u: &Unit, diags: &[Diag]) -> Outcome {
     }
 }
 
+/// Übersetzt die C-Testbibliotheken `KAPITEL/native/NAME.c` nach `KAPITEL/native/build`
+/// (Kapitel 15): `NAME.dll` und `NAME.lib` mit MSVC unter Windows, sonst `libNAME.so` bzw.
+/// `libNAME.dylib` mit `cc`. Unveränderte Bibliotheken werden nicht neu übersetzt.
+pub fn build_native_libs(conformance: &Path) -> Result<(), String> {
+    use std::process::Command;
+    let mut sources = Vec::new();
+    for ch in fs::read_dir(conformance).map_err(|e| e.to_string())?.flatten() {
+        let dir = ch.path().join("native");
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for f in rd.flatten() {
+            let p = f.path();
+            if p.extension().is_some_and(|e| e == "c") {
+                sources.push(p);
+            }
+        }
+    }
+    sources.sort();
+    for src in sources {
+        let dir = src.parent().unwrap().join("build");
+        let stem = src.file_stem().unwrap().to_string_lossy().to_string();
+        let out = dir.join(rpp_interp::ffi::file_name(&stem));
+        let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+        if let (Some(a), Some(b)) = (modified(&out), modified(&src)) {
+            if a >= b {
+                continue;
+            }
+        }
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cl");
+            c.arg("/nologo").arg("/LD").arg("/O2").arg(&src);
+            c.arg(format!("/Fe:{}", out.display()));
+            c.arg(format!("/Fo:{}\\", dir.display()));
+            c
+        } else {
+            let mut c = Command::new("cc");
+            c.arg("-shared").arg("-fPIC").arg("-O2").arg("-o").arg(&out).arg(&src);
+            c
+        };
+        let res = cmd.output().map_err(|e| format!("cannot run the C compiler for {}: {e}", src.display()))?;
+        if !res.status.success() {
+            return Err(format!(
+                "compiling {} failed:\n{}{}",
+                src.display(),
+                String::from_utf8_lossy(&res.stdout),
+                String::from_utf8_lossy(&res.stderr)
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn run(root: &Path, verbose: bool) -> ExitCode {
     let conformance = root.join("conformance");
+    if run_runtime_enabled() {
+        if let Err(e) = build_native_libs(&conformance) {
+            eprintln!("C test libraries: {e}");
+            return ExitCode::from(1);
+        }
+    }
     let std = std_dir();
     let mut stats: BTreeMap<String, [usize; 3]> = BTreeMap::new();
     let mut lines = Vec::new();
@@ -217,18 +275,48 @@ pub fn execute_stdio(input: &Path, release: bool, check: bool, args: Vec<String>
     Ok(rpp_interp::run_stdio(program, release, check, args))
 }
 
-fn execute(input: &Path, release: bool, check: bool, args: Vec<String>, stdin: String) -> Result<rpp_interp::Outcome, Vec<Diag>> {
-    let program = checked_program(input, release)?;
-    Ok(rpp_interp::run(program, rpp_interp::Options { release, check, args, input: stdin }))
-}
-
 fn checked_program(input: &Path, release: bool) -> Result<&'static rpp_sema::defs::Program, Vec<Diag>> {
     let program = rpp_sema::analyze(input, &std_dir(), release);
     if program.diags.iter().any(|d| !d.warning) {
         return Err(program.diags);
     }
+    // R-15.12: im Releasemodus sind fehlende C-Bibliotheken und Symbole Fehler beim Bauen
+    if release && has_natives(&program) {
+        if let Err((msg, def)) = rpp_interp::ffi::load(&program) {
+            let d = &program.defs[def];
+            let span = d.ext.as_ref().map(|e| e.lib_span).unwrap_or_default();
+            let path = program.ws.files[d.file].path.clone();
+            return Err(vec![Diag::error(&path, span, "R-15.12", msg)]);
+        }
+    }
     // Das Programm lebt bis zum Ende des Prozesses; der Interpreter verweist in seinen Text.
     Ok(Box::leak(Box::new(program)))
+}
+
+/// Deklariert das Programm C-Funktionen (Kapitel 15)?
+fn has_natives(p: &rpp_sema::defs::Program) -> bool {
+    p.defs.iter().any(|d| d.ext.is_some())
+}
+
+/// Führt ein Programm mit C-Anbindung in einem eigenen Prozess aus: Ausgaben von C gehen an
+/// die Standardausgabe des Prozesses und lassen sich nur so mit denen von R++ zusammen erfassen.
+fn execute_process(input: &Path, release: bool, args: &[String], stdin: &str) -> Result<rpp_interp::Outcome, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(exe);
+    cmd.arg("run");
+    if release {
+        cmd.arg("--release");
+    }
+    cmd.arg("--check-invariants").arg(input).arg("--").args(args);
+    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    if let Some(mut s) = child.stdin.take() {
+        let _ = s.write_all(stdin.as_bytes());
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let text = |b: &[u8]| String::from_utf8_lossy(b).replace("\r\n", "\n");
+    Ok(rpp_interp::Outcome { stdout: text(&out.stdout), stderr: text(&out.stderr), exit: out.status.code().unwrap_or(-1) })
 }
 
 /// Erwartung eines Laufzeittests für einen Modus (R-14.5).
@@ -237,6 +325,8 @@ struct Expect {
     stdout: Option<String>,
     exit: Option<i32>,
     stderr_contains: Vec<String>,
+    /// `Fehler beim Bauen`: das Programm lässt sich in diesem Modus nicht bauen (R-15.12)
+    build_error: bool,
 }
 
 fn unquote(s: &str) -> String {
@@ -269,6 +359,8 @@ fn parse_expect(spec: &str) -> Expect {
             e.exit = x.trim().parse().ok();
         } else if let Some(x) = part.strip_prefix("Fehlerausgabe enthält ") {
             e.stderr_contains.push(unquote(x));
+        } else if part == "Fehler beim Bauen" {
+            e.build_error = true;
         }
     }
     e
@@ -311,7 +403,13 @@ fn run_runtime(u: &Unit) -> Outcome {
         let previous = std::env::current_dir().ok();
         let ran = fs::create_dir_all(&work).and_then(|_| std::env::set_current_dir(&work));
         let result = match ran {
-            Ok(()) => execute(&path, mode == 1, true, args.clone(), input.clone()),
+            Ok(()) => match checked_program(&path, mode == 1) {
+                Ok(p) if has_natives(p) => execute_process(&path, mode == 1, &args, &input).map_err(|e| {
+                    vec![Diag::error(&path, Default::default(), "Intern", format!("cannot start rppc: {e}"))]
+                }),
+                Ok(p) => Ok(rpp_interp::run(p, rpp_interp::Options { release: mode == 1, check: true, args: args.clone(), input: input.clone() })),
+                Err(d) => Err(d),
+            },
             Err(e) => return Outcome::Fail(format!("{name}: working directory {}: {e}", work.display())),
         };
         if let Some(prev) = previous {
@@ -319,7 +417,9 @@ fn run_runtime(u: &Unit) -> Outcome {
         }
         let _ = fs::remove_dir_all(&work);
         let o = match result {
+            Ok(_) if e.build_error => return Outcome::Fail(format!("{name}: expected a build error")),
             Ok(o) => o,
+            Err(_) if e.build_error => continue,
             Err(diags) => return Outcome::Fail(format!("{name}: compilation failed: {}", diags.first().map(|d| d.to_string()).unwrap_or_default())),
         };
         let mut problems = Vec::new();
