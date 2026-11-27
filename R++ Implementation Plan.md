@@ -4,7 +4,7 @@
 
 Status: 26.11.2026, Draft 0.17. This document describes the first implementation of R++: host language, structure, testing strategy and milestones. It is not part of the specification; chapters 1 to 14 and grammar `RPP.g4` remain relevant.
 
-Host language, structure and milestones have been decided (Design Decisions, Section 27). Milestones M1 to M8 have been completed (Section 6); M7, the speed of the translated code via the expansion of the C code generator, reached its target value on 26.11.2026. M8 made `rppcc` the independent compiler for both modes (decided, implemented and completed with the first green CI run on 26.11.2026). M9 brings dependencies with versions via a local directory (decided and implemented locally on 26.11.2026; it is completed with the next green CI run).
+Host language, structure and milestones have been decided (Design Decisions, Section 27). Milestones M1 to M9 have been completed (Section 6); M7, the speed of the translated code via the expansion of the C code generator, reached its target value on 26.11.2026. M8 made `rppcc` the independent compiler for both modes (decided, implemented and completed with the first green CI run on 26.11.2026). M9 brings dependencies with versions via a local directory (decided and implemented locally on 26.11.2026, completed with the green CI run on 27.11.2026).
 
 ## 1. Role of the first implementation
 
@@ -86,7 +86,7 @@ The interpreter executes these statements directly. In a **check mode**, he addi
 | M6 | Start of the R++ compiler in R++ | the R++ compiler translates itself (fixed point) and agrees with `rppc` in all comparisons (set on 23.11.2026) |
 | M7 | Speed of the translated code: extension of the C code generator (decided on 24.11.2026) | translated `rppcc` at least as fast as `rppc` at `diagnose rpp-compiler` (set on 26.11.2026); reached on 26.11.2026 (0.40 s against 0.47 s) |
 | M8 | `rppcc` as a stand-alone compiler: `build`, `run` and `test`, release mode via the C code generator, bootstrap without rust (decided on 26.11.2026) | `rppcc test ..` Passes all conformance tests in debug and release mode (R-14.7); the bootstrap from the checked-in C starting point reaches the fixed point without rust, under Windows (MSVC) and Linux (gcc) in the CI; all comparisons with `rppc` remain without deviation. Fulfilled on 26.11.2026: local (Windows with MSVC, Linux with gcc in WSL) and in the first CI run of the job `self-hosted` (Ubuntu 24.04 and Windows 2025) |
-| M9 | Dependencies with versions according to Design Decisions 13b via a local directory in the file system: `rpp.hash` (SHA-256), Minimal Version Selection, `rpp.lock`, `rppcc publish` (decided on 26.11.2026, met locally on 26.11.2026) | new conformance tests in Chapter 11 cover the rules of 13b and pass with `rppc test` and `rppcc test`; `rpp.lock` is reproducible and detects any change to a locked library; `compare.py` shows no deviation for resolution, the fixed point holds |
+| M9 | Dependencies with versions according to Design Decisions 13b via a local directory in the file system: `rpp.hash` (SHA-256), Minimal Version Selection, `rpp.lock`, `rppcc publish` (decided on 26.11.2026, met locally on 26.11.2026) | new conformance tests in Chapter 11 cover the rules of 13b and pass with `rppc test` and `rppcc test`; `rpp.lock` is reproducible and detects any change to a locked library; `compare.py` shows no deviation for resolution, the fixed point holds. Met on 27.11.2026: locally (Windows with MSVC, Linux with gcc in WSL) and in the CI run of the job `self-hosted` (Ubuntu 24.04 and Windows 2025) |
 
 The release mode is created from the C code generator (decided on 24.11.2026); since M8 checks `rppcc test` the Conformance also for it (R-14.7).
 
@@ -574,7 +574,7 @@ Status (26.11.2026, locally on Windows with MSVC):
 - Bootstrap with `--check-seed`: fixed point reached, the regenerated seed is current.
 - Linux (WSL/Ubuntu 24.04, gcc 13.3): bootstrap with `--check-seed` reaches the fixed point with the same seed, `rppcc test` 332 passed, `check.py registry` passed.
 
-Open: the green CI run on Ubuntu and Windows after the next push. Not part of M9: the registry as a network service, signatures and a public log of checksums.
+**M9 completed (27.11.2026).** The CI run after the push was green: In the job `self-hosted`, the bootstrap reached the fixed point with `--check-seed` on Ubuntu 24.04 (gcc) and Windows 2025 (MSVC), the starting point was current, `rppcc test` passed 332 of 332 tests on both systems (Chapter 11: 31), and `check.py registry` passed (`publish`, `withdraw`, `lock` and checksums). The jobs `Tests` also remained green. Not part of M9: the registry as a network service, signatures and a public log of checksums.
 
 **Open M7 candidates implemented (27.11.2026).** The four further optimizations named at the end of M7 are done in `rppcc`:
 

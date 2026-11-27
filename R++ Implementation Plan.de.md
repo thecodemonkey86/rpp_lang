@@ -4,7 +4,7 @@
 
 Stand: 26.11.2026, Entwurf 0.17. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
-Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M8 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 machte `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen, umgesetzt und mit dem ersten grünen CI-Lauf abgeschlossen am 26.11.2026). M9 bringt Abhängigkeiten mit Versionen über ein lokales Verzeichnis (beschlossen und lokal umgesetzt am 26.11.2026; abgeschlossen ist er mit dem nächsten grünen CI-Lauf).
+Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M9 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 machte `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen, umgesetzt und mit dem ersten grünen CI-Lauf abgeschlossen am 26.11.2026). M9 bringt Abhängigkeiten mit Versionen über ein lokales Verzeichnis (beschlossen und lokal umgesetzt am 26.11.2026, mit dem grünen CI-Lauf abgeschlossen am 27.11.2026).
 
 ## 1. Rolle der ersten Implementierung
 
@@ -86,7 +86,7 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M6 | Beginn des R++-Compilers in R++ | der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein (festgelegt am 23.11.2026) |
 | M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler` (festgelegt am 26.11.2026); erreicht am 26.11.2026 (0,40 s gegen 0,47 s) |
 | M8 | `rppcc` als eigenständiger Compiler: `build`, `run` und `test`, Releasemodus über den C-Codegenerator, Bootstrap ohne Rust (beschlossen am 26.11.2026) | `rppcc test ..` besteht alle Konformitätstests im Debug- und im Releasemodus (R-14.7); der Bootstrap aus dem eingecheckten C-Startpunkt erreicht ohne Rust den Fixpunkt, unter Windows (MSVC) und Linux (gcc) in der CI; alle Vergleiche mit `rppc` bleiben ohne Abweichung. Erfüllt am 26.11.2026: lokal (Windows mit MSVC, Linux mit gcc in WSL) und im ersten CI-Lauf des Jobs `self-hosted` (Ubuntu 24.04 und Windows 2025) |
-| M9 | Abhängigkeiten mit Versionen nach Designentscheidungen 13b über ein lokales Verzeichnis im Dateisystem: `rpp.hash` (SHA-256), Minimal Version Selection, `rpp.lock`, `rppcc publish` (beschlossen am 26.11.2026, lokal erfüllt am 26.11.2026) | neue Konformitätstests in Kapitel 11 decken die Regeln aus 13b ab und bestehen mit `rppc test` und `rppcc test`; `rpp.lock` ist reproduzierbar und erkennt jede Änderung an einer gesperrten Bibliothek; `compare.py` zeigt für die Auflösung keine Abweichung, der Fixpunkt hält |
+| M9 | Abhängigkeiten mit Versionen nach Designentscheidungen 13b über ein lokales Verzeichnis im Dateisystem: `rpp.hash` (SHA-256), Minimal Version Selection, `rpp.lock`, `rppcc publish` (beschlossen am 26.11.2026, lokal erfüllt am 26.11.2026) | neue Konformitätstests in Kapitel 11 decken die Regeln aus 13b ab und bestehen mit `rppc test` und `rppcc test`; `rpp.lock` ist reproduzierbar und erkennt jede Änderung an einer gesperrten Bibliothek; `compare.py` zeigt für die Auflösung keine Abweichung, der Fixpunkt hält. Erfüllt am 27.11.2026: lokal (Windows mit MSVC, Linux mit gcc in WSL) und im CI-Lauf des Jobs `self-hosted` (Ubuntu 24.04 und Windows 2025) |
 
 Der Releasemodus entsteht aus dem C-Codegenerator (entschieden am 24.11.2026); seit M8 prüft `rppcc test` die Konformität auch für ihn (R-14.7). Ein JIT für den Debugmodus ist zurückgestellt.
 
@@ -574,7 +574,7 @@ Stand (26.11.2026, lokal unter Windows mit MSVC):
 - Bootstrap mit `--check-seed`: Fixpunkt erreicht, der neu erzeugte Startpunkt ist aktuell.
 - Linux (WSL/Ubuntu 24.04, gcc 13.3): Bootstrap mit `--check-seed` erreicht den Fixpunkt mit demselben Startpunkt, `rppcc test` 332 bestanden, `check.py registry` bestanden.
 
-Offen: der grüne CI-Lauf unter Ubuntu und Windows nach dem nächsten Push. Nicht Teil von M9: das Verzeichnis als Netzwerkdienst, Signaturen und ein öffentliches Protokoll der Prüfsummen.
+**M9 abgeschlossen (27.11.2026).** Der CI-Lauf nach dem Push war grün: Im Job `self-hosted` erreichte der Bootstrap mit `--check-seed` unter Ubuntu 24.04 (gcc) und Windows 2025 (MSVC) den Fixpunkt, der Startpunkt war aktuell, `rppcc test` bestand auf beiden Systemen 332 von 332 Tests (Kapitel 11: 31), und `check.py registry` bestand (`publish`, `withdraw`, `lock` und Prüfsummen). Die Jobs `Tests` blieben ebenfalls grün. Nicht Teil von M9: das Verzeichnis als Netzwerkdienst, Signaturen und ein öffentliches Protokoll der Prüfsummen.
 
 **Offene Kandidaten aus M7 umgesetzt (27.11.2026).** Die vier am Ende von M7 genannten weiteren Optimierungen sind in `rppcc` erledigt:
 
