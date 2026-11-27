@@ -19,7 +19,7 @@ fn run_runtime_enabled() -> bool {
     std::env::var("RPPC_NUR_PRUEFEN").map(|v| v != "1").unwrap_or(true)
 }
 
-fn std_dir() -> PathBuf {
+pub fn std_dir() -> PathBuf {
     let dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../std"));
     fs::canonicalize(&dir).unwrap_or(dir)
 }

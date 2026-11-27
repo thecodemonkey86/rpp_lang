@@ -1,0 +1,6 @@
+using acme.a.Info;
+using B = acme.b.Info; // FEHLER
+
+i32 main(string[] args) {
+    return 0;
+}

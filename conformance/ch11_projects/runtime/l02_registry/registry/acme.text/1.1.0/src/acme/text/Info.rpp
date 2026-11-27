@@ -1,0 +1,7 @@
+package acme.text;
+export class Greeting {
+public:
+    static string version() {
+        return "1.1.0";
+    }
+}

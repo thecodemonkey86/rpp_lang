@@ -1,0 +1,14 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.20, R-11.29
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile in rpp.lock
+# (acme.a 1.0.0 wurde nach dem Sperren verändert; die Prüfsumme passt nicht mehr).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+registry: registry
+dependencies:
+  - name: acme.a
+    version: "1.0"

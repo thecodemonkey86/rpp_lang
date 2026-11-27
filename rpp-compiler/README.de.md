@@ -60,7 +60,7 @@ cargo run -- diagnose std PFAD
 `project` zeigt Haupt- und Quelldateien relativ zum Verzeichnis ihres jeweiligen Projekts an. Dateipositionen in Meldungen von `project`, `defs` und `diagnose` beziehen sich auf das Eingabeprojekt, bei Einzeldateien auf deren Verzeichnis. Für Dateien außerhalb dieser Basis erscheint der absolute Pfad.
 
 ```
-py -X utf8 compare.py                # alle Teile; -v zeigt jeden Fall; tokens|pre|ast|project|defs|diagnose wählt Teile; --fr N: Anzahl der FR++-Zufallsprogramme
+py -X utf8 compare.py                # alle Teile; -v zeigt jeden Fall; tokens|pre|ast|project|lock|defs|diagnose wählt Teile; --fr N: Anzahl der FR++-Zufallsprogramme
 ```
 
 Eingaben sind alle `.rpp`-Dateien des Projekts (Konformitätstests, Grammatiktests einschließlich der negativen Tests und Lesarten, Standardbibliothek, `rpp-compiler` selbst) und Grenzfälle je Teil; `pre` und `ast` laufen mit den Symbolsätzen `debug,linux` und `release,windows`. `project` lädt alle Projektverzeichnisse und Einzeldateien der Konformitätstests, `rpp-compiler` selbst und 39 Grenzfälle für `rpp.yaml` im Debug- und Releasemodus; die Ausgabe nennt Projekte, Dateien mit deklariertem und erwartetem Paket und Typnamen sowie die Meldungen. `defs` läuft über dieselben Eingaben, die Grammatiktests und 17 Grenzfälle für Deklarationsregeln; die Ausgabe nennt alle Typen mit ihren Membern und Signaturen und die Meldungen der Deklarationsphase. `diagnose` vergleicht alle Meldungen der ganzen Prüfung über dieselben Eingaben ohne `rpp-compiler` selbst (im Interpreter zu langsam) und über die nach R++ übersetzten FR++-Programme.
@@ -118,6 +118,20 @@ Die Teile stehen in `src/compiler/driver/`: `Toolchain.rpp` sucht die Wurzel (da
 `ConformanceTest.rpp` folgt `rppc/crates/rppc/src/conftest.rs`: Annehmen oder Ablehnen prüft der Compiler im selben Prozess (Debugmodus), mit denselben Regeln für Fehlerzeilen, erwartete Regel und Warnungen. Laufzeittests werden in beiden Modi erzeugt, mit der einmal übersetzten Laufzeit gebunden und in einem frischen, leeren Arbeitsverzeichnis ausgeführt (V-14.3); verglichen werden Ausgabe, Exit-Code und Fehlerausgabe. Die Ausgabe hat dieselbe Form wie die von `rppc test`. Ein ganzer Lauf dauert unter Windows (MSVC) gut 80 s, unter Linux (gcc, WSL) gut 2 Minuten.
 
 Dafür kam die Standardbibliothek um `rpp.process` (`Process::run`, `Process::call`), `Env::executablePath` und `Dir::removeAll` hinzu (R-13.43 bis R-13.45).
+
+## Abhängigkeiten aus dem Verzeichnis (M9)
+
+Abhängigkeiten mit `version` kommen aus einem Verzeichnis im Dateisystem (Kapitel 11, Abschnitt 5a): `VERZEICHNIS/besitzer.name/VERSION/` ist ein Bibliotheksprojekt, `VERSION.withdrawn` daneben markiert es als zurückgezogen. Welches Verzeichnis gilt, sagt `registry` in der `rpp.yaml` des Programms, sonst `RPP_REGISTRY`.
+
+```
+rppcc lock [--stdout] PROJEKT                         # wählen und rpp.lock schreiben (wie rppc lock)
+rppcc publish [--registry VERZEICHNIS] PROJEKT        # Bibliothek prüfen, Version prüfen, ins Verzeichnis kopieren
+rppcc withdraw [--registry VERZEICHNIS] NAME VERSION  # Version als zurückgezogen markieren
+```
+
+Die Teile: `src/compiler/project/Registry.rpp` (Versionen, Prüfsummen, Form von `rpp.lock`; Gegenstück `rppc/crates/rpp-sema/src/registry.rs`) und `Workspace.resolve` in `Project.rpp` (Auswahl nach Minimal Version Selection, Prüfung gegen `rpp.lock`, Laden der gewählten Versionen; Gegenstück `project.rs`). Die Prüfsummen rechnet `rpp.hash.Sha256` aus der Standardbibliothek (R-13.46), in R++ geschrieben. `publish` vergleicht die exportierte Schnittstelle mit der Vorversion in der Form von `defs` (exportierte Typen, ihre `public`- und `protected`-Teile, ohne Positionen); entfallene oder geänderte Zeilen verlangen eine neue Hauptversion, neue Zeilen eine neue Nebenversion.
+
+`compare.py` prüft die Auflösung in den Teilen `project` (Projekte mit Version, gewählte Bibliotheken mit Prüfsumme, Meldungen; dazu 38 Grenzfälle für Verzeichnis und `rpp.lock`) und `lock` (Text von `lock --stdout`). `.github/scripts/check.py registry` spielt `publish`, `withdraw` und `lock` einmal ganz durch.
 
 ## Bootstrap ohne Rust
 

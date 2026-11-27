@@ -1,0 +1,262 @@
+// Das Verzeichnis im Dateisystem (Kapitel 11, R-11.26 bis R-11.30): Versionen, Prüfsummen
+// und die Sperrdatei rpp.lock. Gleichwertig zu rppc/crates/rpp-sema/src/registry.rs.
+// Versionen sind Texte in der Normalform MAJOR.MINOR.PATCH (R-11.27).
+package compiler.project;
+
+using rpp.io.File;
+using rpp.io.Dir;
+using rpp.io.DirEntry;
+using rpp.io.FileType;
+using rpp.io.Path;
+using rpp.hash.Sha256;
+using compiler.lexer.Lexer;
+
+// Ein Eintrag der Sperrdatei (R-11.30)
+export class LockEntry {
+public:
+    string name;
+    string version;
+    string checksum;
+    i32 line;
+    i32 checksumLine;
+
+    constructor(string name, string version, string checksum, i32 line, i32 checksumLine) {
+        this.name = name;
+        this.version = version;
+        this.checksum = checksum;
+        this.line = line;
+        this.checksumLine = checksumLine;
+    }
+}
+
+export class LockError : Exception {
+public:
+    i32 line;
+
+    constructor(i32 line, string message) : base(message) {
+        this.line = line;
+    }
+}
+
+export class Registry {
+private:
+    static string? parseParts(string text, i64 minParts) {
+        string[] parts = text.split(".");
+        if (parts.length < minParts || parts.length > 3) {
+            return null;
+        }
+        string[] out = [];
+        for (string p : parts) {
+            if (p.length == 0 || p.length > 9 || (p.length > 1 && p[0] == '0')) {
+                return null;
+            }
+            for (char c : p) {
+                if (c < '0' || c > '9') {
+                    return null;
+                }
+            }
+            out.push(p);
+        }
+        while (out.length < 3) {
+            out.push("0");
+        }
+        return string::join(".", out);
+    }
+
+    static bool isDir(DirEntry e) {
+        return e.kind == FileType::Directory || (e.kind == FileType::Symlink && Dir::exists(e.path));
+    }
+
+    // rpp.yaml und alle .rpp-Dateien unter dir, als Pfade relativ zur Bibliothek
+    static void collect(string dir, string rel, mut string[] out) {
+        DirEntry[] entries = [];
+        try {
+            entries = Dir::entries(dir);
+        } catch (Exception e) {
+            return;
+        }
+        for (DirEntry e : entries) {
+            string r = rel.length == 0 ? e.name : rel + "/" + e.name;
+            if (isDir(e)) {
+                collect(e.path, r, mut out);
+            } else if (Path::extension(e.name) == "rpp" || (rel.length == 0 && e.name == "rpp.yaml")) {
+                out.push(r);
+            }
+        }
+    }
+
+public:
+    // Vollständige Version, wie sie version in einer rpp.yaml verlangt; null, wenn ungültig
+    static string? parse(string text) {
+        return parseParts(text, 3);
+    }
+
+    // Mindestversion einer Abhängigkeit; hintere Teile dürfen fehlen ("1.4" = 1.4.0)
+    static string? parseMin(string text) {
+        return parseParts(text, 1);
+    }
+
+    // Teil i (0 bis 2) einer Version in Normalform
+    static i64 part(string v, i64 i) {
+        string[] parts = v.split(".");
+        i64 n = 0;
+        for (char c : parts[i]) {
+            n = n * 10 + (cast<i64>(c) - cast<i64>('0'));
+        }
+        return n;
+    }
+
+    static i64 major(string v) {
+        return part(v, 0);
+    }
+
+    // < 0, 0 oder > 0, Teil für Teil als Zahlen
+    static i32 compare(string a, string b) {
+        for (i64 i = 0; i < 3; i++) {
+            i64 x = part(a, i);
+            i64 y = part(b, i);
+            if (x != y) {
+                return x < y ? -1 : 1;
+            }
+        }
+        return 0;
+    }
+
+    // Name einer Bibliothek aus dem Verzeichnis: genau besitzer.name, beide Teile
+    // ASCII-Bezeichner und keine Schlüsselwörter (R-11.17, R-11.27)
+    static bool validName(string name) {
+        string[] parts = name.split(".");
+        if (parts.length != 2) {
+            return false;
+        }
+        Lexer words = new Lexer("");
+        for (string p : parts) {
+            if (p.length == 0 || words.isKeyword(p)) {
+                return false;
+            }
+            for (i64 i = 0; i < p.length; i++) {
+                char c = p[i];
+                bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+                bool digit = c >= '0' && c <= '9';
+                if (!letter && !(digit && i > 0)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Die veröffentlichten Versionen einer Bibliothek, aufsteigend
+    static string[] versions(string libDir) {
+        string[] out = [];
+        DirEntry[] entries = [];
+        try {
+            entries = Dir::entries(libDir);
+        } catch (Exception e) {
+            return out;
+        }
+        for (DirEntry e : entries) {
+            string? v = parse(e.name);
+            if (v != null && isDir(e)) {
+                out.push(v);
+            }
+        }
+        out.sortBy((string a, string b) => compare(a, b));
+        return out;
+    }
+
+    // Ist die Version als zurückgezogen markiert (R-11.26)?
+    static bool withdrawn(string libDir, string v) {
+        return File::exists(Path::join(libDir, v + ".withdrawn"));
+    }
+
+    // Prüfsumme einer Bibliothek im Ordner dir (R-11.29): rpp.yaml und alle .rpp-Dateien
+    // darunter, je mit SHA-256 ihres Inhalts (CRLF als LF), sortiert nach dem relativen Pfad.
+    static string checksum(string dir) {
+        string[] files = [];
+        collect(dir, "", mut files);
+        files.sort();
+        byte cr = cast<byte>(cast<ui8>(13));
+        byte lf = cast<byte>(cast<ui8>(10));
+        Sha256 summary = new Sha256();
+        for (string rel : files) {
+            File f = File::open(Path::join(dir, rel));
+            byte[] bytes = f.readAllBytes();
+            byte[] text = [];
+            i64 n = bytes.length;
+            for (i64 i = 0; i < n; i++) {
+                if (bytes[i] == cr && i + 1 < n && bytes[i + 1] == lf) {
+                    continue;
+                }
+                text.push(bytes[i]);
+            }
+            summary.updateText(Sha256::hex(text) + "  " + rel + "\n");
+        }
+        return "sha256:" + summary.finishHex();
+    }
+
+    // Liest rpp.lock; wirft LockError mit Zeile und Meldung
+    static LockEntry[] parseLock(string text) {
+        YNode doc = new YNode(YKind::Map, "", 1);
+        try {
+            doc = Yaml::parse(text);
+        } catch (YamlError e) {
+            throw new LockError(e.line, e.message);
+        }
+        for (i64 i = 0; i < doc.keys.length; i++) {
+            if (doc.keys[i] != "libraries") {
+                throw new LockError(doc.items[i].line, "Unknown entry '" + doc.keys[i] + "' in rpp.lock");
+            }
+        }
+        i64 li = doc.indexOf("libraries");
+        if (li < 0) {
+            throw new LockError(1, "rpp.lock requires the entry libraries");
+        }
+        if (doc.items[li].kind != YKind::List) {
+            throw new LockError(doc.items[li].line, "libraries must be a list");
+        }
+        LockEntry[] out = [];
+        string requires = "An entry of rpp.lock requires name, version and checksum";
+        for (YNode item : doc.items[li].items) {
+            if (item.kind != YKind::Map) {
+                throw new LockError(item.line, requires);
+            }
+            for (i64 k = 0; k < item.keys.length; k++) {
+                string key = item.keys[k];
+                if (key != "name" && key != "version" && key != "checksum") {
+                    throw new LockError(item.items[k].line, "Unknown entry '" + key + "' in rpp.lock");
+                }
+            }
+            if (!item.isStrAt("name") || !item.isStrAt("version") || !item.isStrAt("checksum")) {
+                throw new LockError(item.line, requires);
+            }
+            string name = item.strOf("name");
+            string version = item.strOf("version");
+            string? v = parse(version);
+            if (v == null) {
+                throw new LockError(item.lineOf("version"), "Invalid version '" + version + "' in rpp.lock");
+            }
+            for (LockEntry e : out) {
+                if (e.name == name) {
+                    throw new LockError(item.line, "rpp.lock lists '" + name + "' twice");
+                }
+            }
+            out.push(new LockEntry(name, v, item.strOf("checksum"), item.lineOf("name"), item.lineOf("checksum")));
+        }
+        return out;
+    }
+
+    // Text der Sperrdatei; names ist sortiert, versions und sums gehören dazu
+    static string formatLock(string[] names, string[] versions, string[] sums) {
+        string out = "# rpp.lock: exact versions and checksums of the libraries from the registry (R-11.20).\n"
+            + "# Written by the lock command; do not edit.\n";
+        if (names.length == 0) {
+            return out + "libraries: []\n";
+        }
+        out += "libraries:\n";
+        for (i64 i = 0; i < names.length; i++) {
+            out += "  - name: " + names[i] + "\n    version: " + versions[i] + "\n    checksum: " + sums[i] + "\n";
+        }
+        return out;
+    }
+}

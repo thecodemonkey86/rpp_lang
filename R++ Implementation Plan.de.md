@@ -2,9 +2,9 @@
 
 [English](R%2B%2B%20Implementation%20Plan.md)
 
-Stand: 26.11.2026, Entwurf 0.16. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
+Stand: 26.11.2026, Entwurf 0.17. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
-Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M8 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 machte `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen, umgesetzt und mit dem ersten grünen CI-Lauf abgeschlossen am 26.11.2026). M9 bringt Abhängigkeiten mit Versionen über ein lokales Verzeichnis (beschlossen am 26.11.2026).
+Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M8 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 machte `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen, umgesetzt und mit dem ersten grünen CI-Lauf abgeschlossen am 26.11.2026). M9 bringt Abhängigkeiten mit Versionen über ein lokales Verzeichnis (beschlossen und lokal umgesetzt am 26.11.2026; abgeschlossen ist er mit dem nächsten grünen CI-Lauf).
 
 ## 1. Rolle der ersten Implementierung
 
@@ -86,7 +86,7 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M6 | Beginn des R++-Compilers in R++ | der R++-Compiler übersetzt sich selbst (Fixpunkt) und stimmt in allen Vergleichen mit `rppc` überein (festgelegt am 23.11.2026) |
 | M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler` (festgelegt am 26.11.2026); erreicht am 26.11.2026 (0,40 s gegen 0,47 s) |
 | M8 | `rppcc` als eigenständiger Compiler: `build`, `run` und `test`, Releasemodus über den C-Codegenerator, Bootstrap ohne Rust (beschlossen am 26.11.2026) | `rppcc test ..` besteht alle Konformitätstests im Debug- und im Releasemodus (R-14.7); der Bootstrap aus dem eingecheckten C-Startpunkt erreicht ohne Rust den Fixpunkt, unter Windows (MSVC) und Linux (gcc) in der CI; alle Vergleiche mit `rppc` bleiben ohne Abweichung. Erfüllt am 26.11.2026: lokal (Windows mit MSVC, Linux mit gcc in WSL) und im ersten CI-Lauf des Jobs `self-hosted` (Ubuntu 24.04 und Windows 2025) |
-| M9 | Abhängigkeiten mit Versionen nach Designentscheidungen 13b über ein lokales Verzeichnis im Dateisystem: `rpp.hash` (SHA-256), Minimal Version Selection, `rpp.lock`, `rppcc publish` (beschlossen am 26.11.2026) | neue Konformitätstests in Kapitel 11 decken die Regeln aus 13b ab und bestehen mit `rppc test` und `rppcc test`; `rpp.lock` ist reproduzierbar und erkennt jede Änderung an einer gesperrten Bibliothek; `compare.py` zeigt für die Auflösung keine Abweichung, der Fixpunkt hält |
+| M9 | Abhängigkeiten mit Versionen nach Designentscheidungen 13b über ein lokales Verzeichnis im Dateisystem: `rpp.hash` (SHA-256), Minimal Version Selection, `rpp.lock`, `rppcc publish` (beschlossen am 26.11.2026, lokal erfüllt am 26.11.2026) | neue Konformitätstests in Kapitel 11 decken die Regeln aus 13b ab und bestehen mit `rppc test` und `rppcc test`; `rpp.lock` ist reproduzierbar und erkennt jede Änderung an einer gesperrten Bibliothek; `compare.py` zeigt für die Auflösung keine Abweichung, der Fixpunkt hält |
 
 Der Releasemodus entsteht aus dem C-Codegenerator (entschieden am 24.11.2026); seit M8 prüft `rppcc test` die Konformität auch für ihn (R-14.7). Ein JIT für den Debugmodus ist zurückgestellt.
 
@@ -552,3 +552,26 @@ Stand (26.11.2026):
 | beide Compiler | `rppc` und `rppcc` lösen gleich auf; `compare.py` erhält einen Teil für die Auflösung. |
 
 Zurückgestellt: das Verzeichnis als Netzwerkdienst mit öffentlichem Protokoll der Prüfsummen und vorgebauten Varianten, die C-Anbindung (Kandidat für M10, braucht zuerst eine Spezifikation mit Sicherheitsmodell), Threads mit `rpp.sync` und schnellerer Code für Benutzerprogramme im Releasemodus.
+
+**M9 umgesetzt (26.11.2026).** Was dazukam:
+
+| Teil | Umsetzung |
+|---|---|
+| Spezifikation | Kapitel 11, Abschnitt 5a „Das Verzeichnis im Dateisystem“ mit R-11.26 bis R-11.31: Aufbau `besitzer.name/VERSION/` mit Marke `VERSION.withdrawn`, Versionsform `MAJOR.MINOR.PATCH` (Mindestversion darf kürzer sein), Auswahl, Prüfsumme, Form und Prüfung von `rpp.lock`, keine `path`-Abhängigkeiten im Verzeichnis. Das Verzeichnis nennt `registry` in `rpp.yaml` (R-11.13), sonst `RPP_REGISTRY`. Standardbibliothek Abschnitt 18: `rpp.hash.Sha256` (R-13.46). |
+| `rpp.hash` | `Sha256` in R++ (`update`, `updateText`, `finishHex`, `hex`, `hexText`), geprüft mit den Testvektoren aus FIPS 180-4 im Laufzeittest `l50_sha256`. |
+| Auswahl | Minimal Version Selection als Breitensuche: Jede Anforderung zeigt auf die kleinste nicht zurückgezogene Version ab der Mindestversion mit derselben Hauptversion, je Bibliothek gilt die höchste erreichte. Verschiedene Hauptversionen, unbekannte Bibliotheken, fehlende Versionen und Zyklen im Verzeichnis werden an der Anforderung gemeldet. |
+| Prüfsumme | SHA-256 über `rpp.yaml` und alle `.rpp`-Dateien einer Version (Zeilenenden als LF, sortiert nach Pfad); in `rpp.lock` als `sha256:…`. |
+| `rpp.lock` | `rppc lock` und `rppcc lock` schreiben die Datei, sortiert nach Namen und reproduzierbar. Beim Bauen gelten die gesperrten Versionen, auch zurückgezogene; ein fehlender oder veralteter Eintrag ist ein Fehler an der Anforderung, ein unnötiger Eintrag oder eine falsche Prüfsumme ein Fehler in `rpp.lock`. |
+| `rppcc publish`, `withdraw` | `publish` prüft Typ, Name, Version und Abhängigkeiten, übersetzt und prüft die Bibliothek, vergleicht die exportierte Schnittstelle (Zeilen in der Form von `defs`, ohne Positionen und private Teile) mit der nächstniedrigeren Version und verlangt bei entfallenen oder geänderten Zeilen eine neue Hauptversion, bei neuen eine neue Nebenversion. Veröffentlichte Versionen werden nie überschrieben. `withdraw` legt die Marke an. |
+| beide Compiler | `registry.rs` und `project.rs` in `rppc`, `Registry.rpp` und `Project.rpp` in `rppcc`, gleich aufgebaut. Die Ausgabe von `project` zeigt Versionen und gewählte Bibliotheken mit Prüfsumme. |
+| Tests | 3 neue Laufzeittests (`l02_registry`, `l03_withdrawn`, `l04_locked_withdrawn`) und 10 neue abgelehnte Tests (`n14` bis `n23`) in Kapitel 11; `compare.py` mit neuem Teil `lock` und 38 Grenzfällen für Verzeichnis und `rpp.lock`; `check.py registry` spielt `publish`, `withdraw` und `lock` durch und ist ein Schritt im CI-Job `self-hosted`. |
+
+Stand (26.11.2026, lokal unter Windows mit MSVC):
+
+- `rppc test` und `rppcc test`: je 332 bestanden, 0 fehlgeschlagen, 0 offen (Kapitel 11: 31, Kapitel 13: 75). `cargo test` und `syntaxtest` grün. Kapitel 11 deckt 29 von 31 Regeln ab (2 ausgenommen), Kapitel 13 deckt 43 von 44 ab.
+- `rpp.lock`: zweimal geschrieben byteweise gleich, gleich bei `rppc lock` und `rppcc lock`; eine geänderte Datei in einer gesperrten Bibliothek bricht das Bauen ab (`check.py registry`, Test `n17_checksum`).
+- `compare.py --exe` 659/1332/1310/828/106/581/863 gleich (tokens, pre, ast, project, lock, defs, diagnose), 0 verschieden; `compare_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 328 gleich, 0 verschieden. `check.py cli` bestanden.
+- Bootstrap mit `--check-seed`: Fixpunkt erreicht, der neu erzeugte Startpunkt ist aktuell.
+- Linux (WSL/Ubuntu 24.04, gcc 13.3): Bootstrap mit `--check-seed` erreicht den Fixpunkt mit demselben Startpunkt, `rppcc test` 332 bestanden, `check.py registry` bestanden.
+
+Offen: der grüne CI-Lauf unter Ubuntu und Windows nach dem nächsten Push. Nicht Teil von M9: das Verzeichnis als Netzwerkdienst, Signaturen und ein öffentliches Protokoll der Prüfsummen.

@@ -62,7 +62,28 @@ cargo run --manifest-path rppc/Cargo.toml -- run hello -- Ada
 
 Paths in the manifest are relative to the project directory. A file under `src/demo/util/` starts with `package demo.util;`. Files directly under `src/` belong to the root package and omit the package declaration.
 
-A reusable library uses `type: library` and omits `main`. Its package names start with the library name, and other projects can use types marked `export`. The current tools load local dependencies through `dependencies` entries with `name` and `path`. [Local library example](conformance/ch11_projects/accepted/a04_library), [package and project specification](R%2B%2B%20Packages%20and%20Projects.md)
+A reusable library uses `type: library` and omits `main`. Its package names start with the library name, and other projects can use types marked `export`. A local dependency is a `dependencies` entry with `name` and `path`. [Local library example](conformance/ch11_projects/accepted/a04_library), [package and project specification](R%2B%2B%20Packages%20and%20Projects.md)
+
+### Use versioned libraries from a registry
+
+A dependency with `version` comes from a registry. Until the central registry service exists, a registry is a directory: version `1.4.0` of `acme.json` lives in `REGISTRY/acme.json/1.4.0/` as a library project. Name the directory with `registry`, relative to the project, or set `RPP_REGISTRY`.
+
+```yaml
+registry: ../registry
+dependencies:
+  - name: acme.json
+    version: "1.4"      # at least 1.4.0, same major version
+```
+
+Each library is used in one version per program: the highest minimum version that any dependency asks for (minimal version selection). Versions marked as withdrawn are skipped. `lock` writes `rpp.lock` with the exact versions and SHA-256 checksums; with a lock file, builds use the locked versions and report a library whose files have changed.
+
+```sh
+rpp-compiler/build/rppcc lock hello                                  # or: rppc lock hello
+rpp-compiler/build/rppcc publish --registry registry acme-json       # copy a library into the registry
+rpp-compiler/build/rppcc withdraw --registry registry acme.json 1.4.0
+```
+
+`publish` checks the library, refuses to overwrite a published version, and compares the exported interface with the previous version: removed or changed parts need a new major version, new parts a new minor version. [Registry rules](R%2B%2B%20Packages%20and%20Projects.md#5a-the-registry-in-the-file-system), [example with a lock file](conformance/ch11_projects/runtime/l02_registry)
 
 ## Build a native executable
 
@@ -105,6 +126,7 @@ The forms below use `rppc` as shorthand for `cargo run --manifest-path rppc/Carg
 | `rppc pre SYMBOLS FILE` / `rppc ast SYMBOLS FILE` | Show preprocessed source or the syntax tree for the given symbols. |
 | `rppc project [--release] STD PATH` / `rppc defs [--release] STD PATH` | Inspect project loading or declaration tables. |
 | `rppc diagnose STD PATH` | Print diagnostics in the format used for comparison with `rppcc`. |
+| `rppc lock [--stdout] PROJECT` | Resolve the registry dependencies and write `rpp.lock` (or print it). |
 
 The self-hosting compiler `rppcc` (built by the bootstrap script) accepts the inspection commands above with the same arguments and adds these:
 
@@ -114,6 +136,8 @@ The self-hosting compiler `rppcc` (built by the bootstrap script) accepts the in
 | `rppcc run [--release] PATH [-- ARGS…]` | Build into a temporary directory and run the executable with the console attached. |
 | `rppcc test [-v] [--check-only] [ROOT]` | Run the conformance suite like `rppc test`; runtime cases are built natively and run in debug and release mode. `--check-only` skips them. |
 | `rppcc c [--release] STD PATH OUTPUT.c` | Generate C without compiling it. |
+| `rppcc publish [--registry DIR] PROJECT` | Publish a library to a registry directory after checking it and its version number. |
+| `rppcc withdraw [--registry DIR] NAME VERSION` | Mark a published version as withdrawn. |
 
 Use `rppc --help` or `rppcc --help` to list the commands. With `rppcc diagnose --timings STD PATH`, the compiler also reports how long project loading and each checking phase took. Existing scripts can still use the legacy German spellings.
 
@@ -137,7 +161,7 @@ After changing the compiler or the standard library, refresh the bootstrap seed 
 rpp-compiler/build/rppcc c --release rppc/std rpp-compiler rpp-compiler/bootstrap/rppcc.c
 ```
 
-The [CI workflow](.github/workflows/ci.yml) runs on Linux and Windows for pull requests and pushes to `master`. It also checks the English command-line output and compares native executables built with GCC or MSVC against the interpreter. A separate job uses no Rust: it bootstraps `rppcc` from the C seed, checks the fixpoint and that the seed is current, and runs `rppcc test`. After a debug build, use `python .github/scripts/check.py cli` and `python .github/scripts/check.py native` to run those checks locally. Run the native check from a Developer Command Prompt on Windows.
+The [CI workflow](.github/workflows/ci.yml) runs on Linux and Windows for pull requests and pushes to `master`. It also checks the English command-line output and compares native executables built with GCC or MSVC against the interpreter. A separate job uses no Rust: it bootstraps `rppcc` from the C seed, checks the fixpoint and that the seed is current, and runs `rppcc test`. The same job checks `publish`, `withdraw` and `rpp.lock` with `python .github/scripts/check.py registry`. After a debug build, use `python .github/scripts/check.py cli` and `python .github/scripts/check.py native` to run those checks locally. Run the native check from a Developer Command Prompt on Windows.
 
 The separate [Compiler bootstrap workflow](.github/workflows/bootstrap.yml) is run manually from the Actions tab. It builds two native `rppcc` generations and verifies that the second and third C output files are byte-for-byte identical. To run it locally, first build `rppc` with `cargo build --locked --release --manifest-path rppc/Cargo.toml`, then run `python .github/scripts/check.py bootstrap` with the same C compiler prerequisites.
 

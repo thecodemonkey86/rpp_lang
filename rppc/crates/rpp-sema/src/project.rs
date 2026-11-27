@@ -1,11 +1,13 @@
 //! Projekte und Quelldateien laden (Kapitel 11): `rpp.yaml`, Quellordner,
-//! Abhängigkeiten, die Standardbibliothek. Prüft R-11.2, R-11.13, R-11.15 bis R-11.18.
+//! Abhängigkeiten, die Standardbibliothek. Prüft R-11.2, R-11.13, R-11.15 bis R-11.20
+//! und R-11.26 bis R-11.30 (Abhängigkeiten aus dem Verzeichnis, `rpp.lock`).
 
+use crate::registry::{self, LockEntry, Version};
 use crate::yaml::{self, Node, Value};
 use crate::Diag;
 use rpp_syntax::ast::CompilationUnit;
 use rpp_syntax::Span;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +29,8 @@ pub struct Project {
     /// Datei mit `main` laut `rpp.yaml`
     pub main_file: Option<PathBuf>,
     pub yaml: Option<PathBuf>,
+    /// gewählte Version einer Bibliothek aus dem Verzeichnis (R-11.19)
+    pub registry_version: Option<Version>,
 }
 
 #[derive(Debug)]
@@ -51,7 +55,41 @@ pub struct Workspace {
     pub diags: Vec<Diag>,
     /// Releasemodus: Symbol `release` statt `debug` (R-11.24)
     pub release: bool,
+    /// Bibliotheken aus dem Verzeichnis mit Version und Prüfsumme, nach Namen sortiert
+    pub resolved: Vec<(String, Version, String)>,
+    /// Anforderungen `version` aus dem Programm und seinen lokalen Abhängigkeiten
+    reqs: Vec<Req>,
+    /// Plätze in `Project::deps`, die auf eine Bibliothek aus dem Verzeichnis zeigen
+    links: Vec<Link>,
+    /// `registry` aus der `rpp.yaml` des Programms: Datei, Zeile, Pfad (None: kein Text)
+    registry_entry: Option<(PathBuf, u32, Option<String>)>,
+    /// lädt gerade eine Bibliothek aus dem Verzeichnis
+    in_registry: bool,
+    expect_version: Option<Version>,
+    /// `lock`: ohne vorhandene Sperrdatei auflösen (R-11.30)
+    ignore_lock: bool,
 }
+
+/// Eine Abhängigkeit mit `version` (R-11.15, R-11.19)
+#[derive(Debug, Clone)]
+struct Req {
+    yaml: PathBuf,
+    line: u32,
+    name: String,
+    min: Version,
+}
+
+#[derive(Debug)]
+struct Link {
+    project: usize,
+    slot: usize,
+    name: String,
+    yaml: PathBuf,
+    line: u32,
+}
+
+/// Platzhalter in `Project::deps`, bis die Bibliothek aus dem Verzeichnis geladen ist
+const PENDING: usize = usize::MAX;
 
 const KEYS: &[&str] = &["name", "version", "type", "main", "sources", "dependencies", "registry", "symbols"];
 const REQUIRED: &[&str] = &["name", "version", "type", "sources"];
@@ -145,11 +183,21 @@ impl Workspace {
 
     /// Wie `load`, im Debug- oder Releasemodus (bedingte Kompilierung, R-11.24).
     pub fn load_mode(input: &Path, std_dir: &Path, release: bool) -> Workspace {
-        let mut ws = Workspace { release, ..Workspace::default() };
+        Workspace::load_with(input, std_dir, release, false)
+    }
+
+    /// Für den Befehl `lock`: löst ohne die vorhandene `rpp.lock` auf (R-11.30).
+    pub fn load_for_lock(input: &Path, std_dir: &Path) -> Workspace {
+        Workspace::load_with(input, std_dir, false, true)
+    }
+
+    fn load_with(input: &Path, std_dir: &Path, release: bool, ignore_lock: bool) -> Workspace {
+        let mut ws = Workspace { release, ignore_lock, ..Workspace::default() };
         ws.load_std(std_dir);
         if input.is_dir() {
             let mut stack = Vec::new();
             ws.load_project(input, &mut stack, None);
+            ws.resolve();
         } else {
             let idx = ws.projects.len();
             ws.projects.push(Project {
@@ -161,6 +209,7 @@ impl Workspace {
                 single_file: true,
                 main_file: None,
                 yaml: None,
+                registry_version: None,
             });
             ws.parse_file(input, idx, None, &[]);
             let has_main = ws.files.last().is_some_and(|f| {
@@ -185,6 +234,7 @@ impl Workspace {
             single_file: false,
             main_file: None,
             yaml: None,
+            registry_version: None,
         });
         self.load_sources(&canonical(std_dir), idx, &[]);
     }
@@ -250,6 +300,17 @@ impl Workspace {
                 self.diag(&yaml_path, 1, "R-11.13", format!("Missing entry '{key}'"));
             }
         }
+        if let Some(v) = doc.get("version") {
+            match v.as_str().and_then(Version::parse) {
+                None => self.diag(&yaml_path, v.line, "R-11.27", "version must have the form MAJOR.MINOR.PATCH"),
+                Some(found) => {
+                    if let Some(want) = self.expect_version.filter(|w| *w != found) {
+                        self.diag(&yaml_path, v.line, "R-11.26", format!(
+                            "The library in {} has version {found}, expected {want}", slash_path(&dir)));
+                    }
+                }
+            }
+        }
         let name_node = doc.get("name");
         let name = name_node.and_then(Node::as_str).unwrap_or("").to_string();
         let name_line = name_node.map_or(1, |n| n.line);
@@ -287,7 +348,12 @@ impl Workspace {
             single_file: false,
             main_file,
             yaml: Some(yaml_path.clone()),
+            registry_version: None,
         });
+        if idx == 1 && !self.in_registry {
+            self.registry_entry =
+                doc.get("registry").map(|r| (yaml_path.clone(), r.line, r.as_str().map(str::to_string)));
+        }
 
         stack.push(dir.clone());
         let mut deps = Vec::new();
@@ -297,6 +363,10 @@ impl Workspace {
             }
             for dep in list.as_list() {
                 let dep_name = dep.get("name").and_then(Node::as_str).unwrap_or("").to_string();
+                if self.in_registry && dep.get("path").is_some() {
+                    // schon bei der Auflösung gemeldet (R-11.27)
+                    continue;
+                }
                 if let Some(path) = dep.get("path") {
                     let Some(rel) = path.as_str() else {
                         self.diag(&yaml_path, path.line, "R-11.15", "path must be a file path");
@@ -313,9 +383,19 @@ impl Workspace {
                         }
                         deps.push(d);
                     }
-                } else if dep.get("version").is_some() {
-                    self.diag(&yaml_path, dep.line, "R-11.15", format!(
-                        "'{dep_name}': Registry dependencies are not supported yet"));
+                } else if let Some(v) = dep.get("version") {
+                    match v.as_str().and_then(Version::parse_min) {
+                        Some(min) => {
+                            if !self.in_registry {
+                                self.reqs.push(Req { yaml: yaml_path.clone(), line: v.line, name: dep_name.clone(), min });
+                            }
+                            self.links.push(Link { project: idx, slot: deps.len(), name: dep_name, yaml: yaml_path.clone(), line: v.line });
+                            deps.push(PENDING);
+                        }
+                        // im Verzeichnis schon bei der Auflösung gemeldet
+                        None if self.in_registry => {}
+                        None => self.diag(&yaml_path, v.line, "R-11.27", format!("Invalid version in dependency '{dep_name}'")),
+                    }
                 } else {
                     self.diag(&yaml_path, dep.line, "R-11.15", "A dependency requires path or version");
                 }
@@ -358,6 +438,282 @@ impl Workspace {
             }
         }
         Some(idx)
+    }
+}
+
+impl Workspace {
+    /// Das Verzeichnis des Programms (R-11.26); meldet einen Fehler, wenn es fehlt.
+    fn registry_dir(&mut self, req: &Req) -> Option<PathBuf> {
+        match self.registry_entry.clone() {
+            Some((yaml, line, Some(text))) => {
+                let d = self.projects[1].dir.join(&text);
+                if d.is_dir() {
+                    return Some(canonical(&d));
+                }
+                self.diag(&yaml, line, "R-11.26", format!("Registry directory {} does not exist", slash_path(&canonical(&d))));
+                None
+            }
+            Some((yaml, line, None)) => {
+                self.diag(&yaml, line, "R-11.26", "registry must be a directory path");
+                None
+            }
+            None => match std::env::var("RPP_REGISTRY") {
+                Ok(v) if !v.is_empty() => {
+                    let d = PathBuf::from(&v);
+                    if d.is_dir() {
+                        return Some(canonical(&d));
+                    }
+                    self.diag(&req.yaml, req.line, "R-11.26", format!(
+                        "Registry directory {} (RPP_REGISTRY) does not exist", slash_path(&canonical(&d))));
+                    None
+                }
+                _ => {
+                    self.diag(&req.yaml, req.line, "R-11.26",
+                        "No registry: set registry in rpp.yaml or the environment variable RPP_REGISTRY");
+                    None
+                }
+            },
+        }
+    }
+
+    /// Wählt die Bibliotheken aus dem Verzeichnis (R-11.19, R-11.28), prüft `rpp.lock`
+    /// (R-11.20, R-11.30), lädt die gewählten Versionen und verknüpft die Abhängigkeiten.
+    fn resolve(&mut self) {
+        if self.projects.len() < 2 {
+            return;
+        }
+        let lock_path = self.projects[1].dir.join("rpp.lock");
+        let mut lock: Option<Vec<LockEntry>> = None;
+        if !self.ignore_lock && lock_path.is_file() {
+            match std::fs::read_to_string(&lock_path) {
+                Ok(text) => match registry::parse_lock(&text) {
+                    Ok(entries) => lock = Some(entries),
+                    Err((line, message)) => {
+                        self.diag(&lock_path, line, "R-11.20", message);
+                        self.drop_pending();
+                        return;
+                    }
+                },
+                Err(e) => {
+                    self.diag(&lock_path, 1, "R-11.20", format!("Could not read rpp.lock: {e}"));
+                    self.drop_pending();
+                    return;
+                }
+            }
+        }
+        let mut queue = std::mem::take(&mut self.reqs);
+        let local: HashSet<String> = self.projects.iter().filter(|p| !p.is_std).map(|p| p.name.clone()).collect();
+        let mut reg: Option<PathBuf> = None;
+        let mut reg_failed = false;
+        let mut major: HashMap<String, u64> = HashMap::new();
+        let mut first: HashMap<String, (PathBuf, u32)> = HashMap::new();
+        let mut order: Vec<String> = Vec::new();
+        let mut selected: HashMap<String, Version> = HashMap::new();
+        let mut visited: HashSet<(String, Version)> = HashSet::new();
+        let mut failed: HashSet<(String, Version)> = HashSet::new();
+        // Bibliotheken, die irgendeine Anforderung nennt (auch wenn sie scheitert)
+        let mut requested: HashSet<String> = HashSet::new();
+        let mut qi = 0;
+        while qi < queue.len() {
+            let req = queue[qi].clone();
+            qi += 1;
+            if reg.is_none() {
+                match self.registry_dir(&req) {
+                    Some(d) => reg = Some(d),
+                    None => {
+                        reg_failed = true;
+                        break;
+                    }
+                }
+            }
+            let reg_dir = reg.clone().unwrap();
+            let name = req.name.clone();
+            if name == "rpp" || name.starts_with("rpp.") {
+                self.diag(&req.yaml, req.line, "R-11.17", "The owner name rpp is reserved for the standard library");
+                continue;
+            }
+            if !registry::valid_registry_name(&name) {
+                self.diag(&req.yaml, req.line, "R-11.17", format!("'{name}': a library from the registry is named owner.name"));
+                continue;
+            }
+            if local.contains(&name) {
+                self.diag(&req.yaml, req.line, "R-11.15", format!("'{name}' is both a local dependency and one from the registry"));
+                continue;
+            }
+            requested.insert(name.clone());
+            match major.get(&name) {
+                Some(&m) if m != req.min.0 => {
+                    self.diag(&req.yaml, req.line, "R-11.19", format!("'{name}' is required in major versions {m} and {}", req.min.0));
+                    continue;
+                }
+                Some(_) => {}
+                None => {
+                    major.insert(name.clone(), req.min.0);
+                }
+            }
+            let lib_dir = reg_dir.join(&name);
+            let node = if let Some(entries) = &lock {
+                let Some(e) = entries.iter().find(|e| e.name == name) else {
+                    self.diag(&req.yaml, req.line, "R-11.20", format!("rpp.lock does not list '{name}'; run the lock command"));
+                    continue;
+                };
+                let v = e.version;
+                if v.0 != req.min.0 || v < req.min {
+                    self.diag(&req.yaml, req.line, "R-11.20", format!(
+                        "rpp.lock is out of date: '{name}' {v} does not satisfy {}; run the lock command", req.min));
+                    continue;
+                }
+                if !lib_dir.join(v.to_string()).is_dir() {
+                    self.diag(&req.yaml, req.line, "R-11.26", format!("'{name}' {v} is not in the registry"));
+                    continue;
+                }
+                v
+            } else {
+                if !lib_dir.is_dir() {
+                    self.diag(&req.yaml, req.line, "R-11.26", format!("Library '{name}' is not in the registry"));
+                    continue;
+                }
+                let found = registry::versions(&lib_dir).into_iter().find(|(v, withdrawn)| !withdrawn && v.0 == req.min.0 && *v >= req.min);
+                let Some((v, _)) = found else {
+                    self.diag(&req.yaml, req.line, "R-11.19", format!(
+                        "No version of '{name}' satisfies {} (same major version, not withdrawn)", req.min));
+                    continue;
+                };
+                v
+            };
+            if !first.contains_key(&name) {
+                first.insert(name.clone(), (req.yaml.clone(), req.line));
+                order.push(name.clone());
+            }
+            let sel = selected.entry(name.clone()).or_insert(node);
+            if node > *sel {
+                *sel = node;
+            }
+            if !visited.insert((name.clone(), node)) {
+                continue;
+            }
+            let node_dir = canonical(&lib_dir.join(node.to_string()));
+            let yaml_path = node_dir.join("rpp.yaml");
+            let Ok(text) = std::fs::read_to_string(&yaml_path) else {
+                self.diag(&req.yaml, req.line, "R-11.26", format!("{} does not contain rpp.yaml", slash_path(&node_dir)));
+                failed.insert((name, node));
+                continue;
+            };
+            let doc = match yaml::parse(&text) {
+                Ok(d) => d,
+                Err(e) => {
+                    self.diag(&yaml_path, e.line, "R-11.13", e.message);
+                    failed.insert((name, node));
+                    continue;
+                }
+            };
+            if let Some(list) = doc.get("dependencies") {
+                for dep in list.as_list() {
+                    let dep_name = dep.get("name").and_then(Node::as_str).unwrap_or("").to_string();
+                    if let Some(p) = dep.get("path") {
+                        self.diag(&yaml_path, p.line, "R-11.27", "A library from the registry cannot have path dependencies");
+                    } else if let Some(v) = dep.get("version") {
+                        match v.as_str().and_then(Version::parse_min) {
+                            Some(min) => queue.push(Req { yaml: yaml_path.clone(), line: v.line, name: dep_name, min }),
+                            None => self.diag(&yaml_path, v.line, "R-11.27", format!("Invalid version in dependency '{dep_name}'")),
+                        }
+                    }
+                }
+            }
+        }
+        if let (Some(entries), false) = (&lock, reg_failed) {
+            for e in entries {
+                if !requested.contains(&e.name) {
+                    self.diag(&lock_path, e.line, "R-11.20", format!(
+                        "rpp.lock lists '{}', which is not needed; run the lock command", e.name));
+                }
+            }
+        }
+        let Some(reg_dir) = reg else {
+            self.drop_pending();
+            return;
+        };
+        let mut index: HashMap<String, usize> = HashMap::new();
+        for name in &order {
+            let v = selected[name];
+            if failed.contains(&(name.clone(), v)) {
+                continue;
+            }
+            let dir = reg_dir.join(name).join(v.to_string());
+            let (fy, fl) = first[name].clone();
+            self.in_registry = true;
+            self.expect_version = Some(v);
+            let mut stack = Vec::new();
+            let loaded = self.load_project(&dir, &mut stack, Some((name, &fy, fl)));
+            self.in_registry = false;
+            self.expect_version = None;
+            let Some(i) = loaded else { continue };
+            self.projects[i].registry_version = Some(v);
+            index.insert(name.clone(), i);
+            let pdir = self.projects[i].dir.clone();
+            match registry::checksum(&pdir) {
+                Ok(sum) => {
+                    if let Some(e) = lock.as_ref().and_then(|l| l.iter().find(|e| &e.name == name)) {
+                        if e.checksum != sum {
+                            self.diag(&lock_path, e.checksum_line, "R-11.20", format!(
+                                "The checksum of '{name}' {v} does not match rpp.lock: the library has changed"));
+                        }
+                    }
+                    self.resolved.push((name.clone(), v, sum));
+                }
+                Err(e) => self.diag(&pdir.join("rpp.yaml"), 1, "R-11.29", format!("Could not compute the checksum: {e}")),
+            }
+        }
+        self.resolved.sort_by(|a, b| a.0.cmp(&b.0));
+        let links = std::mem::take(&mut self.links);
+        for l in &links {
+            if let Some(&d) = index.get(&l.name) {
+                self.projects[l.project].deps[l.slot] = d;
+                if self.projects[d].kind != ProjectKind::Library {
+                    self.diag(&l.yaml, l.line, "R-11.15", format!("'{}' is not a library", l.name));
+                }
+            }
+        }
+        // R-11.16 im Verzeichnis: Zyklen über Abhängigkeiten mit version
+        let mut state: HashMap<usize, u8> = HashMap::new();
+        for name in &order {
+            if let Some(&p) = index.get(name) {
+                self.cycles(p, &links, &mut state);
+            }
+        }
+        self.drop_pending();
+    }
+
+    fn cycles(&mut self, p: usize, links: &[Link], state: &mut HashMap<usize, u8>) {
+        if state.get(&p).copied().unwrap_or(0) != 0 {
+            return;
+        }
+        state.insert(p, 1);
+        for slot in 0..self.projects[p].deps.len() {
+            let d = self.projects[p].deps[slot];
+            if d == PENDING || self.projects[d].registry_version.is_none() {
+                continue;
+            }
+            match state.get(&d).copied().unwrap_or(0) {
+                1 => {
+                    if let Some(l) = links.iter().find(|l| l.project == p && l.slot == slot) {
+                        let (yaml, line, name) = (l.yaml.clone(), l.line, l.name.clone());
+                        self.diag(&yaml, line, "R-11.16", format!("Dependency cycle through '{name}'"));
+                    }
+                    self.projects[p].deps[slot] = PENDING;
+                }
+                0 => self.cycles(d, links, state),
+                _ => {}
+            }
+        }
+        state.insert(p, 2);
+    }
+
+    fn drop_pending(&mut self) {
+        self.links.clear();
+        for p in &mut self.projects {
+            p.deps.retain(|&d| d != PENDING);
+        }
     }
 }
 

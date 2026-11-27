@@ -56,7 +56,7 @@ If two names (two `using` lines with the same name) fit on the same level 5, thi
 | `main` | at `executable` | File with `main`, relative to the project directory |
 | `sources` | Yes | List of source folders |
 | `dependencies` | No | List of dependencies (R-11.15) |
-| `registry` | No | Address of own or mirrored directory instead of the central |
+| `registry` | No | Address of own or mirrored directory instead of the central; until the service exists, a directory in the file system relative to the project directory (R-11.26) |
 | `symbols` | No | Specific conditional compilation symbols, per mode: `debug: [ … ]` `release: [ … ]` |
 
 Unknown entries are an error, and the file uses only the YAML forms that are necessary for these entries (mappings, lists, simple values and comments).
@@ -88,6 +88,31 @@ dependencies:
 **R-11.21 (Publishing).** The directory rejects a version if the exported interface (R-11.10) changes incompatiblely from the previous version without increasing the main version, or if new parts are added without a new minor version. Published versions are immutable and are marked as withdrawn at most.
 
 **R-11.22 (Interim representation).** From the source code of a library, the intermediate representation per mode and operating system is created. The directory builds the six standard combinations; if your own icons or missing variants, the compiler builds itself. Generic types of a library are generated from the intermediate representation for new type arguments.
+
+## 5a. The registry in the file system
+
+Until the service for the central registry exists, a registry is a directory in the file system (Implementation Plan, milestone M9). R-11.19 to R-11.21 apply unchanged; R-11.26 to R-11.31 settle what they leave open.
+
+**R-11.26 (Location and layout).** The program, that is the project being compiled, determines which registry applies: the `registry` entry in its `rpp.yaml` (a path relative to the project directory), otherwise the environment variable `RPP_REGISTRY`. It applies to all dependencies with `version`, including those of libraries; `registry` in a library has no effect. Version `v` of the library `owner.name` lives in the directory `owner.name/v` as a project with `rpp.yaml`; `name` and `version` in it must match. A file `owner.name/v.withdrawn` marks the version as withdrawn. A missing registry, library or version is an error at the dependency.
+
+**R-11.27 (Versions and names).** A version has the form `MAJOR.MINOR.PATCH` of decimal numbers without leading zeros and with at most nine digits; this applies to `version` in every `rpp.yaml`. A minimum version in `dependencies` may omit trailing parts: `"1.4"` stands for `1.4.0`, `"1"` for `1.0.0`. Versions are compared part by part as numbers; the major version is the first part. A dependency with `version` names a library `owner.name` of exactly two ASCII identifiers that are not keywords (R-11.17). A library in the registry has no dependencies with `path`.
+
+**R-11.28 (Selection).** A requirement (library, minimum version `m`) points to the smallest version `≥ m` that is not withdrawn and has the same major version as `m`. Starting from the requirements of the program and its local dependencies, the requirements of every version reached this way are followed in the order of the entries (breadth-first); a version that a higher one overrides still contributes its requirements. For each library, the highest version reached is selected (R-11.19). A requirement that names a different major version than the first requirement of the same library is the error. A library cannot be included both locally and from the registry, and cycles are an error in the registry too (R-11.16). The types of the selected libraries are visible only through direct entries (R-11.12).
+
+**R-11.29 (Checksum).** The checksum of a library is computed over its directory. `rpp.yaml` and every file with the extension `.rpp` below it give one line: the SHA-256 checksum of the content as 64 lowercase hex digits, two spaces, the path relative to the directory with `/`, and an LF. Every CR LF in the content counts as LF, so the checksum does not depend on line-ending conversion at checkout. The lines are sorted by path (UTF-8 byte order) and concatenated. The checksum is `sha256:` followed by the SHA-256 checksum of this text. Other files do not count because the compiler does not read them.
+
+**R-11.30 (rpp.lock).** The lock file lies next to the `rpp.yaml` of the program:
+
+```yaml
+libraries:
+  - name: acme.json
+    version: 1.4.0
+    checksum: sha256:…
+```
+
+The `lock` command (`rppc lock PROJECT`, `rppcc lock PROJECT`) selects according to R-11.28 without reading an existing lock file and rewrites it with the entries sorted by name; the same input gives the same file. If an `rpp.lock` exists when compiling, each requirement gets the locked version, even if it has been withdrawn since (R-11.21); it must satisfy the minimum version and have the same major version. Errors are then: a requirement without an entry or with an entry that does not satisfy it; an entry that no requirement names; a checksum that does not match the directory (R-11.20); a lock file that does not have this form. Without `rpp.lock`, selection follows R-11.28. Lock files of libraries are not read.
+
+**R-11.31 (Publishing and withdrawing).** `rppcc publish [--registry DIR] PROJECT` publishes a library to the given registry, otherwise to the one from the project's `registry`, otherwise to the one from `RPP_REGISTRY`. It requires the type `library`, a name `owner.name`, a valid version, no dependency with `path`, and a check without errors; a version that already exists is an error. The exported interface (exported types with their `public` and `protected` parts, R-11.10) is compared with the next lower published version. If parts are removed or changed, the major version must increase; if parts are only added, at least the minor version (R-11.21). `rpp.yaml` and the source files that the compiler loads are copied. `rppcc withdraw [--registry DIR] NAME VERSION` creates the marker from R-11.26.
 
 ## 6. Conditional Compilation
 
@@ -129,10 +154,18 @@ symbols:
 
 ## 8. Conformance tests
 
-The test programs are in `conformance/ch11_projects/` Because Chapter 11 is mainly about projects and files, many tests consist of multiple files; so far, there are only single file tests for name resolution and for files. `using`.
+The test programs are in `conformance/ch11_projects/`. Because chapter 11 is mainly about projects and files, many tests consist of multiple files. The registry tests (section 5a) bring their registry along as a `registry/` directory inside the test directory.
 
 | Rules | Accepted | Rejected |
 |---|---|---|
 | R-11.4, R-11.7, R-11.8 | `a01_using.rpp` | `n01_using_conflict.rpp`, `n02_alias_shadowed.rpp` |
 | R-11.11 | `a02_export.rpp` | `n03_export_with_internal_type.rpp` |
 | R-11.14 | – | `n04_two_main_functions.rpp` |
+| R-11.19, R-11.20, R-11.26, R-11.28 | `l02_registry` (runtime: the highest minimum version wins, with `rpp.lock`) | `n14_major_versions`, `n16_no_matching_version` |
+| R-11.21, R-11.28, R-11.30 | `l03_withdrawn`, `l04_locked_withdrawn` (runtime) | `n18_stale_lock_file`, `n19_unneeded_entry` |
+| R-11.20, R-11.29 | – | `n17_checksum` |
+| R-11.26 | – | `n15_unknown_library` |
+| R-11.27 | – | `n20_incomplete_version`, `n21_path_in_registry` |
+| R-11.16 and R-11.12 in the registry | – | `n22_cycle_in_registry`, `n23_direct_dependencies_only` |
+
+`publish` and `withdraw` (R-11.31) are commands, not programs; `.github/scripts/check.py registry` checks them: publishing with the rules for major and minor versions, immutable versions, withdrawing, a reproducible `rpp.lock` with which a withdrawn version still builds, and detecting a changed library.

@@ -1,0 +1,9 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.27
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile (eine Version hat drei Teile).
+name: app
+version: 1.0   # FEHLER
+type: executable
+main: src/main.rpp
+sources:
+  - src

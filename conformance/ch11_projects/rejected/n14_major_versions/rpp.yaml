@@ -1,0 +1,16 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.19
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile in registry/acme.b/1.0.0/rpp.yaml
+# (acme.b verlangt acme.a in Hauptversion 2, das Programm in Hauptversion 1).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+registry: registry
+dependencies:
+  - name: acme.a
+    version: "1.0"
+  - name: acme.b
+    version: "1.0"

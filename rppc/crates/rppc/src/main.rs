@@ -16,6 +16,9 @@
 //! Meilenstein M4:
 //!   rppc run [--release] [--check-invariants] PATH [-- ARGS…]   Programm ausführen (Debug-Interpreter)
 //!
+//! Meilenstein M9:
+//!   rppc lock [--stdout] PROJEKT          Abhängigkeiten aus dem Verzeichnis auflösen, rpp.lock schreiben
+//!
 //! WURZEL ist das Verzeichnis, das `rpp-grammar/` und `conformance/` enthält.
 
 mod conftest;
@@ -30,6 +33,7 @@ const USAGE: &str = "\
 Usage:
   rppc check PATH
   rppc run [--release] [--check-invariants] PATH [-- ARGS...]
+  rppc lock [--stdout] PROJECT
   rppc parse [--symbols a,b,...] FILE...
   rppc tokens FILE
   rppc pre SYMBOLS FILE
@@ -206,6 +210,13 @@ fn run() -> ExitCode {
             }
             None => usage(),
         },
+        Some("lock") => {
+            let stdout = args.iter().any(|a| a == "--stdout");
+            match args.iter().skip(1).find(|a| *a != "--stdout") {
+                Some(p) => lock(std::path::Path::new(p), stdout),
+                None => usage(),
+            }
+        }
         Some("check") => match args.get(1) {
             Some(p) => conftest::check(&PathBuf::from(p)),
             None => usage(),
@@ -256,6 +267,33 @@ fn print_diags(input: &std::path::Path, diags: Vec<rpp_sema::Diag>) {
     }
 }
 
+/// `lock`: löst die Abhängigkeiten aus dem Verzeichnis ohne die vorhandene Sperrdatei auf
+/// und schreibt `rpp.lock` neu (R-11.30); mit `--stdout` nur ausgeben.
+fn lock(input: &std::path::Path, stdout: bool) -> ExitCode {
+    use rpp_sema::project::Workspace;
+    if !input.join("rpp.yaml").is_file() {
+        eprintln!("lock requires a project directory with rpp.yaml");
+        return ExitCode::from(2);
+    }
+    let ws = Workspace::load_for_lock(input, &conftest::std_dir());
+    if !ws.diags.is_empty() {
+        print_diags(input, ws.diags);
+        return ExitCode::from(1);
+    }
+    let text = rpp_sema::registry::format_lock(&ws.resolved);
+    if stdout {
+        print!("{text}");
+        return ExitCode::SUCCESS;
+    }
+    let path = input.join("rpp.lock");
+    if let Err(e) = std::fs::write(&path, text) {
+        eprintln!("Could not write {}: {e}", path.display());
+        return ExitCode::from(1);
+    }
+    println!("rpp.lock: {} libraries from the registry", ws.resolved.len());
+    ExitCode::SUCCESS
+}
+
 /// Textform eines geladenen Arbeitsbereichs (Vergleich mit `rppcc project`, Meilenstein M6).
 fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) -> String {
     use rpp_sema::project::{slash_path, ProjectKind, Workspace};
@@ -271,10 +309,16 @@ fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) ->
         if p.single_file {
             flags.push_str(" einzeldatei");
         }
+        if p.registry_version.is_some() {
+            flags.push_str(" verzeichnis");
+        }
         let dir = if p.single_file { input_dir(input) } else { p.dir.clone() };
         let _ = writeln!(out, "projekt {i} {} {kind}{flags} {}", p.name, slash_path(&dir));
         if let Some(m) = &p.main_file {
             let _ = writeln!(out, "  main {}", display_path(m, &dir));
+        }
+        if let Some(v) = &p.registry_version {
+            let _ = writeln!(out, "  version {v}");
         }
         if !p.deps.is_empty() {
             let deps: Vec<String> = p.deps.iter().map(|d| d.to_string()).collect();
@@ -306,6 +350,9 @@ fn projekt(input: &std::path::Path, std_dir: &std::path::Path, release: bool) ->
             if types.is_empty() { "-".to_string() } else { types.join(",") },
             if has_main { " main" } else { "" }
         );
+    }
+    for (name, version, sum) in &ws.resolved {
+        let _ = writeln!(out, "gewählt {name} {version} {sum}");
     }
     let base = input_dir(input);
     for d in &ws.diags {

@@ -1,0 +1,7 @@
+package acme.b;
+export class Info {
+public:
+    static string version() {
+        return "1.0.0";
+    }
+}

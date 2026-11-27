@@ -1,0 +1,9 @@
+# rpp.lock: exact versions and checksums of the libraries from the registry (R-11.20).
+# Written by the lock command; do not edit.
+libraries:
+  - name: acme.geo
+    version: 1.0.0
+    checksum: sha256:5059c5fec1fdb12734788c2ef4451875558efa99e961093fa0a5d06609aa8302
+  - name: acme.text
+    version: 1.2.0
+    checksum: sha256:4368a8879284f0a4d45e8c9f70f9e788b11b520c7acbd06128a4d501ecee6424

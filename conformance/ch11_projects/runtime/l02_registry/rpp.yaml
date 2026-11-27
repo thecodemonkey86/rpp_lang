@@ -1,0 +1,17 @@
+# Konformitätstest Kapitel 11 – Laufzeit.
+# Regel: R-11.19, R-11.20, R-11.26, R-11.28
+# Erwartet: Ausgabe "1.2.0\nPOINT!"; Exit-Code 0
+# acme.geo 1.0.0 verlangt acme.text 1.2; gewählt wird die höchste Mindestversion (1.2.0),
+# nicht die kleinste passende zur eigenen Anforderung 1.1. rpp.lock hält beides fest.
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+registry: registry
+dependencies:
+  - name: acme.text
+    version: "1.1"
+  - name: acme.geo
+    version: "1"

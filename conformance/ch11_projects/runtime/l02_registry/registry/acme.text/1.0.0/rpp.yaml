@@ -1,0 +1,5 @@
+name: acme.text
+version: 1.0.0
+type: library
+sources:
+  - src

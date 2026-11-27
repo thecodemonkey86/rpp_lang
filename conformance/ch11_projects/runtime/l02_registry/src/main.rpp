@@ -1,0 +1,8 @@
+using acme.text.Greeting;
+using acme.geo.Point;
+
+i32 main(string[] args) {
+    print(Greeting::version());
+    print(Point::describe());
+    return 0;
+}

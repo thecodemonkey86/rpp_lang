@@ -68,3 +68,11 @@ jobs:
             & ./rpp-compiler/build/rppcc test
           }
           exit $LASTEXITCODE
+      - name: Check publish, withdraw and rpp.lock with a registry in the file system
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            & ./.github/scripts/enter-msvc.ps1
+          }
+          python .github/scripts/check.py registry
+          exit $LASTEXITCODE

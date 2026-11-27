@@ -2,9 +2,9 @@
 
 [English](R%2B%2B%20Standard%20Library.md)
 
-Stand: 26.11.2026, Entwurf 0.9. Dieses Dokument füllt Kapitel 13 des „R++ Spezifikationsgerüsts“ mit einem **ersten Schnitt**: genau dem, was ein Compiler für R++ braucht, der in R++ geschrieben ist und sich selbst übersetzt (Abschnitte 2 bis 7). Abschnitt 9 beschreibt den weiteren Ausbau. Die Abschnitte 10 bis 17 legen `rpp.random`, die Vektor-Algorithmen, `rpp.math`, die Text- und Datei-Hilfen, `Deque`, `getOrPut`, `rpp.json` und synchrone Prozesse (`rpp.process`) fest.
+Stand: 26.11.2026, Entwurf 0.10. Dieses Dokument füllt Kapitel 13 des „R++ Spezifikationsgerüsts“ mit einem **ersten Schnitt**: genau dem, was ein Compiler für R++ braucht, der in R++ geschrieben ist und sich selbst übersetzt (Abschnitte 2 bis 7). Abschnitt 9 beschreibt den weiteren Ausbau. Die Abschnitte 10 bis 18 legen `rpp.random`, die Vektor-Algorithmen, `rpp.math`, die Text- und Datei-Hilfen, `Deque`, `getOrPut`, `rpp.json`, synchrone Prozesse (`rpp.process`) und SHA-256 (`rpp.hash`) fest.
 
-Normativ sind in diesem Entwurf die Grundsätze (Abschnitt 1), die Teile, auf die sich andere Kapitel stützen (`Exception`, `Equatable`, `Comparable`, `Hashable`, `Iterable`), und die Ausbau-Pakete in den Abschnitten 10 bis 17. Die übrigen Schnittstellen sind ein Arbeitsstand: Die Bibliotheken unter `rpp` bleiben bis zum Abschluss der Selbstübersetzung auf Version 0.x und dürfen sich ändern.
+Normativ sind in diesem Entwurf die Grundsätze (Abschnitt 1), die Teile, auf die sich andere Kapitel stützen (`Exception`, `Equatable`, `Comparable`, `Hashable`, `Iterable`), und die Ausbau-Pakete in den Abschnitten 10 bis 18. Die übrigen Schnittstellen sind ein Arbeitsstand: Die Bibliotheken unter `rpp` bleiben bis zum Abschluss der Selbstübersetzung auf Version 0.x und dürfen sich ändern.
 
 Grundsätze, die beim Schreiben zusätzlich festgelegt werden mussten, stehen in Abschnitt 0; sie sind am 21.11.2026 alle angenommen worden.
 
@@ -330,7 +330,7 @@ Der erste Schnitt bleibt unverändert, bis der Compiler sich selbst übersetzt. 
 | B | `rpp.json` | Typisierter Baum, `parse` und `stringify`, Parsefehler mit Zeile und Spalte (Abschnitt 16, **festgelegt**). Offen bleibt der Pull-Parser. | Go `encoding/json`, Rust `serde_json` |
 | B | `rpp.time` | `Duration`, monotone `Instant` (Ausbau von `ElapsedTimer`) | Rust `std::time`, Java `java.time` |
 | B | `rpp.encoding` | Base64, Hex, UTF-16 | Go, Rust |
-| B | `rpp.hash` | SHA-256 (wird für die Prüfsummen in `rpp.lock` gebraucht, Designentscheidungen 13b) | Rust `sha2` |
+| B | `rpp.hash` | SHA-256 für die Prüfsummen in `rpp.lock` (Abschnitt 18, **festgelegt**, M9); offen: weitere Verfahren | Rust `sha2`, Go `crypto/sha256` |
 | C | `rpp.sync` | Channels; Werte wandern per `own` durch den Channel | Go, Rust |
 | A | `rpp.process` | synchrones `Process::run` mit Ein- und Ausgabe als Text (Abschnitt 17, **festgelegt**, gebraucht für `rppcc build` und `rppcc test`, M8) | Go `os/exec`, Rust `std::process` |
 | C | `rpp.process` (Ausbau), `rpp.net` | nebenläufige Subprozesse mit Strömen; HTTP-Client (für das zentrale Verzeichnis) | Go `os/exec`, Rust `reqwest` |
@@ -744,3 +744,23 @@ public:
 **R-13.44 (Programmpfad).** `rpp.env.Env` erhält `static string executablePath()`: den absoluten Pfad des laufenden Programms mit `/` als Trenner (R-13.20). Im Debugmodus mit Interpreter ist das der Interpreter, im Releasemodus das übersetzte Programm.
 
 **R-13.45 (Verzeichnis entfernen).** `rpp.io.Dir` erhält `static void removeAll(string path)`: Es entfernt das Verzeichnis `path` mit seinem ganzen Inhalt. Symbolische Links und Verzeichnisverweise im Baum werden selbst entfernt, ihr Ziel bleibt unberührt. Ist `path` kein Verzeichnis (fehlt, ist eine Datei oder ein Verweis) oder lässt sich etwas nicht entfernen, wirft `removeAll` eine `IOException` mit dem Pfad.
+
+## 18. rpp.hash: SHA-256 (Ausbau)
+
+Die Prüfsummen der Sperrdatei (Kapitel 11, R-11.29) brauchen SHA-256 (Implementierungsplan, M9). Die Klasse ist in R++ geschrieben, nicht eingebaut: Die 32-Bit-Wörter liegen in `ui64` und werden nach jeder Operation auf 32 Bit maskiert, sodass nie ein Überlauf entsteht (R-4.14) und beide Modi gleich rechnen.
+
+**R-13.46 (SHA-256).** `rpp.hash` enthält:
+
+```
+export class Sha256 {
+public:
+    constructor();
+    void update(Slice<byte> data) mut;
+    void updateText(string text) mut;
+    nodiscard string finishHex() mut;
+    static string hex(Slice<byte> data);
+    static string hexText(string text);
+}
+```
+
+`update` hängt Bytes an die Eingabe an, `updateText` die UTF-8-Darstellung eines Strings; beide dürfen beliebig oft und gemischt aufgerufen werden. `finishHex` schließt ab und liefert die Prüfsumme nach FIPS 180-4 als 64 Hexziffern in Kleinbuchstaben. Ein weiterer Aufruf von `update`, `updateText` oder `finishHex` danach ist ein Programmfehler (`fail`). `hex` und `hexText` rechnen die Prüfsumme in einem Schritt.

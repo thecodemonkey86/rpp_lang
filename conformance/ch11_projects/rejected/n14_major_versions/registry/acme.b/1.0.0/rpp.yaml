@@ -1,0 +1,8 @@
+name: acme.b
+version: 1.0.0
+type: library
+sources:
+  - src
+dependencies:
+  - name: acme.a
+    version: "2.0"   # FEHLER

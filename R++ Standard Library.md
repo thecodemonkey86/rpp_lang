@@ -2,9 +2,9 @@
 
 [Deutsch](R%2B%2B%20Standard%20Library.de.md)
 
-As of 26.11.2026, Draft 0.9. This document fills chapter 13 of the R++ Specification Outline with a **first cut**: exactly what a compiler for R++ needs, written in R++ and self-translating (sections 2 to 7). Section 9 describes the further expansion. Sections 10 to 17 specify `rpp.random`, the vector algorithms, `rpp.math`, the text and file aids, `Deque`, `getOrPut`, `rpp.json` and synchronous processes (`rpp.process`).
+As of 26.11.2026, Draft 0.10. This document fills chapter 13 of the R++ Specification Outline with a **first cut**: exactly what a compiler for R++ needs, written in R++ and self-translating (sections 2 to 7). Section 9 describes the further expansion. Sections 10 to 18 specify `rpp.random`, the vector algorithms, `rpp.math`, the text and file aids, `Deque`, `getOrPut`, `rpp.json`, synchronous processes (`rpp.process`) and SHA-256 (`rpp.hash`).
 
-Normative in this draft are the principles (section 1), the parts on which other chapters are based (`Exception`, `Equatable`, `Comparable`, `Hashable`, `Iterable`), and the expansion packages in sections 10 to 17. The other interfaces are a work status: The libraries under `rpp` remain on version 0.x until completion of the self-translation and may change.
+Normative in this draft are the principles (section 1), the parts on which other chapters are based (`Exception`, `Equatable`, `Comparable`, `Hashable`, `Iterable`), and the expansion packages in sections 10 to 18. The other interfaces are a work status: The libraries under `rpp` remain on version 0.x until completion of the self-translation and may change.
 
 Principles that had to be additionally established in writing are in Section 0; they were all adopted on 21.11.2026.
 
@@ -27,7 +27,7 @@ Principles that had to be additionally established in writing are in Section 0; 
 
 ## 1. Principles
 
-**R-13.1 (Construction).** The standard library consists of the libraries in Sections 2 to 7 and the expansion libraries in Sections 10 to 17. They are under the reserved owner `rpp` (Design Decisions, Section 13b); no one else can publish at `rpp`.
+**R-13.1 (Construction).** The standard library consists of the libraries in Sections 2 to 7 and the expansion libraries in Sections 10 to 18. They are under the reserved owner `rpp` (Design Decisions, Section 13b); no one else can publish at `rpp`.
 
 **R-13.2 (Version).** Until a compiler written in R++ translates itself, the libraries carry versions 0.x under `rpp`. Their interfaces may change during this time without a new main version.
 
@@ -330,7 +330,7 @@ The first cut remains unchanged until the compiler translates itself, and the li
 | B | `rpp.json` | Typical tree, `parse` and `stringify`, parse error with row and column (section 16, **set**). | Go `encoding/json`, Rust `serde_json` |
 | B | `rpp.time` | `Duration` monotone `Instant` (upgrading of `ElapsedTimer`) | Rust `std::time`, Java `java.time` |
 | B | `rpp.encoding` | Base64, Hex, UTF-16 | Go, Rust |
-| B | `rpp.hash` | SHA-256 (used for the checksums in `rpp.lock`, Design Decisions 13b) | Rust `sha2` |
+| B | `rpp.hash` | SHA-256 for the checksums in `rpp.lock` (section 18, **specified**, M9); open: further algorithms | Rust `sha2`, Go `crypto/sha256` |
 | C | `rpp.sync` | Channels; Values wander per `own` through the channel | Go, Rust |
 | A | `rpp.process` | synchronous `Process::run` with input and output as text (section 17, **defined**, used for `rppcc build` and `rppcc test`, M8) | Go `os/exec`, Rust `std::process` |
 | C | `rpp.process` (upgrading), `rpp.net` | concurrent subprocesses with streams; HTTP client (for the central directory) | Go `os/exec`, Rust `reqwest` |
@@ -744,3 +744,23 @@ public:
 **R-13.44 (Program path).** `rpp.env.Env` receives `static string executablePath()`: the absolute path of the running program with `/` as separator (R-13.20).In debug mode with interpreter, this is the interpreter, in release mode the translated program.
 
 **R-13.45 (Remove the list).** `rpp.io.Dir` receives `static void removeAll(string path)`: It removes the directory `path` with all its contents. Symbolic links and directory references in the tree are themselves removed, their destination remains untouched. If `path` there is no directory (is missing, is a file or a reference) or cannot be removed, `removeAll` throws a `IOException` with the path.
+
+## 18. rpp.hash: SHA-256 (extension)
+
+The checksums of the lock file (chapter 11, R-11.29) need SHA-256 (Implementation Plan, M9). The class is written in R++, not built in: the 32-bit words are held in `ui64` and masked to 32 bits after every operation, so no overflow ever occurs (R-4.14) and both modes compute the same result.
+
+**R-13.46 (SHA-256).** `rpp.hash` contains:
+
+```
+export class Sha256 {
+public:
+    constructor();
+    void update(Slice<byte> data) mut;
+    void updateText(string text) mut;
+    nodiscard string finishHex() mut;
+    static string hex(Slice<byte> data);
+    static string hexText(string text);
+}
+```
+
+`update` appends bytes to the input, `updateText` the UTF-8 encoding of a string; both may be called any number of times and mixed. `finishHex` finishes and returns the checksum according to FIPS 180-4 as 64 lowercase hex digits. Calling `update`, `updateText` or `finishHex` again afterwards is a program error (`fail`). `hex` and `hexText` compute the checksum in one step.

@@ -1,0 +1,10 @@
+package acme.text;
+export class Greeting {
+public:
+    static string version() {
+        return "1.3.0";
+    }
+    static string shout(string s) {
+        return s + "!";
+    }
+}

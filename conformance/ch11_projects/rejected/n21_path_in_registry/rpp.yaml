@@ -1,0 +1,14 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.27
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile in registry/acme.a/1.0.0/rpp.yaml
+# (eine Bibliothek im Verzeichnis hat keine Abhängigkeiten mit path).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+registry: registry
+dependencies:
+  - name: acme.a
+    version: "1.0"

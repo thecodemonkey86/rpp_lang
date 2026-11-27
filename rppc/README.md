@@ -67,6 +67,7 @@ cargo run -- ast debug,linux FILE.rpp         # Print the syntax tree
 cargo run -- project std PATH                 # List projects, files, and diagnostics. Place --release before std.
 cargo run -- defs std PATH                    # Print declaration tables and declaration diagnostics
 cargo run -- diagnose std PATH                # Print all diagnostics, including warnings and rule references
+cargo run -- lock PROJECT                     # Resolve registry dependencies and write rpp.lock (--stdout: print only)
 ```
 
 A message identifies the violated rule and, where it helps, the rules that justify the violation:

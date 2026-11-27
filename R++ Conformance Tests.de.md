@@ -82,7 +82,7 @@ Eine Implementierung, die nur einen Modus anbietet, ist für diesen Modus konfor
 | `rppc test` (erste Implementierung, ab Meilenstein M2) | übersetzen oder ablehnen nach R-14.7: akzeptierte und Laufzeittests ohne Fehler und mit Warnungen genau in den `WARNUNG`-Zeilen; abgelehnte nur mit Fehlern in der markierten Zeile, darunter einer der erwarteten Regel (V-14.2). Laufzeittests führt der Interpreter in beiden Modi aus und vergleicht Ausgabe, Exit-Code und Fehlerausgabe (ab M4). |
 | `rppcc test` (R++-Compiler in R++, ab Meilenstein M8) | dasselbe wie `rppc test` mit demselben Urteil je Test; Laufzeittests werden in beiden Modi zu nativen Programmen übersetzt (C-Codegenerator und C-Compiler) und in einem frischen, leeren Arbeitsverzeichnis ausgeführt. Damit ist die Implementierung auch für den Releasemodus nach R-14.7 geprüft. |
 
-Stand 26.11.2026: `rppc test` und `rppcc test` bestehen alle 318 Tests, `rppcc test` unter Windows (MSVC) und Linux (gcc) mit nativen Programmen in beiden Modi; neu sind die Laufzeittests für Prozesse, den Programmpfad und `Dir::removeAll` (R-13.43 bis R-13.45). Die Semantik aller Kapitel prüft `rppc test`; Stand 23.11.2026: alle 293 Tests bestehen (übersetzen bzw. ablehnen, Laufzeittests in beiden Modi ausgeführt), darunter neue Tests für `rpp.random` (R-13.23 bis R-13.25), die Vektor-Algorithmen (R-13.26, R-13.27), `rpp.math` (R-13.28, R-13.29), die Text-Hilfen (R-13.30), die Datei-Operationen (R-13.31) sowie `Deque` und `getOrPut` (R-13.32, R-13.33).
+Stand 26.11.2026 (M9): `rppc test` und `rppcc test` bestehen alle 332 Tests; neu sind 13 Tests zum Verzeichnis im Dateisystem (Kapitel 11, Abschnitt 5a) und `l50_sha256` (R-13.46). Davor, Stand 26.11.2026 (M8): `rppc test` und `rppcc test` bestehen alle 318 Tests, `rppcc test` unter Windows (MSVC) und Linux (gcc) mit nativen Programmen in beiden Modi; neu sind die Laufzeittests für Prozesse, den Programmpfad und `Dir::removeAll` (R-13.43 bis R-13.45). Die Semantik aller Kapitel prüft `rppc test`; Stand 23.11.2026: alle 293 Tests bestehen (übersetzen bzw. ablehnen, Laufzeittests in beiden Modi ausgeführt), darunter neue Tests für `rpp.random` (R-13.23 bis R-13.25), die Vektor-Algorithmen (R-13.26, R-13.27), `rpp.math` (R-13.28, R-13.29), die Text-Hilfen (R-13.30), die Datei-Operationen (R-13.31) sowie `Deque` und `getOrPut` (R-13.32, R-13.33).
 
 **Stand vom 21.11.2026:**
 
@@ -110,9 +110,7 @@ Diese Regeln lassen sich nicht mit einem einzelnen Testprogramm prüfen (R-14.6)
 |---|---|
 | R-8.11 | Verweis auf die Kapitel 4, 6, 7 und 10; geprüft durch deren Tests |
 | R-8.28 | Verweis auf Kapitel 9; geprüft durch dessen Tests |
-| R-11.19 | Minimal Version Selection braucht Bibliotheken aus einem Verzeichnis; es gibt noch kein Testverzeichnis |
-| R-11.20 | Prüfsummen in `rpp.lock` gibt es nur für Bibliotheken aus einem Verzeichnis (wie R-11.19) |
-| R-11.21 | regelt das Verzeichnis, nicht die Implementierung |
+| R-11.31 | `publish` und `withdraw` sind Befehle und keine Programme; geprüft von `.github/scripts/check.py registry` (Kapitel 11, Abschnitt 8) |
 | R-11.22 | die Zwischenrepräsentation ist nicht beobachtbar (R-12.4) |
 | R-12.1 | Begriffsbestimmung |
 | R-12.2 | durch R-14.7 abgedeckt: jeder Test gilt für beide Modi |

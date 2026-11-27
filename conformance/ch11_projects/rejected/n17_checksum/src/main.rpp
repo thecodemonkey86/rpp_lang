@@ -1,0 +1,6 @@
+using acme.a.Info;
+
+i32 main(string[] args) {
+    print(Info::version());
+    return 0;
+}

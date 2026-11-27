@@ -1,8 +1,10 @@
-"""Check the English command-line interface and the native compiler."""
+"""Check the English command-line interface, the native compiler and the registry."""
 
 import argparse
 import hashlib
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -184,8 +186,127 @@ def check_bootstrap():
         print(f"Self-hosting fixpoint verified at SHA-256 {hashlib.sha256(third).hexdigest()}.")
 
 
+GEO_V1 = """package acme.geo;
+
+export class Point {
+public:
+    i32 x;
+    constructor(i32 x) {
+        this.x = x;
+    }
+    i32 twice() {
+        return x * 2;
+    }
+private:
+    i32 secret() {
+        return 7;
+    }
+}
+"""
+
+APP_MAIN = """using acme.geo.Point;
+
+i32 main(string[] args) {
+    Point p = new Point(21);
+    print(p.twice().toString());
+    return 0;
+}
+"""
+
+
+def write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text.encode("utf-8"))
+
+
+def library_yaml(version, extra=""):
+    return f"name: acme.geo\nversion: {version}\ntype: library\nsources:\n  - src\n{extra}"
+
+
+def check_registry(compiler):
+    """publish, withdraw and lock of rppcc with a registry in the file system (M9)."""
+    rppcc = [str(compiler)]
+    env_backup = os.environ.pop("RPP_REGISTRY", None)
+    try:
+        with tempfile.TemporaryDirectory(prefix="rpp-registry-") as directory:
+            work = Path(directory)
+            registry = work / "registry"
+            registry.mkdir()
+            lib = work / "geo"
+            source = lib / "src/acme/geo/Point.rpp"
+
+            def publish(version, text, code, message):
+                write(lib / "rpp.yaml", library_yaml(version))
+                write(source, text)
+                expect_any([*rppcc, "publish", "--registry", registry, lib], code, message)
+
+            publish("1.0.0", GEO_V1, 0, "Published acme.geo 1.0.0")
+            if not (registry / "acme.geo/1.0.0/src/acme/geo/Point.rpp").is_file():
+                raise RuntimeError("publish did not copy the source file")
+            publish("1.0.0", GEO_V1, 1, "already published")
+            added = GEO_V1.replace("private:", "    i32 half() {\n        return x / 2;\n    }\nprivate:")
+            publish("1.0.1", added, 1, "needs a new minor version (1.1.0")
+            publish("1.1.0", added, 0, "Published acme.geo 1.1.0")
+            removed = added.replace("    i32 twice() {\n        return x * 2;\n    }\n", "")
+            publish("1.2.0", removed, 1, "needs a new major version (2.0.0")
+            publish("2.0.0", removed, 0, "Published acme.geo 2.0.0")
+            publish("2.0.1", removed.replace("return 7;", "return 8;"), 0, "Published acme.geo 2.0.1")
+
+            write(lib / "rpp.yaml", library_yaml("2.1.0", "dependencies:\n  - name: other\n    path: ../other\n"))
+            expect_any([*rppcc, "publish", "--registry", registry, lib], 1, "cannot have path dependencies")
+            write(lib / "rpp.yaml", library_yaml("2.1.0").replace("acme.geo", "geo"))
+            expect_any([*rppcc, "publish", "--registry", registry, lib], 1, "")
+
+            app = work / "app"
+            write(app / "rpp.yaml", "name: app\nversion: 0.1.0\ntype: executable\nmain: src/main.rpp\n"
+                  "sources:\n  - src\nregistry: ../registry\ndependencies:\n  - name: acme.geo\n    version: \"1.0\"\n")
+            write(app / "src/main.rpp", APP_MAIN)
+            expect_any([*rppcc, "lock", app], 0, "rpp.lock: 1 libraries")
+            first = (app / "rpp.lock").read_bytes()
+            if b"version: 1.0.0" not in first:
+                raise RuntimeError(f"lock chose the wrong version:\n{first.decode()}")
+            expect_any([*rppcc, "lock", app], 0, "rpp.lock: 1 libraries")
+            if (app / "rpp.lock").read_bytes() != first:
+                raise RuntimeError("rpp.lock is not reproducible")
+            rust = rppc("release")
+            if rust.exists():
+                code, out, err = run([rust, "lock", "--stdout", app])
+                if code != 0 or out.encode("utf-8") != first:
+                    raise RuntimeError(f"rppc lock differs from rppcc lock: {(code, out, err)!r}")
+            expect_any([*rppcc, "run", app], 0, "42")
+
+            expect_any([*rppcc, "withdraw", "--registry", registry, "acme.geo", "1.0.0"], 0, "Withdrew acme.geo 1.0.0")
+            if not (registry / "acme.geo/1.0.0.withdrawn").is_file():
+                raise RuntimeError("withdraw did not mark the version")
+            expect_any([*rppcc, "run", app], 0, "42")
+            code, out, _ = run([*rppcc, "lock", "--stdout", app])
+            if code != 0 or "version: 1.1.0" not in out:
+                raise RuntimeError(f"lock should skip the withdrawn version: {(code, out)!r}")
+
+            published = registry / "acme.geo/1.0.0/src/acme/geo/Point.rpp"
+            published.write_bytes(published.read_bytes().replace(b"x * 2", b"x * 3"))
+            expect_any([*rppcc, "build", "-o", work / f"app{EXE_SUFFIX}", app], 1, "the library has changed")
+    finally:
+        if env_backup is not None:
+            os.environ["RPP_REGISTRY"] = env_backup
+    print("Registry check passed: publish, withdraw, lock and checksums.")
+
+
+def expect_any(command, exit_code, message):
+    """Exit code and a message on stdout or stderr."""
+    code, out, err = run([str(c) for c in command])
+    if code != exit_code or message not in out + err:
+        raise RuntimeError(f"{command} returned {(code, out, err)!r}, expected exit {exit_code} and {message!r}")
+
+
 if __name__ == "__main__":
-    checks = {"cli": check_cli, "native": check_native, "bootstrap": check_bootstrap}
+    checks = {"cli": check_cli, "native": check_native, "bootstrap": check_bootstrap, "registry": None}
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("check", choices=checks)
-    checks[parser.parse_args().check]()
+    parser.add_argument("--compiler", default=str(COMPILER / "build" / f"rppcc{EXE_SUFFIX}"),
+                        help="rppcc for the registry check")
+    options = parser.parse_args()
+    if options.check == "registry":
+        check_registry(Path(options.compiler))
+    else:
+        checks[options.check]()

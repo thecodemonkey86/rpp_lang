@@ -60,7 +60,7 @@ cargo run -- diagnose std PFAD
 `project` displays main and source files relative to the directory of their respective project. File positions in messages from `project`, `defs` and `diagnose` refer to the input project, for individual files to their directory. For files outside this base, the absolute path appears.
 
 ```
-py -X utf8 compare.py                # Run all stages. -v prints each case, and --fr N adds N random FR++ programs.
+py -X utf8 compare.py                # Run all stages. -v prints each case; tokens|pre|ast|project|lock|defs|diagnose selects stages; --fr N adds N random FR++ programs.
 ```
 
 Entries are all `.rpp` files of the project (conformance tests, grammar tests including negative tests and readings, standard library, `rpp-compiler` itself) and border cases per part; `pre` and `ast` run with the sets of symbols `debug,linux` and `release,windows`. `project` loads all project directories and individual files of the conformance tests, `rpp-compiler` itself and 39 border cases for `rpp.yaml` in debug and release mode; the output lists projects, files with declared and expected package and type names as well as the messages. `defs` runs on the same inputs, the grammar tests and 17 limit cases for declaration rules; the output lists all types with their members and signatures and the declaration phase messages. `diagnose` compares all messages of the entire check via the same inputs without `rpp-compiler` itself (too slowly in the interpreter) and via the FR++ programs translated to R++.
@@ -118,6 +118,20 @@ The parts are in `src/compiler/driver/`: `Toolchain.rpp` search the root (the di
 `ConformanceTest.rpp` follows `rppc/crates/rppc/src/conftest.rs`: Accept or reject the compiler checks in the same process (debug mode), with the same rules for error lines, expected rule and warnings. Runtime tests are generated in both modes, bound to the runtime once translated and executed in a fresh, empty working directory (V-14.3); output, exit code and error output are compared. The output has the same form as that of `rppc test`. A whole run takes a good 80 s under Windows (MSVC), a good 2 minutes under Linux (gcc, WSL).
 
 The standard library gained `rpp.process` (`Process::run`, `Process::call`), `Env::executablePath`, and `Dir::removeAll` to support this workflow (R-13.43 through R-13.45).
+
+## Dependencies from a registry (M9)
+
+Dependencies with `version` come from a registry in the file system (chapter 11, section 5a): `REGISTRY/owner.name/VERSION/` is a library project, and `VERSION.withdrawn` next to it marks it as withdrawn. The program's `rpp.yaml` names the registry with `registry`; otherwise `RPP_REGISTRY` applies.
+
+```
+rppcc lock [--stdout] PROJECT                  # select and write rpp.lock (like rppc lock)
+rppcc publish [--registry DIR] PROJECT         # check the library and its version, copy it into the registry
+rppcc withdraw [--registry DIR] NAME VERSION   # mark a version as withdrawn
+```
+
+The parts: `src/compiler/project/Registry.rpp` (versions, checksums, form of `rpp.lock`; counterpart `rppc/crates/rpp-sema/src/registry.rs`) and `Workspace.resolve` in `Project.rpp` (Minimal Version Selection, checking against `rpp.lock`, loading the selected versions; counterpart `project.rs`). The checksums are computed by `rpp.hash.Sha256` from the standard library (R-13.46), written in R++. `publish` compares the exported interface with the previous version in the form of `defs` (exported types, their `public` and `protected` parts, without positions); removed or changed lines require a new major version, new lines a new minor version.
+
+`compare.py` checks resolution in the stages `project` (projects with versions, selected libraries with checksums, diagnostics; plus 38 edge cases for the registry and `rpp.lock`) and `lock` (text of `lock --stdout`). `.github/scripts/check.py registry` runs `publish`, `withdraw` and `lock` once end to end.
 
 ## Bootstrap without Rust
 

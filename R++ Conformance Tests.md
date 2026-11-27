@@ -82,7 +82,7 @@ An implementation that offers only one mode is compliant with this mode; the rul
 | `rppc test` (first implementation, from milestone M2) | translate or reject according to R-14.7: accepted and runtime tests without errors and with warnings exactly in the `WARNUNG` lines; rejected only with errors in the marked line, including one of the expected rule (V-14.2). The interpreter performs runtime tests in both modes and compares output, exit code and error output (from M4). |
 | `rppcc test` (R++ compiler in R++, from milestone M8) | same as `rppc test` with the same judgment per test; runtime tests are translated into native programs in both modes (C code generator and C compiler) and executed in a fresh, empty working directory. Thus, the implementation is also tested for the release mode according to R-14.7. |
 
-Status 26.11.2026: `rppc test` and `rppcc test` pass all 318 tests, `rppcc test` under Windows (MSVC) and Linux (gcc) with native programs in both modes; new are the runtime tests for processes, the program path and `Dir::removeAll` (R-13.43 to R-13.45). Checks the semantics of all chapters `rppc test`; as of 23.11.2026: all 293 tests pass (translate or reject, runtime tests performed in both modes), including new tests for `rpp.random` (R-13.23 to R-13.25), the vector algorithms (R-13.26, R-13.27), `rpp.math` (R-13.28, R-13.29), the text aids (R-13.30), the file operations (R-13.31) and `Deque` and `getOrPut` (R-13.32, R-13.33).
+Status 26.11.2026 (M9): `rppc test` and `rppcc test` pass all 332 tests; new are 13 tests for the registry in the file system (chapter 11, section 5a) and `l50_sha256` (R-13.46). Before that, status 26.11.2026 (M8): `rppc test` and `rppcc test` pass all 318 tests, `rppcc test` under Windows (MSVC) and Linux (gcc) with native programs in both modes; new are the runtime tests for processes, the program path and `Dir::removeAll` (R-13.43 to R-13.45). Checks the semantics of all chapters `rppc test`; as of 23.11.2026: all 293 tests pass (translate or reject, runtime tests performed in both modes), including new tests for `rpp.random` (R-13.23 to R-13.25), the vector algorithms (R-13.26, R-13.27), `rpp.math` (R-13.28, R-13.29), the text aids (R-13.30), the file operations (R-13.31) and `Deque` and `getOrPut` (R-13.32, R-13.33).
 
 **As of 21.11.2026:**
 
@@ -110,9 +110,7 @@ These rules cannot be checked with a single test program (R-14.6). The test run 
 |---|---|
 | R-8.11 | Reference to Chapters 4, 6, 7 and 10; verified by their tests |
 | R-8.28 | Reference to Chapter 9; tested by its tests |
-| R-11.19 | Minimal Version Selection requires libraries from a directory; there is no test directory yet |
-| R-11.20 | Checksums in `rpp.lock` are only available for libraries from a directory (such as R-11.19) |
-| R-11.21 | regulates the directory, not the implementation |
+| R-11.31 | `publish` and `withdraw` are commands, not programs; checked by `.github/scripts/check.py registry` (chapter 11, section 8) |
 | R-11.22 | the interim representation is not observable (R-12.4) |
 | R-12.1 | Definition |
 | R-12.2 | covered by R-14.7: each test applies to both modes |

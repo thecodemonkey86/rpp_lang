@@ -1,0 +1,6 @@
+# rpp.lock: exact versions and checksums of the libraries from the registry (R-11.20).
+# Written by the lock command; do not edit.
+libraries:
+  - name: acme.util
+    version: 1.0.0
+    checksum: sha256:e83550ac0396acf86d91752688477e36fe2fd8c097872ad37c7247da6cb911c5

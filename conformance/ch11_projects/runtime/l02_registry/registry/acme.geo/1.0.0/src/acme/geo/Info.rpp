@@ -1,0 +1,9 @@
+package acme.geo;
+using acme.text.Greeting;
+
+export class Point {
+public:
+    static string describe() {
+        return Greeting::shout("POINT");
+    }
+}

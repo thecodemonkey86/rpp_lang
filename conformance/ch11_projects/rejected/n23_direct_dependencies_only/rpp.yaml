@@ -1,0 +1,14 @@
+# Konformitätstest Kapitel 11 – muss abgelehnt werden.
+# Regel: R-11.12
+# Erwartet: genau ein Fehler, in der mit FEHLER markierten Zeile
+# (acme.b kommt nur über acme.a aus dem Verzeichnis und ist nicht selbst eingetragen).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+registry: registry
+dependencies:
+  - name: acme.a
+    version: "1.0"

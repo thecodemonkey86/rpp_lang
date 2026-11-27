@@ -9,6 +9,7 @@ pub mod body;
 pub mod defs;
 pub mod flow;
 pub mod project;
+pub mod registry;
 pub mod rt;
 pub mod ty;
 pub mod yaml;

@@ -1,5 +1,6 @@
 // Projekte und Quelldateien laden (Kapitel 11): rpp.yaml, Quellordner, Abhängigkeiten,
-// die Standardbibliothek. Prüft R-11.13, R-11.15 bis R-11.17. Gleichwertig zu
+// die Standardbibliothek. Prüft R-11.13, R-11.15 bis R-11.20 und R-11.26 bis R-11.30
+// (Abhängigkeiten aus dem Verzeichnis, rpp.lock). Gleichwertig zu
 // rppc/crates/rpp-sema/src/project.rs. Pfade sind absolut und verwenden / (V-13.8).
 package compiler.project;
 
@@ -11,6 +12,7 @@ using rpp.io.Path;
 using rpp.env.Env;
 using rpp.env.Os;
 using rpp.collections.Set;
+using rpp.collections.Map;
 using compiler.lexer.Lexer;
 using compiler.syntax.Node;
 using compiler.syntax.Source;
@@ -34,6 +36,8 @@ public:
     // Datei mit main laut rpp.yaml
     string? mainFile = null;
     string? yaml = null;
+    // gewählte Version einer Bibliothek aus dem Verzeichnis (R-11.19)
+    string? registryVersion = null;
 
     constructor(string name, ProjectKind kind, string dir) {
         this.name = name;
@@ -106,6 +110,40 @@ public:
     }
 }
 
+// Eine Abhängigkeit mit version (R-11.15, R-11.19)
+class Req {
+public:
+    string yaml;
+    i32 line;
+    string name;
+    string min;
+
+    constructor(string yaml, i32 line, string name, string min) {
+        this.yaml = yaml;
+        this.line = line;
+        this.name = name;
+        this.min = min;
+    }
+}
+
+// Ein Platz in Project.deps, der auf eine Bibliothek aus dem Verzeichnis zeigt
+class Link {
+public:
+    i64 project;
+    i64 slot;
+    string name;
+    string yaml;
+    i32 line;
+
+    constructor(i64 project, i64 slot, string name, string yaml, i32 line) {
+        this.project = project;
+        this.slot = slot;
+        this.name = name;
+        this.yaml = yaml;
+        this.line = line;
+    }
+}
+
 export class Workspace {
 public:
     Project[] projects = [];
@@ -115,17 +153,61 @@ public:
     bool release = false;
     // Anzahl der nummerierten Knoten aller Dateien (Node.id)
     i64 nodeCount = 0;
+    // Bibliotheken aus dem Verzeichnis mit Version und Prüfsumme, nach Namen sortiert
+    string[] resolvedNames = [];
+    string[] resolvedVersions = [];
+    string[] resolvedSums = [];
 
     // Lädt eine einzelne .rpp-Datei oder ein Verzeichnis mit rpp.yaml; die
     // Standardbibliothek kommt aus stdDir.
     static Workspace load(string input, string stdDir, bool release) {
+        return loadWith(input, stdDir, release, false);
+    }
+
+    // Für den Befehl lock: löst ohne die vorhandene rpp.lock auf (R-11.30)
+    static Workspace loadForLock(string input, string stdDir) {
+        return loadWith(input, stdDir, false, true);
+    }
+
+    // Für publish: mit einem vorgegebenen Verzeichnis statt registry und RPP_REGISTRY
+    static Workspace loadIn(string input, string stdDir, string registry) {
+        Workspace ws = new Workspace();
+        ws.registryOverride = registry;
+        ws.ignoreLock = true;
+        ws.loadStd(stdDir);
+        discard ws.loadProject(Path::absolute(input), mut new Set<string>(), false, "", "", 0);
+        ws.resolve();
+        return ws;
+    }
+
+private:
+    // Anforderungen version aus dem Programm und seinen lokalen Abhängigkeiten
+    Req[] reqs = [];
+    Link[] links = [];
+    // registry aus der rpp.yaml des Programms: Datei, Zeile, Pfad (null: kein Text)
+    bool hasRegistryEntry = false;
+    string registryYaml = "";
+    i32 registryLine = 0;
+    string? registryText = null;
+    // lädt gerade eine Bibliothek aus dem Verzeichnis
+    bool inRegistry = false;
+    string? expectVersion = null;
+    bool ignoreLock = false;
+    string? registryOverride = null;
+
+    // Platzhalter in Project.deps, bis die Bibliothek aus dem Verzeichnis geladen ist
+    static const i64 PENDING = -1;
+
+    static Workspace loadWith(string input, string stdDir, bool release, bool ignoreLock) {
         Workspace ws = new Workspace();
         ws.release = release;
+        ws.ignoreLock = ignoreLock;
         ws.loadStd(stdDir);
         string path = Path::absolute(input);
         if (Dir::exists(path)) {
             Set<string> stack = new Set<string>();
             discard ws.loadProject(path, mut stack, false, "", "", 0);
+            ws.resolve();
             return ws;
         }
         i64 idx = ws.projects.length;
@@ -148,7 +230,6 @@ public:
         return ws;
     }
 
-private:
     void diag(string file, i32 line, string rule, string message) mut {
         diags.push(new Diag(file, line, 0, rule, message));
     }
@@ -286,6 +367,16 @@ private:
                 diag(yamlPath, 1, "R-11.13", "Missing entry '" + key + "'");
             }
         }
+        if (doc.has("version")) {
+            i32 vl = doc.lineOf("version");
+            string? found = doc.isStrAt("version") ? Registry::parse(doc.strOf("version")) : null;
+            string? wantVersion = expectVersion;
+            if (found == null) {
+                diag(yamlPath, vl, "R-11.27", "version must have the form MAJOR.MINOR.PATCH");
+            } else if (wantVersion != null && wantVersion != found) {
+                diag(yamlPath, vl, "R-11.26", "The library in " + dir + " has version " + found + ", expected " + wantVersion);
+            }
+        }
         string name = doc.strOf("name");
         i32 nameLine = doc.lineOf("name");
         if (name == "rpp" || name.startsWith("rpp.")) {
@@ -326,6 +417,12 @@ private:
         p.mainFile = mainFile;
         p.yaml = yamlPath;
         projects.push(p);
+        if (idx == 1 && !inRegistry && doc.has("registry")) {
+            hasRegistryEntry = true;
+            registryYaml = yamlPath;
+            registryLine = doc.lineOf("registry");
+            registryText = doc.isStrAt("registry") ? doc.strOf("registry") : null;
+        }
 
         stack.add(dir);
         i64[] deps = [];
@@ -336,6 +433,10 @@ private:
         if (di >= 0 && doc.items[di].kind == YKind::List) {
             for (YNode dep : doc.items[di].items) {
                 string depName = dep.strOf("name");
+                if (inRegistry && dep.has("path")) {
+                    // schon bei der Auflösung gemeldet (R-11.27)
+                    continue;
+                }
                 if (dep.has("path")) {
                     i32 pl = dep.lineOf("path");
                     if (!dep.isStrAt("path")) {
@@ -355,8 +456,17 @@ private:
                         deps.push(d);
                     }
                 } else if (dep.has("version")) {
-                    diag(yamlPath, dep.line, "R-11.15", "'" + depName
-                        + "': Registry dependencies are not supported yet");
+                    i32 vl = dep.lineOf("version");
+                    string? min = dep.isStrAt("version") ? Registry::parseMin(dep.strOf("version")) : null;
+                    if (min != null) {
+                        if (!inRegistry) {
+                            reqs.push(new Req(yamlPath, vl, depName, min));
+                        }
+                        links.push(new Link(idx, deps.length, depName, yamlPath, vl));
+                        deps.push(PENDING);
+                    } else if (!inRegistry) {
+                        diag(yamlPath, vl, "R-11.27", "Invalid version in dependency '" + depName + "'");
+                    }
                 } else {
                     diag(yamlPath, dep.line, "R-11.15", "A dependency requires path or version");
                 }
@@ -412,5 +522,322 @@ private:
             }
         }
         return idx;
+    }
+
+    // Das Verzeichnis des Programms (R-11.26); meldet einen Fehler, wenn es fehlt.
+    string? registryDir(string reqYaml, i32 reqLine) mut {
+        string? forced = registryOverride;
+        if (forced != null) {
+            return forced;
+        }
+        if (hasRegistryEntry) {
+            string ry = registryYaml;
+            i32 rl = registryLine;
+            string? text = registryText;
+            if (text == null) {
+                diag(ry, rl, "R-11.26", "registry must be a directory path");
+                return null;
+            }
+            string d = Path::absolute(Path::join(projects[1].dir, text));
+            if (Dir::exists(d)) {
+                return d;
+            }
+            diag(ry, rl, "R-11.26", "Registry directory " + d + " does not exist");
+            return null;
+        }
+        string? env = Env::get("RPP_REGISTRY");
+        if (env != null && env.length > 0) {
+            string d = Path::absolute(env);
+            if (Dir::exists(d)) {
+                return d;
+            }
+            diag(reqYaml, reqLine, "R-11.26", "Registry directory " + d + " (RPP_REGISTRY) does not exist");
+            return null;
+        }
+        diag(reqYaml, reqLine, "R-11.26", "No registry: set registry in rpp.yaml or the environment variable RPP_REGISTRY");
+        return null;
+    }
+
+    // Wählt die Bibliotheken aus dem Verzeichnis (R-11.19, R-11.28), prüft rpp.lock
+    // (R-11.20, R-11.30), lädt die gewählten Versionen und verknüpft die Abhängigkeiten.
+    void resolve() mut {
+        if (projects.length < 2) {
+            return;
+        }
+        string lockPath = Path::join(projects[1].dir, "rpp.lock");
+        bool hasLock = false;
+        LockEntry[] lock = [];
+        if (!ignoreLock && File::exists(lockPath)) {
+            try {
+                File f = File::open(lockPath);
+                lock = Registry::parseLock(f.readAllText());
+                hasLock = true;
+            } catch (LockError e) {
+                diag(lockPath, e.line, "R-11.20", e.message);
+                dropPending();
+                return;
+            } catch (Exception e) {
+                diag(lockPath, 1, "R-11.20", "Could not read rpp.lock: " + e.message);
+                dropPending();
+                return;
+            }
+        }
+        Req[] empty = [];
+        Req[] queue = replace(mut reqs, empty);
+        Set<string> local = new Set<string>();
+        for (Project p : projects) {
+            if (!p.isStd) {
+                local.add(p.name);
+            }
+        }
+        string? reg = null;
+        bool regFailed = false;
+        Map<string, i64> major = new Map<string, i64>();
+        Map<string, string> firstYaml = new Map<string, string>();
+        Map<string, i32> firstLine = new Map<string, i32>();
+        string[] order = [];
+        Map<string, string> selected = new Map<string, string>();
+        Set<string> visited = new Set<string>();
+        Set<string> failed = new Set<string>();
+        // Bibliotheken, die irgendeine Anforderung nennt (auch wenn sie scheitert)
+        Set<string> requested = new Set<string>();
+        i64 qi = 0;
+        while (qi < queue.length) {
+            string reqYaml = queue[qi].yaml;
+            i32 reqLine = queue[qi].line;
+            string name = queue[qi].name;
+            string min = queue[qi].min;
+            qi++;
+            if (reg == null) {
+                reg = registryDir(reqYaml, reqLine);
+                if (reg == null) {
+                    regFailed = true;
+                    break;
+                }
+            }
+            string regDir = reg ?? "";
+            if (name == "rpp" || name.startsWith("rpp.")) {
+                diag(reqYaml, reqLine, "R-11.17", "The owner name rpp is reserved for the standard library");
+                continue;
+            }
+            if (!Registry::validName(name)) {
+                diag(reqYaml, reqLine, "R-11.17", "'" + name + "': a library from the registry is named owner.name");
+                continue;
+            }
+            if (local.contains(name)) {
+                diag(reqYaml, reqLine, "R-11.15", "'" + name + "' is both a local dependency and one from the registry");
+                continue;
+            }
+            requested.add(name);
+            i64 m = major.get(name) ?? -1;
+            if (m >= 0 && m != Registry::major(min)) {
+                diag(reqYaml, reqLine, "R-11.19", "'" + name + "' is required in major versions " + m.toString()
+                    + " and " + Registry::major(min).toString());
+                continue;
+            }
+            if (m < 0) {
+                major.put(name, Registry::major(min));
+            }
+            string libDir = Path::join(regDir, name);
+            string node = "";
+            if (hasLock) {
+                i64 found = -1;
+                for (i64 k = 0; k < lock.length; k++) {
+                    if (lock[k].name == name) {
+                        found = k;
+                    }
+                }
+                if (found < 0) {
+                    diag(reqYaml, reqLine, "R-11.20", "rpp.lock does not list '" + name + "'; run the lock command");
+                    continue;
+                }
+                string v = lock[found].version;
+                if (Registry::major(v) != Registry::major(min) || Registry::compare(v, min) < 0) {
+                    diag(reqYaml, reqLine, "R-11.20", "rpp.lock is out of date: '" + name + "' " + v + " does not satisfy "
+                        + min + "; run the lock command");
+                    continue;
+                }
+                if (!Dir::exists(Path::join(libDir, v))) {
+                    diag(reqYaml, reqLine, "R-11.26", "'" + name + "' " + v + " is not in the registry");
+                    continue;
+                }
+                node = v;
+            } else {
+                if (!Dir::exists(libDir)) {
+                    diag(reqYaml, reqLine, "R-11.26", "Library '" + name + "' is not in the registry");
+                    continue;
+                }
+                for (string v : Registry::versions(libDir)) {
+                    if (node.length == 0 && !Registry::withdrawn(libDir, v) && Registry::major(v) == Registry::major(min)
+                        && Registry::compare(v, min) >= 0) {
+                        node = v;
+                    }
+                }
+                if (node.length == 0) {
+                    diag(reqYaml, reqLine, "R-11.19", "No version of '" + name + "' satisfies " + min
+                        + " (same major version, not withdrawn)");
+                    continue;
+                }
+            }
+            if (!firstYaml.contains(name)) {
+                firstYaml.put(name, reqYaml);
+                firstLine.put(name, reqLine);
+                order.push(name);
+            }
+            string? sel = selected.get(name);
+            if (sel == null || Registry::compare(node, sel) > 0) {
+                selected.put(name, node);
+            }
+            string key = name + "@" + node;
+            if (visited.contains(key)) {
+                continue;
+            }
+            visited.add(key);
+            string nodeDir = Path::absolute(Path::join(libDir, node));
+            string yamlPath = Path::join(nodeDir, "rpp.yaml");
+            string text = "";
+            try {
+                File f = File::open(yamlPath);
+                text = f.readAllText();
+            } catch (Exception e) {
+                diag(reqYaml, reqLine, "R-11.26", nodeDir + " does not contain rpp.yaml");
+                failed.add(key);
+                continue;
+            }
+            YNode doc = new YNode(YKind::Map, "", 1);
+            try {
+                doc = Yaml::parse(text);
+            } catch (YamlError e) {
+                diag(yamlPath, e.line, "R-11.13", e.message);
+                failed.add(key);
+                continue;
+            }
+            i64 di = doc.indexOf("dependencies");
+            if (di >= 0 && doc.items[di].kind == YKind::List) {
+                for (YNode dep : doc.items[di].items) {
+                    string depName = dep.strOf("name");
+                    if (dep.has("path")) {
+                        diag(yamlPath, dep.lineOf("path"), "R-11.27", "A library from the registry cannot have path dependencies");
+                    } else if (dep.has("version")) {
+                        i32 vl = dep.lineOf("version");
+                        string? depMin = dep.isStrAt("version") ? Registry::parseMin(dep.strOf("version")) : null;
+                        if (depMin != null) {
+                            queue.push(new Req(yamlPath, vl, depName, depMin));
+                        } else {
+                            diag(yamlPath, vl, "R-11.27", "Invalid version in dependency '" + depName + "'");
+                        }
+                    }
+                }
+            }
+        }
+        if (hasLock && !regFailed) {
+            for (LockEntry e : lock) {
+                if (!requested.contains(e.name)) {
+                    diag(lockPath, e.line, "R-11.20", "rpp.lock lists '" + e.name + "', which is not needed; run the lock command");
+                }
+            }
+        }
+        if (reg == null) {
+            dropPending();
+            return;
+        }
+        string regDir = reg ?? "";
+        Map<string, i64> index = new Map<string, i64>();
+        Map<string, string> sums = new Map<string, string>();
+        for (string name : order) {
+            string v = selected.get(name) ?? "";
+            if (failed.contains(name + "@" + v)) {
+                continue;
+            }
+            string dir = Path::join(Path::join(regDir, name), v);
+            inRegistry = true;
+            expectVersion = v;
+            Set<string> stack = new Set<string>();
+            i64 i = loadProject(dir, mut stack, true, name, firstYaml.get(name) ?? "", firstLine.get(name) ?? 0);
+            inRegistry = false;
+            expectVersion = null;
+            if (i < 0) {
+                continue;
+            }
+            projects[i].registryVersion = v;
+            index.put(name, i);
+            string pdir = projects[i].dir;
+            try {
+                string sum = Registry::checksum(pdir);
+                for (LockEntry e : lock) {
+                    if (e.name == name && e.checksum != sum) {
+                        diag(lockPath, e.checksumLine, "R-11.20", "The checksum of '" + name + "' " + v
+                            + " does not match rpp.lock: the library has changed");
+                    }
+                }
+                sums.put(name, sum);
+                resolvedNames.push(name);
+            } catch (Exception e) {
+                diag(Path::join(pdir, "rpp.yaml"), 1, "R-11.29", "Could not compute the checksum: " + e.message);
+            }
+        }
+        resolvedNames.sort();
+        for (string name : resolvedNames) {
+            resolvedVersions.push(selected.get(name) ?? "");
+            resolvedSums.push(sums.get(name) ?? "");
+        }
+        Link[] noLinks = [];
+        Link[] all = replace(mut links, noLinks);
+        for (Link l : all) {
+            i64 d = index.get(l.name) ?? -1;
+            if (d >= 0) {
+                projects[l.project].deps[l.slot] = d;
+                if (projects[d].kind != ProjectKind::Library) {
+                    diag(l.yaml, l.line, "R-11.15", "'" + l.name + "' is not a library");
+                }
+            }
+        }
+        // R-11.16 im Verzeichnis: Zyklen über Abhängigkeiten mit version
+        Map<i64, i32> state = new Map<i64, i32>();
+        for (string name : order) {
+            i64 p = index.get(name) ?? -1;
+            if (p >= 0) {
+                cycles(p, all, mut state);
+            }
+        }
+        dropPending();
+    }
+
+    void cycles(i64 p, Link[] all, mut Map<i64, i32> state) mut {
+        if ((state.get(p) ?? 0) != 0) {
+            return;
+        }
+        state.put(p, 1);
+        for (i64 slot = 0; slot < projects[p].deps.length; slot++) {
+            i64 d = projects[p].deps[slot];
+            if (d == PENDING || projects[d].registryVersion == null) {
+                continue;
+            }
+            i32 st = state.get(d) ?? 0;
+            if (st == 1) {
+                for (Link l : all) {
+                    if (l.project == p && l.slot == slot) {
+                        diag(l.yaml, l.line, "R-11.16", "Dependency cycle through '" + l.name + "'");
+                    }
+                }
+                projects[p].deps[slot] = PENDING;
+            } else if (st == 0) {
+                cycles(d, all, mut state);
+            }
+        }
+        state.put(p, 2);
+    }
+
+    void dropPending() mut {
+        links.clear();
+        for (i64 i = 0; i < projects.length; i++) {
+            i64[] kept = [];
+            for (i64 d : projects[i].deps) {
+                if (d != PENDING) {
+                    kept.push(d);
+                }
+            }
+            projects[i].deps = kept;
+        }
     }
 }

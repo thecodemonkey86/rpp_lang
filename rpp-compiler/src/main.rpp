@@ -15,6 +15,12 @@
 //                                 bauen und ausführen (M8)
 //   rppcc test [-v] [--check-only] [WURZEL]
 //                                 Konformitätstests wie `rppc test`, Laufzeittests nativ in beiden Modi (M8)
+//   rppcc lock [--stdout] PROJEKT
+//                                 Abhängigkeiten aus dem Verzeichnis auflösen, rpp.lock schreiben (wie `rppc lock`, M9)
+//   rppcc publish [--registry VERZEICHNIS] PROJEKT
+//                                 Bibliothek ins Verzeichnis im Dateisystem veröffentlichen (R-11.21, M9)
+//   rppcc withdraw [--registry VERZEICHNIS] NAME VERSION
+//                                 veröffentlichte Version als zurückgezogen markieren (M9)
 //                                 Deklarationstabellen und Meldungen der Deklarationsphase (wie `rppc defs`)
 //                                 geladene Projekte, Dateien und Meldungen (wie `rppc project`)
 using rpp.io.File;
@@ -38,6 +44,12 @@ using compiler.project.Project;
 using compiler.project.ProjectKind;
 using compiler.project.SourceFile;
 using compiler.project.Diag;
+using compiler.project.Registry;
+using compiler.project.Yaml;
+using compiler.project.YNode;
+using compiler.project.YKind;
+using compiler.project.YamlError;
+using rpp.env.Env;
 using compiler.sema.Program;
 using compiler.sema.Checker;
 using compiler.sema.Ty;
@@ -215,6 +227,20 @@ public:
         Workspace ws = Workspace::load(input, stdDir, release);
         Program p = Program::build(ws);
         for (i64 i = 0; i < p.defs.length; i++) {
+            for (string line : defLines(p, i)) {
+                print(line);
+            }
+        }
+        for (string line : sortedDiags(p.diags, inputDir(input))) {
+            print(line);
+        }
+        return 0;
+    }
+
+    // Die Zeilen eines Typs in der Ausgabe von defs: Kopfzeile, dann eingerückt die Teile
+    static string[] defLines(Program p, i64 i) {
+        string[] out = [];
+        {
             ref TypeDef d = p.defs[i];
             string kind = "klasse";
             if (d.kind == DefKind::Mixin) {
@@ -229,16 +255,16 @@ public:
             if (d.isAbstract) {
                 flags = flags + " abstract";
             }
-            print("typ " + i.toString() + " " + d.fullName() + " " + kind + flags + " projekt=" + d.project.toString());
+            out.push("typ " + i.toString() + " " + d.fullName() + " " + kind + flags + " projekt=" + d.project.toString());
             if (d.tparams.length > 0) {
-                print("  tparams " + tparamList(p, d.tparams));
+                out.push("  tparams " + tparamList(p, d.tparams));
             }
             shared Ty? b = d.baseType;
             if (b != null) {
-                print("  basis " + p.show(b));
+                out.push("  basis " + p.show(b));
             }
             for (i64 k = 0; k < d.imports.length; k++) {
-                print("  import " + p.show(d.imports[k]) + pos(d.importLines[k], d.importCols[k]));
+                out.push("  import " + p.show(d.imports[k]) + pos(d.importLines[k], d.importCols[k]));
             }
             for (FieldInfo f : d.fields) {
                 string fl = "";
@@ -251,7 +277,7 @@ public:
                 if (f.hasInit) {
                     fl = fl + " init";
                 }
-                print("  feld " + accessName(f.access) + fl + " " + f.name + ": " + p.show(f.ty) + pos(f.line, f.col));
+                out.push("  feld " + accessName(f.access) + fl + " " + f.name + ": " + p.show(f.ty) + pos(f.line, f.col));
             }
             for (MethodInfo m : d.methods) {
                 string fl = "";
@@ -280,33 +306,30 @@ public:
                 if (m.tparams.length > 0) {
                     tps = "<" + tparamList(p, m.tparams) + ">";
                 }
-                print("  methode " + accessName(m.access) + fl + " " + m.name + tps + "(" + paramList(p, m.params) + ") -> " + ret + pos(m.line, m.col));
+                out.push("  methode " + accessName(m.access) + fl + " " + m.name + tps + "(" + paramList(p, m.params) + ") -> " + ret + pos(m.line, m.col));
             }
             for (CtorInfo c : d.ctors) {
                 string bs = "";
                 if (c.callsBase) {
                     bs = " base";
                 }
-                print("  konstruktor " + accessName(c.access) + "(" + paramList(p, c.params) + ")" + bs + pos(c.line, c.col));
+                out.push("  konstruktor " + accessName(c.access) + "(" + paramList(p, c.params) + ")" + bs + pos(c.line, c.col));
             }
             if (d.hasDtor) {
-                print("  destruktor");
+                out.push("  destruktor");
             }
             if (d.hasCopy) {
-                print("  copy" + pos(d.copyLine, d.copyCol));
+                out.push("  copy" + pos(d.copyLine, d.copyCol));
             }
             for (VariantInfo v : d.variants) {
                 string value = "";
                 if (v.hasValue) {
                     value = " = " + v.value.toString();
                 }
-                print("  variante " + v.name + "(" + paramList(p, v.fields) + ")" + value);
+                out.push("  variante " + v.name + "(" + paramList(p, v.fields) + ")" + value);
             }
         }
-        for (string line : sortedDiags(p.diags, inputDir(input))) {
-            print(line);
-        }
-        return 0;
+        return out;
     }
 
     // Ganze Prüfung; Ausgabe wie `rppc diagnose`
@@ -372,10 +395,17 @@ public:
             if (p.singleFile) {
                 flags = flags + " einzeldatei";
             }
+            string? rv = p.registryVersion;
+            if (rv != null) {
+                flags = flags + " verzeichnis";
+            }
             print("projekt " + i.toString() + " " + p.name + " " + kind + flags + " " + p.dir);
             string? m = p.mainFile;
             if (m != null) {
                 print("  main " + displayPath(m, new Path(p.dir)));
+            }
+            if (rv != null) {
+                print("  version " + rv);
             }
             if (p.deps.length > 0) {
                 string[] deps = [];
@@ -404,6 +434,9 @@ public:
                 mainMark = " main";
             }
             print("datei " + displayPath(f.path, new Path(ws.projects[f.project].dir)) + " projekt=" + f.project.toString() + " paket=" + pkg + " erwartet=" + exp + " typen=" + f.typeNames() + mainMark);
+        }
+        for (i64 k = 0; k < ws.resolvedNames.length; k++) {
+            print("gewählt " + ws.resolvedNames[k] + " " + ws.resolvedVersions[k] + " " + ws.resolvedSums[k]);
         }
         Path baseDir = inputDir(input);
         for (Diag d : ws.diags) {
@@ -436,6 +469,280 @@ public:
     // ================================================================ build, run, test (M8)
 
     // Name des Programms: Verzeichnisname eines Projekts, sonst Dateiname ohne .rpp
+    // Meldungen eines Arbeitsbereichs oder einer Prüfung ausgeben; true, wenn ein Fehler dabei ist
+    static bool reportDiags(Diag[] ds, string input) {
+        bool failed = false;
+        for (Diag d : ds) {
+            if (!d.warning) {
+                failed = true;
+            }
+        }
+        for (string line : sortedDiags(ds, inputDir(input))) {
+            print(line);
+        }
+        return failed;
+    }
+
+    // lock: Abhängigkeiten aus dem Verzeichnis ohne die vorhandene rpp.lock auflösen und
+    // rpp.lock neu schreiben (R-11.30); mit --stdout nur ausgeben. Wie `rppc lock`.
+    static i32 lock(string input, bool toStdout) {
+        if (!File::exists(Path::join(input, "rpp.yaml"))) {
+            Console::error("lock requires a project directory with rpp.yaml");
+            return 2;
+        }
+        string stdDir = "";
+        try {
+            stdDir = Toolchain::locate().stdDir;
+        } catch (ToolchainError e) {
+            Console::error(e.message);
+            return 1;
+        }
+        Workspace ws = Workspace::loadForLock(input, stdDir);
+        if (ws.diags.length > 0) {
+            discard reportDiags(ws.diags, input);
+            return 1;
+        }
+        string text = Registry::formatLock(ws.resolvedNames, ws.resolvedVersions, ws.resolvedSums);
+        if (toStdout) {
+            Console::write(text);
+            return 0;
+        }
+        File::writeText(Path::join(input, "rpp.lock"), text);
+        print("rpp.lock: " + ws.resolvedNames.length.toString() + " libraries from the registry");
+        return 0;
+    }
+
+    // Verzeichnis für publish und withdraw: --registry, sonst registry aus yaml (relativ zu
+    // dir), sonst RPP_REGISTRY; null mit Meldung, wenn keines da ist
+    static string? registryFor(string? option, YNode? doc, string dir) {
+        string? reg = option;
+        if (reg == null && doc != null && doc.isStrAt("registry")) {
+            reg = Path::join(dir, doc.strOf("registry"));
+        }
+        if (reg == null) {
+            string? env = Env::get("RPP_REGISTRY");
+            if (env != null && env.length > 0) {
+                reg = env;
+            }
+        }
+        if (reg == null) {
+            Console::error("No registry: use --registry, registry in rpp.yaml or the environment variable RPP_REGISTRY");
+            return null;
+        }
+        string full = Path::absolute(reg);
+        if (!Dir::exists(full)) {
+            Console::error("Registry directory " + full + " does not exist");
+            return null;
+        }
+        return full;
+    }
+
+    // Exportierte Schnittstelle eines Projekts (R-11.10): exportierte Typen mit ihren public-
+    // und protected-Teilen, in der Form von defs, ohne Positionen und Nummern
+    static string[] exportedInterface(Program p, i64 project) {
+        string[] out = [];
+        for (i64 i = 0; i < p.defs.length; i++) {
+            if (p.defs[i].project != project || !p.defs[i].exported) {
+                continue;
+            }
+            string full = p.defs[i].fullName();
+            for (string line : defLines(p, i)) {
+                string text = line;
+                if (text.startsWith("typ ")) {
+                    // "typ N name art flags projekt=P" -> "art flags"
+                    string[] words = text.split(" ");
+                    string[] kept = [];
+                    for (i64 k = 3; k < words.length; k++) {
+                        if (!words[k].startsWith("projekt=")) {
+                            kept.push(words[k]);
+                        }
+                    }
+                    out.push(full + ": " + string::join(" ", kept));
+                    continue;
+                }
+                text = text.trim();
+                if (text.startsWith("feld private") || text.startsWith("methode private") || text.startsWith("konstruktor private")) {
+                    continue;
+                }
+                i64? at = text.indexOf(" @");
+                if (at != null) {
+                    text = text.substring(0, at);
+                }
+                out.push(full + ": " + text);
+            }
+        }
+        return out;
+    }
+
+    static string[] missingFrom(string[] a, string[] b) {
+        Set<string> inB = new Set<string>();
+        for (string x : b) {
+            inB.add(x);
+        }
+        string[] out = [];
+        for (string x : a) {
+            if (!inB.contains(x)) {
+                out.push(x);
+            }
+        }
+        return out;
+    }
+
+    static void listLines(string title, string[] lines) {
+        Console::error(title);
+        i64 n = 0;
+        for (string l : lines) {
+            if (n < 10) {
+                Console::error("  " + l);
+            }
+            n++;
+        }
+        if (n > 10) {
+            Console::error("  ... and " + (n - 10).toString() + " more");
+        }
+    }
+
+    // publish: prüft eine Bibliothek, vergleicht ihre exportierte Schnittstelle mit der
+    // Vorversion (R-11.21) und kopiert rpp.yaml und ihre Quelldateien nach
+    // VERZEICHNIS/name/version (R-11.31).
+    static i32 publish(string input, string? registryOption) {
+        string dir = Path::absolute(input);
+        string yamlPath = Path::join(dir, "rpp.yaml");
+        if (!File::exists(yamlPath)) {
+            Console::error("publish requires a library directory with rpp.yaml");
+            return 2;
+        }
+        string stdDir = "";
+        try {
+            stdDir = Toolchain::locate().stdDir;
+        } catch (ToolchainError e) {
+            Console::error(e.message);
+            return 1;
+        }
+        YNode doc = new YNode(YKind::Map, "", 1);
+        try {
+            File f = File::open(yamlPath);
+            doc = Yaml::parse(f.readAllText());
+        } catch (YamlError e) {
+            Console::error(yamlPath + ":" + e.line.toString() + ": " + e.message);
+            return 1;
+        }
+        string? regOrNull = registryFor(registryOption, doc, dir);
+        if (regOrNull == null) {
+            return 1;
+        }
+        string reg = regOrNull;
+        // Was nur rpp.yaml braucht, zuerst
+        string name = doc.strOf("name");
+        string version = doc.strOf("version");
+        if (doc.strOf("type") != "library") {
+            Console::error("publish: only libraries can be published (type: library)");
+            return 1;
+        }
+        if (!Registry::validName(name)) {
+            Console::error("publish: a library in the registry is named owner.name (R-11.17), not '" + name + "'");
+            return 1;
+        }
+        if (Registry::parse(version) == null) {
+            Console::error("publish: version must have the form MAJOR.MINOR.PATCH (R-11.27), not '" + version + "'");
+            return 1;
+        }
+        i64 di = doc.indexOf("dependencies");
+        if (di >= 0) {
+            for (YNode dep : doc.items[di].items) {
+                if (dep.has("path")) {
+                    Console::error("publish: a library in the registry cannot have path dependencies (R-11.27): '"
+                        + dep.strOf("name") + "'");
+                    return 1;
+                }
+            }
+        }
+        string libDir = Path::join(reg, name);
+        string target = Path::join(libDir, version);
+        if (Dir::exists(target)) {
+            Console::error("publish: " + name + " " + version + " is already published; published versions never change (R-11.21)");
+            return 1;
+        }
+        Workspace ws = Workspace::loadIn(dir, stdDir, reg);
+        Program p = Program::build(ws);
+        Checker c = new Checker(p);
+        c.run(ws);
+        if (reportDiags(c.p.diags, input)) {
+            Console::error("publish: the library has errors");
+            return 1;
+        }
+        string? previous = null;
+        for (string v : Registry::versions(libDir)) {
+            if (Registry::compare(v, version) < 0) {
+                previous = v;
+            }
+        }
+        if (previous != null) {
+            Workspace old = Workspace::loadIn(Path::join(libDir, previous), stdDir, reg);
+            Program op = Program::build(old);
+            string[] before = exportedInterface(op, 1);
+            string[] after = exportedInterface(c.p, 1);
+            string[] removed = missingFrom(before, after);
+            string[] added = missingFrom(after, before);
+            i64 pm = Registry::major(previous);
+            i64 vm = Registry::major(version);
+            if (removed.length > 0 && vm <= pm) {
+                listLines("publish: the exported interface changed incompatibly since " + previous
+                    + "; this needs a new major version (" + (pm + 1).toString() + ".0.0, R-11.21). Removed or changed:", removed);
+                return 1;
+            }
+            if (added.length > 0 && vm == pm && Registry::part(version, 1) <= Registry::part(previous, 1)) {
+                listLines("publish: the exported interface has new parts since " + previous
+                    + "; this needs a new minor version (" + pm.toString() + "." + (Registry::part(previous, 1) + 1).toString()
+                    + ".0, R-11.21). Added:", added);
+                return 1;
+            }
+        }
+        // Kopieren: rpp.yaml und die geladenen Quelldateien der Bibliothek
+        Path libRoot = new Path(dir);
+        string[] rels = [];
+        for (SourceFile f : ws.files) {
+            if (f.project == 1) {
+                Path? rel = new Path(f.path).relativeTo(libRoot);
+                if (rel == null) {
+                    Console::error("publish: source file " + f.path + " lies outside the library directory");
+                    return 1;
+                }
+                rels.push(rel.toString());
+            }
+        }
+        Dir::create(target);
+        discard File::copyFile(yamlPath, Path::join(target, "rpp.yaml"));
+        for (string rel : rels) {
+            string to = Path::join(target, rel);
+            Dir::create(Path::parent(to));
+            discard File::copyFile(Path::join(dir, rel), to);
+        }
+        print("Published " + name + " " + version + " to " + target + " (" + Registry::checksum(target) + ")");
+        return 0;
+    }
+
+    // withdraw: markiert eine veröffentlichte Version als zurückgezogen (R-11.21, R-11.26)
+    static i32 withdraw(string name, string version, string? registryOption) {
+        string? regOrNull = registryFor(registryOption, null, ".");
+        if (regOrNull == null) {
+            return 1;
+        }
+        string target = Path::join(Path::join(regOrNull, name), version);
+        if (!Dir::exists(target)) {
+            Console::error("withdraw: " + name + " " + version + " is not in the registry");
+            return 1;
+        }
+        string marker = target + ".withdrawn";
+        if (File::exists(marker)) {
+            print(name + " " + version + " is already withdrawn");
+            return 0;
+        }
+        File::writeText(marker, "");
+        print("Withdrew " + name + " " + version);
+        return 0;
+    }
+
     static string programStem(string input) {
         string full = Path::absolute(input);
         string name = Path::fileName(full);
@@ -517,6 +824,9 @@ i32 main(string[] args) {
         + "  rppcc build [--release] [-o OUTPUT] PATH\n"
         + "  rppcc run [--release] PATH [-- ARGS...]\n"
         + "  rppcc test [-v] [--check-only] [ROOT]\n"
+        + "  rppcc lock [--stdout] PROJECT\n"
+        + "  rppcc publish [--registry DIR] PROJECT\n"
+        + "  rppcc withdraw [--registry DIR] NAME VERSION\n"
         + "Use --help after tokens, project, or diagnose for command-specific help.";
     if (args.length == 1 && (args[0] == "--help" || args[0] == "-h")) {
         print(usage);
@@ -626,6 +936,40 @@ i32 main(string[] args) {
             }
         }
         return Main::test(root, verbose, runtime);
+    }
+    if (command == "lock" || command == "publish" || command == "withdraw") {
+        bool toStdout = false;
+        string? registry = null;
+        string[] positional = [];
+        for (i64 i = 1; i < args.length; i++) {
+            string a = args[i];
+            if (command == "lock" && a == "--stdout") {
+                toStdout = true;
+            } else if (command != "lock" && a == "--registry" && i + 1 < args.length) {
+                i++;
+                registry = args[i];
+            } else if (a == "-h" || a == "--help") {
+                print(usage);
+                return 0;
+            } else if (!a.startsWith("-")) {
+                positional.push(a);
+            } else {
+                Console::error("unexpected argument " + a + "\n" + usage);
+                return 2;
+            }
+        }
+        i64 want = command == "withdraw" ? 2 : 1;
+        if (positional.length != want) {
+            Console::error("wrong number of arguments\n" + usage);
+            return 2;
+        }
+        if (command == "lock") {
+            return Main::lock(positional[0], toStdout);
+        }
+        if (command == "publish") {
+            return Main::publish(positional[0], registry);
+        }
+        return Main::withdraw(positional[0], positional[1], registry);
     }
     if (args.length == 3 && args[0] == "pre") {
         return Main::pre(args[1], args[2]);

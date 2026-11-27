@@ -1,0 +1,14 @@
+# Konformitätstest Kapitel 11 – Laufzeit.
+# Regel: R-11.28, R-11.26
+# Erwartet: Ausgabe "1.0.1"; Exit-Code 0
+# Ohne rpp.lock: die kleinste nicht zurückgezogene Version ab 1.0 (1.0.0 ist zurückgezogen).
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+registry: registry
+dependencies:
+  - name: acme.util
+    version: "1.0"

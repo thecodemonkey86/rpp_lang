@@ -1,0 +1,14 @@
+# Konformitätstest Kapitel 11 – Laufzeit.
+# Regel: R-11.21, R-11.30
+# Erwartet: Ausgabe "1.0.0"; Exit-Code 0
+# rpp.lock nennt 1.0.0; die Version ist zurückgezogen, baut mit der Sperrdatei aber weiter.
+name: app
+version: 0.1.0
+type: executable
+main: src/main.rpp
+sources:
+  - src
+registry: registry
+dependencies:
+  - name: acme.util
+    version: "1.0"

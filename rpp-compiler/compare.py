@@ -15,6 +15,9 @@ Verglichen werden je Teil die Ausgaben beider Seiten:
   defs    Deklarationsphase (Typen sammeln, Namen auflösen, Membertabellen, Regeln auf Ebene
           von Dateien und Klassen): Tabellen in Textform und Meldungen (`rppc defs STD PFAD`).
           Eingaben wie bei project, dazu die Grammatiktests und Grenzfälle
+  lock    Abhängigkeiten aus dem Verzeichnis (M9): Text der Sperrdatei (`rppc lock --stdout
+          PROJEKT`) für alle Projektverzeichnisse von project; bei Fehlern nur, dass beide
+          scheitern (die Meldungen selbst vergleicht project)
   diagnose ganze Prüfung einschließlich der Rümpfe (Typen der Ausdrücke, Null-Sicherheit,
           Ownership, Flussanalyse): alle Meldungen mit Warnungen und Begründungsregeln
           (`rppc diagnose STD PATH`). Eingaben wie bei defs ohne rpp-compiler selbst, dazu
@@ -93,6 +96,93 @@ APP = "name: app\nversion: 0.1.0\ntype: executable\nmain: src/main.rpp\nsources:
 MAIN = {"src/main.rpp": "i32 main(string[] args) {\n    return 0;\n}\n"}
 LIB_A = {"a/rpp.yaml": "name: acme.a\nversion: 1.0.0\ntype: library\nsources: [src]\n",
          "a/src/acme/a/A.rpp": "package acme.a;\nexport class A { }\n"}
+REG_APP = APP + "registry: registry\n"
+
+
+def deps(*items):
+    """dependencies mit Mindestversionen: (Name, Version) oder fertiger Text eines Eintrags."""
+    out = "dependencies:\n"
+    for item in items:
+        out += item if isinstance(item, str) else f"  - name: {item[0]}\n    version: \"{item[1]}\"\n"
+    return out
+
+
+def reg_lib(name, version, extra="", yaml=None, typ="library"):
+    """Eine Version im Verzeichnis registry/ mit einer Klasse X."""
+    owner, lib = name.split(".")
+    text = yaml if yaml is not None else f"name: {name}\nversion: {version}\ntype: {typ}\nsources: [src]\n" + extra
+    base = f"registry/{name}/{version}"
+    return {f"{base}/rpp.yaml": text, f"{base}/src/{owner}/{lib}/X.rpp": f"package {name};\nexport class X {{ }}\n"}
+
+
+LOCK = "libraries:\n  - name: acme.a\n    version: 1.0.0\n    checksum: sha256:00\n"
+
+# Grenzfälle für das Verzeichnis und rpp.lock (M9)
+VERZEICHNIS_FAELLE = {
+    "vz_einfach": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), **reg_lib("acme.a", "1.2.0")}),
+    "vz_mvs_ueberholt": (REG_APP + deps(("acme.a", "1.0"), ("acme.b", "1.0")),
+                         {**MAIN, **reg_lib("acme.a", "1.0.0", deps(("acme.c", "1.0"))), **reg_lib("acme.a", "1.1.0"),
+                          **reg_lib("acme.b", "1.0.0", deps(("acme.a", "1.1"))), **reg_lib("acme.c", "1.0.0")}),
+    "vz_raute": (REG_APP + deps(("acme.a", "1"), ("acme.b", "1")),
+                 {**MAIN, **reg_lib("acme.a", "1.0.0", deps(("acme.c", "1.1"))), **reg_lib("acme.b", "1.0.0", deps(("acme.c", "1.2"))),
+                  **{k: v for ver in ["1.0.0", "1.1.0", "1.2.0", "1.3.0"] for k, v in reg_lib("acme.c", ver).items()}}),
+    "vz_fehlt": (APP + "registry: gibtsnicht\n" + deps(("acme.a", "1")), MAIN),
+    "vz_als_liste": (APP + "registry: [x]\n" + deps(("acme.a", "1")), MAIN),
+    "vz_ohne_angabe": (APP + deps(("acme.a", "1")), MAIN),
+    "vz_ungenutzt": (APP + "registry: gibtsnicht\n", MAIN),
+    "vz_namen": (REG_APP + deps(("acme", "1"), ("acme.class", "1"), ("rpp.x", "1"), ("a.b.c", "1"), ("acme.9x", "1"),
+                                ("ac-me.x", "1"), ("acme._ok", "1")), MAIN),
+    "vz_versionen_ungueltig": (REG_APP + deps(("acme.a", "1.x"), ("acme.b", "01"), ("acme.c", ""), ("acme.d", "1.2.3.4"),
+                                              "  - name: acme.e\n    version: [1]\n", ("acme.f", "1234567890")), MAIN),
+    "vz_lokal_und_verzeichnis": (REG_APP + deps("  - name: acme.a\n    path: a\n", ("acme.a", "1")),
+                                 {**MAIN, **LIB_A, **reg_lib("acme.a", "1.0.0")}),
+    "vz_hauptversionen_direkt": (REG_APP + deps(("acme.a", "1"), ("acme.a", "2")),
+                                 {**MAIN, **reg_lib("acme.a", "1.0.0"), **reg_lib("acme.a", "2.0.0")}),
+    "vz_falsche_version": (REG_APP + deps(("acme.a", "1")),
+                           {**MAIN, **reg_lib("acme.a", "1.0.0", yaml="name: acme.a\nversion: 1.0.1\ntype: library\nsources: [src]\n")}),
+    "vz_falscher_name": (REG_APP + deps(("acme.a", "1")),
+                         {**MAIN, **reg_lib("acme.a", "1.0.0", yaml="name: acme.b\nversion: 1.0.0\ntype: library\nsources: [src]\n")}),
+    "vz_programm": (REG_APP + deps(("acme.a", "1")),
+                    {**MAIN, **reg_lib("acme.a", "1.0.0", yaml="name: acme.a\nversion: 1.0.0\ntype: executable\nmain: src/m.rpp\nsources: [src]\n"),
+                     "registry/acme.a/1.0.0/src/m.rpp": MAIN["src/main.rpp"]}),
+    "vz_ohne_yaml": (REG_APP + deps(("acme.a", "1")), {**MAIN, "registry/acme.a/1.0.0/src/acme/a/X.rpp": "package acme.a;\nclass X { }\n"}),
+    "vz_yaml_kaputt": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0", yaml="name acme.a\n")}),
+    "vz_pfad_und_kaputte_version": (REG_APP + deps(("acme.a", "1")),
+                                    {**MAIN, **reg_lib("acme.a", "1.0.0", deps("  - name: x\n    path: ../x\n", ("acme.b", "zwei"),
+                                                                                "  - name: acme.c\n"))}),
+    "vz_zyklus_drei": (REG_APP + deps(("acme.a", "1")),
+                       {**MAIN, **reg_lib("acme.a", "1.0.0", deps(("acme.b", "1"))), **reg_lib("acme.b", "1.0.0", deps(("acme.c", "1"))),
+                        **reg_lib("acme.c", "1.0.0", deps(("acme.a", "1")))}),
+    "vz_selbstbezug": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0", deps(("acme.a", "1")))}),
+    "vz_alle_zurueckgezogen": (REG_APP + deps(("acme.a", "1")),
+                               {**MAIN, **reg_lib("acme.a", "1.0.0"), "registry/acme.a/1.0.0.withdrawn": ""}),
+    "vz_ordner_ohne_versionen": (REG_APP + deps(("acme.a", "1")),
+                                 {**MAIN, "registry/acme.a/notaversion/x.rpp": "", "registry/acme.a/1.0/x.rpp": "",
+                                  "registry/acme.a/1.0.0": "datei statt ordner"}),
+    "vz_bibliothek_mit_registry": (REG_APP + deps(("acme.a", "1")),
+                                   {**MAIN, **reg_lib("acme.a", "1.0.0", "registry: woanders\n" + deps(("acme.b", "1"))),
+                                    **reg_lib("acme.b", "1.0.0")}),
+    "vz_ueber_lokale_bibliothek": (REG_APP + deps("  - name: acme.l\n    path: l\n"),
+                                   {**MAIN, "l/rpp.yaml": "name: acme.l\nversion: 1.0.0\ntype: library\nsources: [src]\n" + deps(("acme.a", "1")),
+                                    "l/src/acme/l/L.rpp": "package acme.l;\nclass L { }\n", **reg_lib("acme.a", "1.0.0")}),
+    "lock_yaml_kaputt": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": "libraries:\n  - name acme.a\n"}),
+    "lock_unbekannt": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": "libraries: []\nfoo: 1\n"}),
+    "lock_leer": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": "# nichts\n"}),
+    "lock_libraries_text": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": "libraries: acme.a\n"}),
+    "lock_doppelt": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": LOCK + LOCK[11:]}),
+    "lock_version_ungueltig": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": LOCK.replace("1.0.0", "1.0")}),
+    "lock_unvollstaendig": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"),
+                                                             "rpp.lock": "libraries:\n  - name: acme.a\n    version: 1.0.0\n"}),
+    "lock_eintrag_text": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": "libraries:\n  - acme.a\n"}),
+    "lock_eintrag_unbekannt": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": LOCK + "    extra: 1\n"}),
+    "lock_ohne_abhaengigkeiten": (APP, {**MAIN, "rpp.lock": LOCK}),
+    "lock_fehlender_eintrag": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": "libraries: []\n"}),
+    "lock_version_fehlt": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": LOCK.replace("1.0.0", "1.5.0")}),
+    "lock_falsche_pruefsumme": (REG_APP + deps(("acme.a", "1")), {**MAIN, **reg_lib("acme.a", "1.0.0"), "rpp.lock": LOCK}),
+    "lock_falsche_hauptversion": (REG_APP + deps(("acme.a", "2")), {**MAIN, **reg_lib("acme.a", "1.0.0"), **reg_lib("acme.a", "2.0.0"), "rpp.lock": LOCK}),
+    "lock_kein_verzeichnis": (APP + deps(("acme.a", "1")), {**MAIN, "rpp.lock": LOCK}),
+}
+
 PROJEKT_FAELLE = {
     "unicode_quellordner": ('name: app\nversion: 1\ntype: library\nsources: ["grün🙂 # eins", ,]\n',
                             {"grün🙂 # eins/app/T.rpp": "package app;\nexport class T { }\n"}),
@@ -170,6 +260,21 @@ DEFS_FAELLE = {
 SYMBOLE = ["debug,linux", "release,windows"]
 
 
+def make_cases(tmp, sub):
+    """Legt die Grenzfälle für Projekte und das Verzeichnis unter tmp/sub an."""
+    inputs = []
+    for name, (yaml, extra) in {**PROJEKT_FAELLE, **VERZEICHNIS_FAELLE}.items():
+        d = tmp / sub / name
+        d.mkdir(parents=True)
+        (d / "rpp.yaml").write_bytes(yaml.encode("utf-8"))
+        for rel, text in extra.items():
+            f = d / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(text.encode("utf-8"))
+        inputs.append((f"Grenzfall {name}", d))
+    return inputs
+
+
 def project_inputs():
     dirs = sorted(p.parent for p in (ROOT / "conformance").rglob("rpp.yaml"))
     # nur die äußeren Projekte; Abhängigkeiten werden über sie geladen
@@ -228,15 +333,7 @@ def projekt(tmp, verbose):
     ok = bad = 0
     std = str(ROOT / "rppc" / "std")
     inputs = [(str(p.relative_to(ROOT)).replace("\\", "/"), p) for p in project_inputs()]
-    for name, (yaml, extra) in PROJEKT_FAELLE.items():
-        d = tmp / "projekte" / name
-        d.mkdir(parents=True)
-        (d / "rpp.yaml").write_bytes(yaml.encode("utf-8"))
-        for rel, text in extra.items():
-            f = d / rel
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_bytes(text.encode("utf-8"))
-        inputs.append((f"Grenzfall {name}", d))
+    inputs += make_cases(tmp, "projekte")
     for name, path in inputs:
         for mode in ([], ["--release"]):
             args = [*mode, std, str(path)]
@@ -253,6 +350,22 @@ def projekt(tmp, verbose):
                 ok += 1
             else:
                 bad += 1
+    return ok, bad
+
+
+def lock(tmp, verbose):
+    ok = bad = 0
+    inputs = [(str(p.relative_to(ROOT)).replace("\\", "/"), p) for p in project_inputs() if p.is_dir()]
+    inputs += make_cases(tmp, "lock")
+    for name, path in inputs:
+        a, b = both("lock", ["--stdout", str(path)])
+        # Bei Fehlern unterscheiden sich die Formen der Meldungen; verglichen wird nur das Scheitern.
+        if a.startswith("Exit-Code") and b.startswith("Exit-Code"):
+            a, b = a.splitlines()[0], b.splitlines()[0]
+        if report(name, a, b, verbose):
+            ok += 1
+        else:
+            bad += 1
     return ok, bad
 
 
@@ -322,7 +435,7 @@ def main():
         EXE = str(pathlib.Path(sys.argv[sys.argv.index("--exe") + 1]).resolve())
     if "--fr" in sys.argv:
         fr_count = int(sys.argv[sys.argv.index("--fr") + 1])
-    alle = ["tokens", "pre", "ast", "project", "defs", "diagnose"]
+    alle = ["tokens", "pre", "ast", "project", "lock", "defs", "diagnose"]
     aliases = {"projekt": "project", "pruefe": "diagnose"}
     requested = [aliases.get(arg, arg) for arg in sys.argv[1:]]
     parts = [part for part in requested if part in alle] or alle
@@ -336,6 +449,10 @@ def main():
             print(f"{part}:")
             if part == "project":
                 ok, bad = projekt(pathlib.Path(tmp), verbose)
+                total[part] = (ok, bad)
+                continue
+            if part == "lock":
+                ok, bad = lock(pathlib.Path(tmp), verbose)
                 total[part] = (ok, bad)
                 continue
             if part == "defs":

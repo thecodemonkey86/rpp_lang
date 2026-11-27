@@ -67,6 +67,7 @@ cargo run -- ast debug,linux DATEI.rpp     # Syntaxbaum in Textform (rpp-syntax/
 cargo run -- project std PFAD              # geladene Projekte, Dateien, Meldungen (--release vor std)
 cargo run -- defs std PFAD                 # Deklarationstabellen und Meldungen der Deklarationsphase
 cargo run -- diagnose std PFAD               # alle Meldungen der Prüfung mit Warnungen und Begründungen
+cargo run -- lock PROJEKT                  # Abhängigkeiten aus dem Verzeichnis auflösen, rpp.lock schreiben (--stdout: nur ausgeben)
 ```
 
 Eine Meldung nennt die verletzte Regel und, wo es hilft, die Regeln, die den Verstoß begründen:
