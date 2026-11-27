@@ -4,7 +4,7 @@
 
 Status: 26.11.2026, Draft 0.17. This document describes the first implementation of R++: host language, structure, testing strategy and milestones. It is not part of the specification; chapters 1 to 14 and grammar `RPP.g4` remain relevant.
 
-Host language, structure and milestones have been decided (Design Decisions, Section 27). Milestones M1 to M9 have been completed (Section 6); M7, the speed of the translated code via the expansion of the C code generator, reached its target value on 26.11.2026. M8 made `rppcc` the independent compiler for both modes (decided, implemented and completed with the first green CI run on 26.11.2026). M9 brings dependencies with versions via a local directory (decided and implemented locally on 26.11.2026, completed with the green CI run on 27.11.2026).
+Host language, structure and milestones have been decided (Design Decisions, Section 27). Milestones M1 to M9 have been completed (Section 6); M7, the speed of the translated code via the expansion of the C code generator, reached its target value on 26.11.2026. M8 made `rppcc` the independent compiler for both modes (decided, implemented and completed with the first green CI run on 26.11.2026). M9 brings dependencies with versions via a local directory (decided and implemented locally on 26.11.2026, completed with the green CI run on 27.11.2026). M10 brings C interop (decided on 27.11.2026).
 
 ## 1. Role of the first implementation
 
@@ -87,6 +87,7 @@ The interpreter executes these statements directly. In a **check mode**, he addi
 | M7 | Speed of the translated code: extension of the C code generator (decided on 24.11.2026) | translated `rppcc` at least as fast as `rppc` at `diagnose rpp-compiler` (set on 26.11.2026); reached on 26.11.2026 (0.40 s against 0.47 s) |
 | M8 | `rppcc` as a stand-alone compiler: `build`, `run` and `test`, release mode via the C code generator, bootstrap without rust (decided on 26.11.2026) | `rppcc test ..` Passes all conformance tests in debug and release mode (R-14.7); the bootstrap from the checked-in C starting point reaches the fixed point without rust, under Windows (MSVC) and Linux (gcc) in the CI; all comparisons with `rppc` remain without deviation. Fulfilled on 26.11.2026: local (Windows with MSVC, Linux with gcc in WSL) and in the first CI run of the job `self-hosted` (Ubuntu 24.04 and Windows 2025) |
 | M9 | Dependencies with versions according to Design Decisions 13b via a local directory in the file system: `rpp.hash` (SHA-256), Minimal Version Selection, `rpp.lock`, `rppcc publish` (decided on 26.11.2026, met locally on 26.11.2026) | new conformance tests in Chapter 11 cover the rules of 13b and pass with `rppc test` and `rppcc test`; `rpp.lock` is reproducible and detects any change to a locked library; `compare.py` shows no deviation for resolution, the fixed point holds. Met on 27.11.2026: locally (Windows with MSVC, Linux with gcc in WSL) and in the CI run of the job `self-hosted` (Ubuntu 24.04 and Windows 2025) |
+| M10 | C interop according to Design Decisions 12: `extern` classes, values and handles across the boundary, permission per project (`native`, `allowNative`), execution in `rppc` (loaded dynamically) and `rppcc` (linked directly) (decided on 27.11.2026) | a chapter of its own in the specification with rules and safety model; new conformance tests with a C test library in the repository pass with `rppc test` and `rppcc test` in both modes; `compare.py` shows no deviation, the fixed point holds; green CI run on Ubuntu and Windows |
 
 The release mode is created from the C code generator (decided on 24.11.2026); since M8 checks `rppcc test` the Conformance also for it (R-14.7).
 
@@ -586,3 +587,17 @@ Status (26.11.2026, locally on Windows with MSVC):
 | `methodsOf`, `fieldOf` | Index per type (`MemberIndex`, built after `resolveMembers`): first method or field per name, the next method with the same name, the names of the type and all supertypes, the supertypes of a type without type arguments. A name that is not there ends the lookup immediately. |
 
 Status (27.11.2026): `diagnose rppc/std rpp-compiler` 0.415 s against 0.44 s before (median of 15 runs, same computer; `rppc` 0.47 s), same output. Fixed point and seed (`--check-seed`) current; `rppcc test` 332 passed, 0 failed; `compare.py --exe` 659/1332/1310/828/106/581/863 equal, 0 different; `compare_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 328 equal, 0 different. According to the profile, the parser helpers (`isP`, `eatP`, `eatK`) remain the largest part of the parser; their cost is now the call itself (frame per call).
+
+**M10 decided: C interop (27.11.2026).** Since M9, R++ libraries can be used with versions, but C libraries cannot; what the standard library needs from the system (`sqrt`, `Process`, files) is built into both compilers. M10 implements the decisions from Design Decisions Section 12:
+
+| Part | Content |
+|---|---|
+| Specification | a chapter of its own, "C Interop", with rules: form of the `extern` class, permitted types and their mapping to C, ownership and borrowing across the boundary, handles and their release, errors when loading and calling, the safety model and its boundary with R-12.6; plus `extern` in `RPP.g4` and in the list of reserved words. |
+| Projects | `native: true` in `rpp.yaml`, `allowNative: true` on dependencies (including indirect ones), shown in `project` and `rpp.lock`; the check is the same in both compilers. |
+| `rppc` | checking of `extern` classes; the interpreter loads the library with `libloading` and calls via `libffi`. |
+| `rppcc` | the same checks; the C generator emits prototypes and direct calls, `build` links the library (gcc: `-l`, MSVC: `.lib`). |
+| Tests | a small C test library in the repository that the test run compiles first; accepted, rejected and runtime tests for every rule; `compare.py` covers the new parts. |
+
+M10 is complete when the chapter is written, the new conformance tests pass with `rppc test` and `rppcc test` in both modes, `compare.py` shows no deviation, the fixed point holds and the CI run on Ubuntu and Windows is green.
+
+Deferred: callbacks (R++ lambdas as C function pointers), structs by value, pointers in R++, variadic functions, C source code in registry libraries and moving built-in parts of the standard library to `extern` classes.

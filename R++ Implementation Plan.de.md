@@ -4,7 +4,7 @@
 
 Stand: 26.11.2026, Entwurf 0.17. Dieses Dokument beschreibt die erste Implementierung von R++: Wirtssprache, Aufbau, Prüfstrategie und Meilensteine. Es ist kein Teil der Spezifikation; maßgeblich bleiben die Kapitel 1 bis 14 und die Grammatik `RPP.g4`.
 
-Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M9 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 machte `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen, umgesetzt und mit dem ersten grünen CI-Lauf abgeschlossen am 26.11.2026). M9 bringt Abhängigkeiten mit Versionen über ein lokales Verzeichnis (beschlossen und lokal umgesetzt am 26.11.2026, mit dem grünen CI-Lauf abgeschlossen am 27.11.2026).
+Wirtssprache, Aufbau und Meilensteine sind entschieden (Designentscheidungen, Abschnitt 27). Die Meilensteine M1 bis M9 sind abgeschlossen (Abschnitt 6); M7, die Geschwindigkeit des übersetzten Codes über den Ausbau des C-Codegenerators, erreichte seinen Zielwert am 26.11.2026. M8 machte `rppcc` zum eigenständigen Compiler für beide Modi (beschlossen, umgesetzt und mit dem ersten grünen CI-Lauf abgeschlossen am 26.11.2026). M9 bringt Abhängigkeiten mit Versionen über ein lokales Verzeichnis (beschlossen und lokal umgesetzt am 26.11.2026, mit dem grünen CI-Lauf abgeschlossen am 27.11.2026). M10 bringt die C-Anbindung (beschlossen am 27.11.2026).
 
 ## 1. Rolle der ersten Implementierung
 
@@ -87,6 +87,7 @@ Der Interpreter führt diese Anweisungen direkt aus. In einem **Prüfmodus** kon
 | M7 | Geschwindigkeit des übersetzten Codes: Ausbau des C-Codegenerators (entschieden am 24.11.2026) | übersetzter `rppcc` mindestens so schnell wie `rppc` bei `diagnose rpp-compiler` (festgelegt am 26.11.2026); erreicht am 26.11.2026 (0,40 s gegen 0,47 s) |
 | M8 | `rppcc` als eigenständiger Compiler: `build`, `run` und `test`, Releasemodus über den C-Codegenerator, Bootstrap ohne Rust (beschlossen am 26.11.2026) | `rppcc test ..` besteht alle Konformitätstests im Debug- und im Releasemodus (R-14.7); der Bootstrap aus dem eingecheckten C-Startpunkt erreicht ohne Rust den Fixpunkt, unter Windows (MSVC) und Linux (gcc) in der CI; alle Vergleiche mit `rppc` bleiben ohne Abweichung. Erfüllt am 26.11.2026: lokal (Windows mit MSVC, Linux mit gcc in WSL) und im ersten CI-Lauf des Jobs `self-hosted` (Ubuntu 24.04 und Windows 2025) |
 | M9 | Abhängigkeiten mit Versionen nach Designentscheidungen 13b über ein lokales Verzeichnis im Dateisystem: `rpp.hash` (SHA-256), Minimal Version Selection, `rpp.lock`, `rppcc publish` (beschlossen am 26.11.2026, lokal erfüllt am 26.11.2026) | neue Konformitätstests in Kapitel 11 decken die Regeln aus 13b ab und bestehen mit `rppc test` und `rppcc test`; `rpp.lock` ist reproduzierbar und erkennt jede Änderung an einer gesperrten Bibliothek; `compare.py` zeigt für die Auflösung keine Abweichung, der Fixpunkt hält. Erfüllt am 27.11.2026: lokal (Windows mit MSVC, Linux mit gcc in WSL) und im CI-Lauf des Jobs `self-hosted` (Ubuntu 24.04 und Windows 2025) |
+| M10 | C-Anbindung nach Designentscheidungen 12: `extern`-Klassen, Werte und Handles über die Grenze, Freigabe je Projekt (`native`, `allowNative`), Ausführung in `rppc` (dynamisch geladen) und `rppcc` (direkt gebunden) (beschlossen am 27.11.2026) | eigenes Kapitel der Spezifikation mit Regeln und Sicherheitsmodell; neue Konformitätstests mit einer C-Testbibliothek im Repository bestehen mit `rppc test` und `rppcc test` in beiden Modi; `compare.py` zeigt keine Abweichung, der Fixpunkt hält; grüner CI-Lauf unter Ubuntu und Windows |
 
 Der Releasemodus entsteht aus dem C-Codegenerator (entschieden am 24.11.2026); seit M8 prüft `rppcc test` die Konformität auch für ihn (R-14.7). Ein JIT für den Debugmodus ist zurückgestellt.
 
@@ -586,3 +587,17 @@ Stand (26.11.2026, lokal unter Windows mit MSVC):
 | `methodsOf`, `fieldOf` | Index je Typ (`MemberIndex`, nach `resolveMembers` gebaut): erste Methode bzw. erstes Feld je Name, die nächste Methode gleichen Namens, die Namen des Typs und aller Obertypen, die Obertypen eines Typs ohne Typargumente. Ein Name, den es nicht gibt, beendet die Suche sofort. |
 
 Stand (27.11.2026): `diagnose rppc/std rpp-compiler` 0,415 s gegen vorher 0,44 s (Median aus 15 Läufen, derselbe Rechner; `rppc` 0,47 s), gleiche Ausgabe. Fixpunkt und Startpunkt (`--check-seed`) aktuell; `rppcc test` 332 bestanden, 0 fehlgeschlagen; `compare.py --exe` 659/1332/1310/828/106/581/863 gleich, 0 verschieden; `compare_c.py --exe … --cflags -DRPP_NATCHECK --fr 200` 328 gleich, 0 verschieden. Laut Profil bleiben die Hilfen des Parsers (`isP`, `eatP`, `eatK`) der größte Posten im Parser; ihre Kosten sind jetzt der Aufruf selbst (Rahmen je Aufruf).
+
+**M10 beschlossen: C-Anbindung (27.11.2026).** Seit M9 lassen sich R++-Bibliotheken mit Versionen einbinden, C-Bibliotheken aber nicht; was die Standardbibliothek vom System braucht (`sqrt`, `Process`, Dateien), ist in beide Compiler eingebaut. M10 setzt die Entscheidungen aus Designentscheidungen Abschnitt 12 um:
+
+| Teil | Inhalt |
+|---|---|
+| Spezifikation | eigenes Kapitel „C-Anbindung“ mit Regeln: Form der `extern`-Klasse, erlaubte Typen und ihre Abbildung auf C, Besitz und Leihen über die Grenze, Handles und ihre Freigabe, Fehler beim Laden und Aufrufen, Sicherheitsmodell und seine Grenze zu R-12.6; dazu `extern` in `RPP.g4` und der Liste der reservierten Wörter. |
+| Projekte | `native: true` in `rpp.yaml`, `allowNative: true` an Abhängigkeiten (auch mittelbaren), Anzeige in `project` und `rpp.lock`; die Prüfung in beiden Compilern gleich. |
+| `rppc` | Prüfung der `extern`-Klassen; der Interpreter lädt die Bibliothek mit `libloading` und ruft über `libffi` auf. |
+| `rppcc` | gleiche Prüfung; der C-Generator erzeugt Prototypen und direkte Aufrufe, `build` bindet die Bibliothek (gcc: `-l`, MSVC: `.lib`). |
+| Tests | eine kleine C-Testbibliothek im Repository, die der Testlauf vorher übersetzt; angenommene, abgelehnte und Laufzeittests für jede Regel; `compare.py` deckt die neuen Teile ab. |
+
+Fertig ist M10, wenn das Kapitel steht, die neuen Konformitätstests mit `rppc test` und `rppcc test` in beiden Modi bestehen, `compare.py` keine Abweichung zeigt, der Fixpunkt hält und der CI-Lauf unter Ubuntu und Windows grün ist.
+
+Zurückgestellt: Callbacks (R++-Lambdas als C-Funktionszeiger), Structs als Wert, Zeiger in R++, variadische Funktionen, C-Quelltext in Bibliotheken des Verzeichnisses und die Umstellung eingebauter Teile der Standardbibliothek auf `extern`-Klassen.

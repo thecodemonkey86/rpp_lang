@@ -151,6 +151,11 @@ Status-Kürzel: **[E]** ausdrücklich entschieden, **[A]** vorgeschlagen und ohn
 
 - [A] Version 1: Jedes Objekt gehört zu einem Thread; Übergabe an einen anderen Thread nur per `own`.
 - [A] C-Anbindung (FFI): zurückgestellt, bis der Sprachkern steht.
+- [E] C-Anbindung als Meilenstein M10 (beschlossen am 27.11.2026; die Regeln folgen in einem eigenen Kapitel der Spezifikation):
+  - Deklaration als `extern`-Klasse: `extern("z") class Zlib { static ui32 crc32(ui32 crc, byte[] data); }`. Sie enthält nur statische Methoden ohne Rumpf; der Name in Klammern ist die C-Bibliothek ohne Vorsilbe und Endung (`z` → `libz.so`, `z.dll`). `extern` wird ein reserviertes Wort.
+  - Über die Grenze gehen Werte und Handles: Ganzzahlen, `f32`, `f64`, `bool` und `byte`; `string` als kopiertes UTF-8 mit abschließendem Nullbyte; `byte[]` geliehen für die Dauer des Aufrufs als Zeiger und Länge (`mut byte[]`, wenn C hineinschreibt); undurchsichtige Handles als Typ, der nur als `own` besteht und beim Freigeben eine genannte C-Funktion aufruft. Keine Zeiger in R++, keine Callbacks, keine Structs als Wert, keine variadischen Funktionen.
+  - Sicherheitsgrenze je Projekt: Nur ein Projekt mit `native: true` in `rpp.yaml` darf `extern`-Klassen deklarieren. Wer eine solche Bibliothek nutzt, gibt sie in `dependencies` ausdrücklich frei (`allowNative: true`); sonst ist die Anforderung ein Fehler. `project` und `rpp.lock` zeigen, welche Bibliotheken C-Code mitbringen. R-12.6 (kein undefiniertes Verhalten) gilt für alles außerhalb des aufgerufenen C-Codes.
+  - Beide Compiler führen C-Aufrufe aus: Der Interpreter von `rppc` bleibt die Referenz (R-12.3) und lädt die Bibliothek zur Laufzeit (`libloading`, Aufruf über `libffi`); `rppcc` erzeugt direkte C-Aufrufe und bindet die Bibliothek beim Bauen.
 
 ## 13. Quelldateien und Projektstruktur
 

@@ -151,6 +151,11 @@ Status abbreviation: **[E]** expressly decided, **[A]** proposed and accepted wi
 
 - [A] Version 1: Each object belongs to one thread; transfer to another thread only by `own`.
 - [A] C-link (FFI): reset until the voice core stands.
+- [E] C interop as milestone M10 (decided on 27.11.2026; the rules follow in a chapter of their own in the specification):
+  - Declaration as an `extern` class: `extern("z") class Zlib { static ui32 crc32(ui32 crc, byte[] data); }`. It contains only static methods without a body; the name in parentheses is the C library without prefix and extension (`z` → `libz.so`, `z.dll`). `extern` becomes a reserved word.
+  - Values and handles cross the boundary: integers, `f32`, `f64`, `bool` and `byte`; `string` as copied UTF-8 with a terminating null byte; `byte[]` borrowed for the duration of the call as pointer and length (`mut byte[]` when C writes into it); opaque handles as a type that exists only as `own` and calls a named C function when released. No pointers in R++, no callbacks, no structs by value, no variadic functions.
+  - Safety boundary per project: only a project with `native: true` in `rpp.yaml` may declare `extern` classes. Whoever uses such a library must allow it explicitly in `dependencies` (`allowNative: true`); otherwise the requirement is an error. `project` and `rpp.lock` show which libraries bring C code. R-12.6 (no undefined behavior) holds for everything outside the called C code.
+  - Both compilers execute C calls: the `rppc` interpreter remains the reference (R-12.3) and loads the library at run time (`libloading`, calls via `libffi`); `rppcc` generates direct C calls and links the library when building.
 
 ## 13. Source files and project structure
 
